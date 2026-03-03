@@ -4,7 +4,8 @@
 展示任务创建后自动执行，减少用户手动干预
 """
 
-from jarvis.main import JARVIS
+from src.main import JARVIS
+
 
 def demo_auto_task_execution():
     """演示自动任务执行功能"""
