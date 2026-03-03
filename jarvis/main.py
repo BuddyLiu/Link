@@ -253,7 +253,8 @@ class JARVIS:
         """检查是否是任务管理请求"""
         task_mgmt_keywords = [
             "任务列表", "我的任务", "查看任务", "任务进度",
-            "完成步骤", "更新任务", "删除任务", "任务状态"
+            "完成步骤", "更新任务", "删除任务", "任务状态",
+            "开始执行", "执行任务", "开始", "执行"
         ]
         
         input_lower = input_text.lower()
@@ -264,7 +265,7 @@ class JARVIS:
         return False
     
     def _handle_complex_task_request(self, input_text: str) -> str:
-        """处理复杂任务请求"""
+        """处理复杂任务请求（手动执行模式）"""
         if not self.planning_engine:
             return "抱歉，复杂任务规划功能当前不可用。"
         
@@ -295,13 +296,71 @@ class JARVIS:
             # 存储任务
             self.active_tasks[task.id] = task
             
-            # 生成响应
+            # 生成响应（不自动执行，等待用户手动开始）
             response = self._format_task_plan_response(task, decomposition_result, planning_result)
+            
+            # 添加手动执行提示
+            response += f"\n💡 任务已创建，等待手动执行。\n"
+            response += f"   输入'开始执行 {task.id}'开始执行第一步\n"
+            response += f"   或输入'查看任务 {task.id}'查看详细规划"
+            
             return response
             
         except Exception as e:
             self.logger.error(f"处理复杂任务失败: {str(e)}", exc_info=True)
             return f"抱歉，处理复杂任务时出现错误: {str(e)}"
+    
+    def _auto_execute_task_steps(self, task_id: str, steps_to_execute: int = 2) -> str:
+        """自动执行任务步骤"""
+        task = self.planning_engine.get_task(task_id)
+        if not task:
+            return f"找不到ID为'{task_id}'的任务。"
+        
+        # 找到所有待处理的步骤
+        pending_steps = [step for step in task.steps if step.status == "pending"]
+        if not pending_steps:
+            return f"任务'{task.goal}'没有待处理的步骤。"
+        
+        response = ""
+        steps_executed = 0
+        max_steps = min(steps_to_execute, len(pending_steps), 3)  # 最多执行3步，防止耗时过长
+        
+        for i, step in enumerate(pending_steps[:max_steps]):
+            # 使用大脑引擎执行步骤
+            execution_result = self._execute_task_step_with_brain(task, step)
+            
+            # 更新步骤状态和结果
+            self.planning_engine.update_task_step(
+                task_id, 
+                step.id, 
+                "completed" if execution_result["success"] else "in_progress",
+                execution_result["result"]
+            )
+            
+            steps_executed += 1
+            
+            if execution_result["success"]:
+                response += (f"✅ 步骤{i+1}执行完成：{step.description}\n")
+            else:
+                response += (f"🔄 步骤{i+1}开始执行：{step.description}\n")
+            
+            # 添加简化的执行结果（避免响应过长）
+            result_preview = execution_result["result"][:100] + "..." if len(execution_result["result"]) > 100 else execution_result["result"]
+            response += f"   结果预览: {result_preview}\n\n"
+        
+        # 检查是否还有待处理的步骤
+        remaining_pending = len(pending_steps) - steps_executed
+        
+        if steps_executed > 0:
+            if remaining_pending > 0:
+                response += f"🎯 已自动执行 {steps_executed} 个步骤，还有 {remaining_pending} 个步骤待处理。\n"
+                response += f"💡 继续执行请输入：'完成步骤 {task_id}' 或 '开始执行 {task_id} 自动'"
+            else:
+                response += f"🎉 所有步骤已完成！任务'{task.goal}'执行完成。"
+        else:
+            response = "⚠️ 未能执行任何步骤。"
+        
+        return response
     
     def _parse_task_request(self, input_text: str) -> Dict[str, Any]:
         """解析任务请求"""
@@ -402,7 +461,7 @@ class JARVIS:
         task_id = None
         
         for word in words:
-            if word.startswith("task_") and len(word) > 5:
+            if word.startswith("project_") and len(word) > 5:
                 task_id = word
                 break
         
@@ -414,7 +473,7 @@ class JARVIS:
                     break
         
         if not task_id:
-            return "请提供任务ID，例如：'查看任务 task_1234567890'"
+            return "请提供任务ID，例如：'查看任务 project_1234567890'"
         
         task = self.planning_engine.get_task(task_id)
         if not task:
@@ -450,47 +509,147 @@ class JARVIS:
         
         return response
     
+    def _execute_task_step_with_brain(self, task, step):
+        """使用大脑引擎执行任务步骤"""
+        if not self.brain_engine:
+            return {
+                "success": False,
+                "result": f"⚠️ 大脑引擎不可用，无法自动执行步骤。请手动执行: {step.action}"
+            }
+        
+        try:
+            # 根据任务类型和步骤描述生成提示
+            prompt = self._generate_execution_prompt(task, step)
+            
+            # 使用大脑引擎生成执行方案
+            execution_plan = self.brain_engine.simple_query(
+                prompt,
+                system_prompt="你是一个智能任务执行助手，请根据任务要求生成具体的执行方案。"
+            )
+            
+            return {
+                "success": True,
+                "result": f"📋 大脑引擎生成的执行方案:\n{execution_plan}\n\n✅ 步骤执行完成。"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"使用大脑引擎执行步骤失败: {str(e)}")
+            return {
+                "success": False,
+                "result": f"❌ 大脑引擎执行失败: {str(e)}\n请手动执行: {step.action}"
+            }
+    
+    def _generate_execution_prompt(self, task, step):
+        """生成执行步骤的提示"""
+        constraints_text = ""
+        if task.constraints:
+            constraints_text = "约束条件:\n"
+            for constraint in task.constraints:
+                value = constraint.value if constraint.value is not None else "待确定"
+                constraints_text += f"- {constraint.description}: {value}\n"
+        
+        prompt = f"""
+请为以下任务步骤生成具体的执行方案：
+
+任务: {task.goal}
+任务类型: {task.task_type}
+当前步骤: {step.description}
+步骤动作: {step.action}
+{constraints_text}
+
+请生成:
+1. 具体的执行步骤
+2. 需要的资源或工具
+3. 预期的结果
+4. 可能遇到的问题和建议
+
+用中文回复，保持专业、实用。
+"""
+        return prompt.strip()
+    
     def _start_task_execution(self, input_text: str) -> str:
-        """开始执行任务"""
-        # 简化实现：更新第一个步骤为进行中
+        """开始执行任务（自动执行所有步骤）"""
+        # 提取任务ID
         words = input_text.split()
         task_id = None
         
         for word in words:
-            if word.startswith("task_") and len(word) > 5:
+            if word.startswith("project_") and len(word) > 5:
                 task_id = word
                 break
         
         if not task_id:
-            return "请提供任务ID，例如：'开始执行 task_1234567890'"
+            return "请提供任务ID，例如：'开始执行 project_1234567890'"
         
         task = self.planning_engine.get_task(task_id)
         if not task:
             return f"找不到ID为'{task_id}'的任务。"
         
-        # 找到第一个待处理的步骤
+        # 找到所有待处理的步骤
         pending_steps = [step for step in task.steps if step.status == "pending"]
         if not pending_steps:
             return f"任务'{task.goal}'没有待处理的步骤。"
         
-        first_step = pending_steps[0]
-        self.planning_engine.update_task_step(task_id, first_step.id, "in_progress")
+        # 检查是否要自动执行所有步骤
+        auto_execute_all = False
+        if "自动" in input_text or "全部" in input_text or "所有" in input_text:
+            auto_execute_all = True
         
-        return f"✅ 已开始执行任务'{task.goal}'\n第一步: {first_step.description}\n请执行: {first_step.action}"
+        response = ""
+        steps_executed = 0
+        max_steps_to_execute = 3 if auto_execute_all else 1  # 自动模式最多执行3步，防止耗时过长
+        
+        for i, step in enumerate(pending_steps[:max_steps_to_execute]):
+            # 使用大脑引擎执行步骤
+            execution_result = self._execute_task_step_with_brain(task, step)
+            
+            # 更新步骤状态和结果
+            self.planning_engine.update_task_step(
+                task_id, 
+                step.id, 
+                "completed" if execution_result["success"] else "in_progress",
+                execution_result["result"]
+            )
+            
+            steps_executed += 1
+            
+            if execution_result["success"]:
+                response += (f"✅ 步骤{i+1}执行完成：{step.description}\n\n"
+                           f"📋 执行结果：\n{execution_result['result']}\n\n")
+            else:
+                response += (f"🔄 步骤{i+1}开始执行：{step.description}\n\n"
+                           f"📋 执行结果：\n{execution_result['result']}\n\n")
+            
+            # 如果不是自动执行所有步骤，执行第一步后停止
+            if not auto_execute_all:
+                response += f"💡 继续下一步请输入：'完成步骤 {task_id}'"
+                break
+        
+        # 检查是否还有待处理的步骤
+        remaining_pending = len(pending_steps) - steps_executed
+        
+        if auto_execute_all:
+            if remaining_pending > 0:
+                response += f"🎯 已自动执行 {steps_executed} 个步骤，还有 {remaining_pending} 个步骤待处理。\n"
+                response += f"💡 继续执行请输入：'完成步骤 {task_id}'"
+            else:
+                response += f"🎉 所有步骤已完成！任务'{task.goal}'执行完成。"
+        
+        return response
     
     def _update_task_step(self, input_text: str) -> str:
         """更新任务步骤"""
-        # 简化实现：将第一个进行中的步骤标记为完成
         words = input_text.split()
         task_id = None
         
         for word in words:
-            if word.startswith("task_") and len(word) > 5:
+            if (word.startswith("task_") or word.startswith("project_") or 
+                word.startswith("travel_") or word.startswith("party_")) and len(word) > 5:
                 task_id = word
                 break
         
         if not task_id:
-            return "请提供任务ID，例如：'完成步骤 task_1234567890'"
+            return "请提供任务ID，例如：'完成步骤 project_1234567890' 或 '完成步骤 task_1234567890'"
         
         task = self.planning_engine.get_task(task_id)
         if not task:
@@ -504,16 +663,58 @@ class JARVIS:
             if not pending_steps:
                 return f"任务'{task.goal}'没有需要更新的步骤。"
             step_to_update = pending_steps[0]
-            new_status = "in_progress"
-            result_text = "开始执行"
+            
+            # 使用大脑引擎执行步骤
+            execution_result = self._execute_task_step_with_brain(task, step_to_update)
+            
+            # 更新步骤状态
+            new_status = "completed" if execution_result["success"] else "in_progress"
+            self.planning_engine.update_task_step(
+                task_id, step_to_update.id, new_status, execution_result["result"]
+            )
+            
+            if execution_result["success"]:
+                return (f"✅ 步骤执行完成：{step_to_update.description}\n\n"
+                       f"📋 执行结果：\n{execution_result['result']}\n\n"
+                       f"💡 继续下一个步骤请输入：'完成步骤 {task_id}'")
+            else:
+                return (f"🔄 步骤开始执行：{step_to_update.description}\n\n"
+                       f"📋 执行结果：\n{execution_result['result']}\n\n"
+                       f"💡 需要进一步处理，请输入：'完成步骤 {task_id}'")
         else:
-            step_to_update = in_progress_steps[0]
-            new_status = "completed"
-            result_text = "已完成"
-        
-        self.planning_engine.update_task_step(task_id, step_to_update.id, new_status, f"手动标记为{result_text}")
-        
-        return f"✅ 步骤已更新: {step_to_update.description}\n状态: {step_to_update.status} → {new_status}"
+            # 如果有进行中的步骤，将其标记为完成并执行下一个步骤
+            step_to_complete = in_progress_steps[0]
+            
+            # 将当前步骤标记为完成
+            self.planning_engine.update_task_step(
+                task_id, step_to_complete.id, "completed", "步骤执行完成"
+            )
+            
+            # 找到下一个待处理的步骤
+            pending_steps = [step for step in task.steps if step.status == "pending"]
+            if pending_steps:
+                next_step = pending_steps[0]
+                
+                # 使用大脑引擎执行下一个步骤
+                execution_result = self._execute_task_step_with_brain(task, next_step)
+                
+                # 更新下一个步骤状态
+                new_status = "completed" if execution_result["success"] else "in_progress"
+                self.planning_engine.update_task_step(
+                    task_id, next_step.id, new_status, execution_result["result"]
+                )
+                
+                if execution_result["success"]:
+                    return (f"✅ 步骤完成：{step_to_complete.description}\n\n"
+                           f"✅ 下一步骤执行完成：{next_step.description}\n\n"
+                           f"📋 执行结果：\n{execution_result['result']}")
+                else:
+                    return (f"✅ 步骤完成：{step_to_complete.description}\n\n"
+                           f"🔄 下一步骤开始执行：{next_step.description}\n\n"
+                           f"📋 执行结果：\n{execution_result['result']}")
+            else:
+                return (f"✅ 步骤完成：{step_to_complete.description}\n\n"
+                       f"🎉 所有步骤已完成！任务'{task.goal}'执行完成。")
     
     def _simple_response(self, input_text: str) -> str:
         """
