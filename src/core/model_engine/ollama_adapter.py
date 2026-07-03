@@ -136,10 +136,28 @@ class OllamaAdapter(ModelAdapter):
             )
             
             if response.status_code != 200:
+                # 如果模型不支持 chat 接口，自动回退到 generate 接口
+                if response.status_code == 400 and "does not support chat" in response.text:
+                    self._log("warning", f"模型 {self.model_name} 不支持 chat 接口，自动回退到 generate 接口")
+                    # 将 messages 转为 prompt 格式
+                    prompt_parts = []
+                    for msg in messages:
+                        role = msg.get("role", "user")
+                        content = msg.get("content", "")
+                        if role == "system":
+                            prompt_parts.append(f"System: {content}")
+                        elif role == "user":
+                            prompt_parts.append(f"User: {content}")
+                        elif role == "assistant":
+                            prompt_parts.append(f"Assistant: {content}")
+                    prompt_parts.append("Assistant: ")
+                    prompt = "\n".join(prompt_parts)
+                    return self.generate_completion(prompt, temperature, max_tokens, **kwargs)
+
                 error_msg = f"Ollama API错误: {response.status_code} - {response.text}"
                 self._log("error", error_msg)
                 raise RuntimeError(error_msg)
-            
+
             response_data = response.json()
             
             # 解析响应

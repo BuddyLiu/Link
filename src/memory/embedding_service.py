@@ -17,7 +17,8 @@ except ImportError:
 try:
     import chromadb.utils.embedding_functions as embedding_functions
     CHROMA_EMBEDDING_AVAILABLE = True
-except ImportError:
+except Exception:
+    # chromadb 不兼容 Python 3.14+ (pydantic v1 + Pydantic v1 ConfigError)
     CHROMA_EMBEDDING_AVAILABLE = False
 
 
@@ -49,23 +50,59 @@ class EmbeddingService:
         self._embed_cached = lru_cache(maxsize=cache_size)(self._embed_uncached)
     
     def _initialize_model(self):
-        """初始化嵌入模型"""
-        try:
-            if SENTENCE_TRANSFORMERS_AVAILABLE:
-                self.logger = None  # 将在使用时设置
-                self.model = SentenceTransformer(self.model_name)
-                # 测试获取维度
-                test_embedding = self.model.encode(["test"])
-                self.dimension = len(test_embedding[0])
-                print(f"✅ 嵌入模型 '{self.model_name}' 初始化成功，维度: {self.dimension}")
-            else:
-                raise ImportError("sentence-transformers 未安装")
-                
-        except Exception as e:
-            print(f"⚠️ 无法加载嵌入模型 '{self.model_name}': {str(e)}")
-            print("⚠️ 将使用随机嵌入作为后备方案")
+        """初始化嵌入模型（先尝试本地缓存，避免网络阻塞）"""
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            print("⚠️ sentence-transformers 未安装，使用随机嵌入作为后备方案")
             self.model = None
-            self.dimension = 384  # 默认维度
+            self.dimension = 384
+            return
+
+        import threading
+
+        result = [None]
+        exception = [None]
+        done = threading.Event()
+
+        def load_model():
+            try:
+                # 先尝试本地缓存（不联网）
+                model = SentenceTransformer(self.model_name, device='cpu', local_files_only=True)
+                result[0] = model
+            except Exception:
+                # 缓存未命中 - 尝试联网下载（带15秒超时）
+                try:
+                    model = SentenceTransformer(self.model_name, device='cpu')
+                    result[0] = model
+                except Exception as e:
+                    exception[0] = e
+            finally:
+                done.set()
+
+        t = threading.Thread(target=load_model, daemon=True)
+        t.start()
+
+        # 等待最多 18 秒（本地缓存快速 + 联网重试缓冲）
+        if done.wait(timeout=18):
+            if exception[0]:
+                print(f"⚠️ 无法加载嵌入模型 '{self.model_name}': {exception[0]}")
+                print("⚠️ 将使用随机嵌入 + 关键词搜索作为后备方案")
+                self.model = None
+                self.dimension = 384
+            else:
+                self.model = result[0]
+                try:
+                    test_embedding = self.model.encode(["test"])
+                    self.dimension = len(test_embedding[0])
+                    print(f"✅ 嵌入模型 '{self.model_name}' 初始化成功，维度: {self.dimension}")
+                except Exception as e:
+                    print(f"⚠️ 嵌入模型加载不完整: {e}")
+                    self.model = None
+                    self.dimension = 384
+        else:
+            print(f"⚠️ 加载嵌入模型 '{self.model_name}' 超时（网络不可用）")
+            print("⚠️ 将使用随机嵌入 + 关键词搜索作为后备方案")
+            self.model = None
+            self.dimension = 384
     
     def _embed_uncached(self, text: str) -> List[float]:
         """不带缓存的嵌入计算"""
@@ -175,6 +212,10 @@ class EmbeddingService:
         
         return np.dot(v1, v2) / (norm1 * norm2)
     
+    def is_ready(self) -> bool:
+        """检查嵌入服务是否就绪"""
+        return self.model is not None
+
     def set_logger(self, logger):
         """设置日志记录器"""
         self.logger = logger

@@ -2,6 +2,8 @@
 """
 JARVIS智能体统一启动入口
 支持多种启动模式：传统CLI、Web服务、主动运行模式等
+
+说明：这个文件位于项目根目录，所有导入路径已修复
 """
 
 import os
@@ -11,8 +13,13 @@ import signal
 import time
 from typing import Optional
 
-# 添加当前目录到Python路径，确保可以导入所有模块
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 修复导入路径问题 - 确保可以导入当前目录和src目录下的模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)  # 添加当前目录（项目根目录）
+src_dir = os.path.join(current_dir, "src")
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)  # 添加src目录
 
 # 全局变量，用于存储运行中的JARVIS实例，便于优雅退出
 _active_jarvis_instance = None
@@ -49,36 +56,36 @@ def register_signal_handlers():
 def run_traditional_mode(args) -> int:
     """
     运行传统模式（响应式CLI/Web）
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
     try:
-        # 尝试从主程序导入
-        try:
-            from jarvis.main import main
-        except ImportError:
-            # 尝试直接导入main.py
-            from main import main
-        
+        # 尝试直接导入main.py（位于同一目录）
+        from main import main as main_func
         print("⚡ 启动传统响应式模式...")
         print("💡 特点: 被动响应式，用户输入触发，无主动监控")
         print("="*50)
-        
-        # 构建参数列表
+
+        # 构建参数列表（用 try/finally 确保异常时也能恢复 sys.argv）
+        original_argv = sys.argv.copy()
         sys.argv = [sys.argv[0], "--mode", args.mode]
         if args.debug:
             sys.argv.append("--debug")
-        if args.host:
+        if args.host is not None:
             sys.argv.extend(["--host", args.host])
-        if args.port:
+        if args.port is not None:
             sys.argv.extend(["--port", str(args.port)])
-        
-        return main()
-        
+
+        try:
+            result = main_func()
+            return result
+        finally:
+            sys.argv = original_argv
+
     except ImportError as e:
         print(f"❌ 无法导入传统主程序: {e}")
         print("💡 请确保main.py存在且可导入")
@@ -91,10 +98,10 @@ def run_traditional_mode(args) -> int:
 def run_active_mode(args) -> int:
     """
     运行主动模式（事件驱动，类似iOS RunLoop）
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
@@ -107,23 +114,23 @@ def run_active_mode(args) -> int:
         print("   • 自主学习能力")
         print("   • 主动提醒和监控")
         print("="*50)
-        
-        # 尝试从增强版主程序导入
-        try:
-            from jarvis.main_with_active import main
-        except ImportError:
-            # 尝试直接导入main_with_active.py
-            from main_with_active import main
-        
-        # 构建参数列表
+
+        # 尝试导入main_with_active.py
+        from main_with_active import main as main_func
+
+        original_argv = sys.argv.copy()
         sys.argv = [sys.argv[0], "--mode", "active"]
         if args.debug:
             sys.argv.append("--debug")
         if args.active_config:
             sys.argv.extend(["--active-config", args.active_config])
-        
-        return main()
-        
+
+        try:
+            result = main_func()
+            return result
+        finally:
+            sys.argv = original_argv
+
     except ImportError as e:
         print(f"❌ 无法导入主动模式主程序: {e}")
         print("💡 请确保main_with_active.py存在")
@@ -137,49 +144,52 @@ def run_active_mode(args) -> int:
 def run_direct_active(args) -> int:
     """
     直接运行主动模式（使用active_jarvis_enhanced.py）
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
     try:
         print("🚀 直接启动主动运行模式...")
-        
+
         # 尝试导入ActiveJARVIS类
-        try:
-            from jarvis.active_jarvis_enhanced import ActiveJARVIS
-        except ImportError:
-            from active_jarvis_enhanced import ActiveJARVIS
-        
+        from active_jarvis_enhanced import ActiveJARVIS
+
         # 创建并启动ActiveJARVIS
         global _active_jarvis_instance
         active_jarvis = ActiveJARVIS()
         _active_jarvis_instance = active_jarvis
-        
+
         # 启动后台事件循环（非阻塞）
         active_jarvis.start(blocking=False)
-        
+
         # 运行CLI交互界面
         active_jarvis.run_cli()
-        
+
         # CLI结束后停止JARVIS
         active_jarvis.stop()
         _active_jarvis_instance = None
-        
+
         return 0
-        
+
     except ImportError as e:
         print(f"❌ 无法导入主动模式: {e}")
         print("💡 请确保active_jarvis_enhanced.py存在")
+        if _active_jarvis_instance is not None:
+            try:
+                _active_jarvis_instance.stop()
+            except Exception:
+                pass
+            _active_jarvis_instance = None
         return 1
     except Exception as e:
         print(f"❌ 主动模式运行失败: {e}")
         if _active_jarvis_instance is not None:
             try:
                 _active_jarvis_instance.stop()
-            except:
+            except Exception:
                 pass
             _active_jarvis_instance = None
         return 1
@@ -188,30 +198,31 @@ def run_direct_active(args) -> int:
 def run_web_mode(args) -> int:
     """
     运行Web服务模式
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
     try:
         print("🌐 启动Web服务模式...")
         print(f"💡 服务地址: http://{args.host}:{args.port}")
-        
-        # 尝试导入Web主程序
-        try:
-            from jarvis.main import main
-        except ImportError:
-            from main import main
-        
-        # 构建参数列表
+
+        # 尝试导入main.py
+        from main import main as main_func
+
+        original_argv = sys.argv.copy()
         sys.argv = [sys.argv[0], "--mode", "web", "--host", args.host, "--port", str(args.port)]
         if args.debug:
             sys.argv.append("--debug")
-        
-        return main()
-        
+
+        try:
+            result = main_func()
+            return result
+        finally:
+            sys.argv = original_argv
+
     except ImportError as e:
         print(f"❌ 无法导入Web主程序: {e}")
         print("💡 Web服务模式需要main.py支持")
@@ -224,29 +235,30 @@ def run_web_mode(args) -> int:
 def run_test_mode(args) -> int:
     """
     运行测试模式
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
     try:
         print("🧪 运行测试模式...")
-        
+
         # 尝试从主程序导入
-        try:
-            from jarvis.main import main
-        except ImportError:
-            from main import main
-        
-        # 构建参数列表
+        from main import main as main_func
+
+        original_argv = sys.argv.copy()
         sys.argv = [sys.argv[0], "--mode", "test"]
         if args.debug:
             sys.argv.append("--debug")
-        
-        return main()
-        
+
+        try:
+            result = main_func()
+            return result
+        finally:
+            sys.argv = original_argv
+
     except ImportError as e:
         print(f"❌ 无法导入测试主程序: {e}")
         print("💡 尝试运行独立的测试套件...")
@@ -259,39 +271,45 @@ def run_test_mode(args) -> int:
 def run_test_suite(args) -> int:
     """
     运行独立的测试套件
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
     try:
+        all_success = True
+        any_ran = False
+
         # 尝试导入测试模块
-        try:
-            from test.test_active_jarvis import run_all_tests
-            print("📋 运行主动模式测试套件...")
-            success = run_all_tests()
-            return 0 if success else 1
-        except ImportError:
-            pass
-        
-        try:
-            from test.test_planning_engine import run_all_tests
-            print("📋 运行规划引擎测试套件...")
-            success = run_all_tests()
-            return 0 if success else 1
-        except ImportError:
-            pass
-        
-        try:
-            from test.test_task_execution import run_all_tests
-            print("📋 运行任务执行测试套件...")
-            success = run_all_tests()
-            return 0 if success else 1
-        except ImportError:
-            pass
-        
+        test_suites = [
+            ("test.test_active_jarvis", "主动模式测试套件"),
+            ("test.test_planning_engine", "规划引擎测试套件"),
+            ("test.test_task_execution", "任务执行测试套件"),
+        ]
+
+        for module_name, label in test_suites:
+            try:
+                import importlib
+                mod = importlib.import_module(module_name)
+                if hasattr(mod, 'run_all_tests'):
+                    print(f"📋 运行{label}...")
+                    success = mod.run_all_tests()
+                    all_success = all_success and success
+                    any_ran = True
+                else:
+                    print(f"⚠️  {module_name} 中没有 run_all_tests 函数，跳过")
+            except ImportError:
+                print(f"⚠️  {module_name} 未找到，跳过")
+            except Exception as e:
+                print(f"❌ 运行{label}时出错: {e}")
+                all_success = False
+                any_ran = True
+
+        if any_ran:
+            return 0 if all_success else 1
+
         print("❌ 未找到测试套件")
         print("💡 可用的测试文件:")
         print("   - test/test_active_jarvis.py")
@@ -307,24 +325,20 @@ def run_test_suite(args) -> int:
 def run_auto_execution_demo(args) -> int:
     """
     运行自动执行演示
-    
+
     Args:
         args: 命令行参数
-        
+
     Returns:
         退出码
     """
     try:
         print("🎬 运行自动执行演示...")
-        
-        # 尝试导入演示模块
-        try:
-            from jarvis.demo_auto_execution import main
-        except ImportError:
-            from demo_auto_execution import main
-        
-        return main()
-        
+
+        # 尝试导入演示模块（demo_auto_execution.py 中没有 main()，应使用 demo_auto_task_execution）
+        from demo_auto_execution import demo_auto_task_execution as main_func
+        return main_func()
+
     except ImportError as e:
         print(f"❌ 无法导入自动执行演示: {e}")
         print("💡 请确保demo_auto_execution.py存在")
@@ -334,49 +348,13 @@ def run_auto_execution_demo(args) -> int:
         return 1
 
 
-def run_simple_web(args) -> int:
-    """
-    运行简单的Web界面
-    
-    Args:
-        args: 命令行参数
-        
-    Returns:
-        退出码
-    """
-    try:
-        print("🖥️  启动简单Web界面...")
-        print(f"💡 访问地址: http://{args.host}:{args.port}")
-        
-        # 尝试导入Web模块
-        try:
-            from jarvis.simple_web_active_jarvis import main
-        except ImportError:
-            from simple_web_active_jarvis import main
-        
-        # 构建参数列表
-        sys.argv = [sys.argv[0], "--host", args.host, "--port", str(args.port)]
-        if args.debug:
-            sys.argv.append("--debug")
-        
-        return main()
-        
-    except ImportError as e:
-        print(f"❌ 无法导入简单Web界面: {e}")
-        print("💡 请确保simple_web_active_jarvis.py存在")
-        return 1
-    except Exception as e:
-        print(f"❌ 简单Web界面运行失败: {e}")
-        return 1
-
-
 def print_help() -> None:
     """打印详细的帮助信息"""
     help_text = """
 🤖 JARVIS智能体统一启动器
 
 使用方法:
-  python run_jarvis.py [模式] [选项]
+  python3 run_jarvis.py [模式] [选项]
 
 可用模式:
   active       - 主动运行模式（默认，事件驱动，类似iOS RunLoop）
@@ -384,7 +362,6 @@ def print_help() -> None:
   web          - Web服务模式
   test         - 运行测试套件
   demo         - 运行自动执行演示
-  simple-web   - 运行简单Web界面
 
 常用选项:
   --debug              启用调试模式
@@ -409,8 +386,8 @@ def print_help() -> None:
   # 运行自动执行演示
   python3 run_jarvis.py demo
   
-  # 启动简单Web界面
-  python3 run_jarvis.py simple-web
+  # 启动自定义Web服务（指定端口）
+  python3 run_jarvis.py web --port 9000
 
 高级用法:
   # 使用自定义配置文件启动主动模式
@@ -439,7 +416,7 @@ def parse_arguments():
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=["active", "cli", "web", "test", "demo", "simple-web"],
+        choices=["active", "cli", "web", "test", "demo"],
         default="active",
         help="启动模式"
     )
@@ -458,7 +435,7 @@ def parse_arguments():
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
+        default=8030,
         help="Web服务端口"
     )
     parser.add_argument(
@@ -502,7 +479,6 @@ def main() -> int:
         "web": run_web_mode,
         "test": run_test_mode,
         "demo": run_auto_execution_demo,
-        "simple-web": run_simple_web,
     }
     
     handler = mode_handlers.get(args.mode, run_active_mode)

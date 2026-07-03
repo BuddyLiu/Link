@@ -40,6 +40,9 @@ class JARVIS:
         self.settings = settings
         self.tool_manager = tool_manager
         
+        # 第二阶段组件 - 记忆
+        self.memory_engine = None
+
         # 第三阶段组件
         self.planning_engine = None
         self.brain_engine = None
@@ -57,9 +60,9 @@ class JARVIS:
         # 初始化工具
         self._initialize_tools()
         
-        # 初始化记忆（第二阶段实现）
-        # self._initialize_memory()
-        
+        # 初始化记忆（第二阶段）
+        self._initialize_memory()
+
         # 初始化规划引擎（第三阶段）
         self._initialize_planning_engine()
         
@@ -84,6 +87,23 @@ class JARVIS:
             self.logger.error(f"工具初始化失败: {str(e)}")
             self.logger.warning("继续运行，但部分功能可能不可用")
     
+    def _initialize_memory(self):
+        """初始化记忆模块"""
+        try:
+            from src.memory import create_memory_manager, MemoryManager
+
+            self.logger.info("正在初始化记忆模块...")
+            self.memory_engine = create_memory_manager(self.settings)
+            if self.memory_engine and self.memory_engine.store:
+                stats = self.memory_engine.store.get_stats()
+                self.logger.info(f"记忆模块初始化完成，现有 {stats['total_memories']} 条记忆")
+            else:
+                self.logger.warning("记忆模块初始化不完全，部分功能可能受限")
+        except Exception as e:
+            self.logger.error(f"记忆模块初始化失败: {str(e)}")
+            self.logger.warning("记忆功能将不可用，继续加载其他模块")
+            self.memory_engine = None
+
     def _initialize_planning_engine(self):
         """初始化规划引擎"""
         try:
@@ -114,9 +134,9 @@ class JARVIS:
             # 强制使用Ollama本地配置，忽略settings中的默认配置
             config = {
                 "model_provider": "ollama",
-                "model_name": "deepseek-r1:7b",
+                "model_name": "qwen2.5:1.5b",
                 "base_url": "http://localhost:11434",
-                "timeout": 30,
+                "timeout": 60,
                 "enable_intent_analysis": True,
                 "enable_task_planning": True,
                 "enable_response_generation": True,
@@ -169,92 +189,125 @@ class JARVIS:
             str: 处理结果
         """
         self.logger.info(f"处理用户输入: {input_text}")
-        
-        # 首先检查是否是系统信息请求
-        if self._is_system_info_request(input_text):
-            return self._handle_system_info_request(input_text)
-        
-        # 检查是否是任务管理请求
-        if self._is_task_management_request(input_text):
-            return self._handle_task_management_request(input_text)
-        
-        # 检查是否是复杂任务规划请求
-        if self._is_complex_task_request(input_text):
-            return self._handle_complex_task_request(input_text)
-        
-        # 否则使用简单响应逻辑
-        response = self._simple_response(input_text)
-        
+
+        # 检索相关记忆作为上下文
+        memory_context = self._retrieve_memory_context(input_text)
+
+        # === LLM 驱动路由 ===
+        # 极少数精确命令直连（完整匹配，避免误拦截）
+        cmd = input_text.strip()
+        if cmd in ("帮助", "help"):
+            return self._get_help_text()
+        if cmd.startswith("任务列表") or cmd == "我的任务":
+            return self._list_tasks()
+
+        # 将用户输入交给 LLM，LLM 可在回答中加 [[ACTION:xxx]] 标记触发操作
+        response = self._simple_response(input_text, memory_context)
+
+        # 检查 LLM 是否请求了系统操作
+        action_result = self._execute_llm_action(response, input_text)
+        if action_result:
+            response = action_result
+
+        # 保存对话到记忆
+        self._save_to_memory(input_text, response, "conversation")
+
+        # 提取并保存关键事实（记忆记录器 Phase A）
+        self._extract_facts_from_conversation(input_text, response)
+
         self.logger.info(f"生成响应: {response[:50]}...")
         return response
     
-    def _is_system_info_request(self, input_text: str) -> bool:
-        """检查是否是系统信息请求"""
-        system_keywords = [
-            "规划引擎", "任务规划", "帮助", "help", 
-            "功能", "能做", "什么", "怎么用"
-        ]
-        
-        input_lower = input_text.lower()
-        for keyword in system_keywords:
-            if keyword in input_lower:
-                return True
-        
-        return False
+    def _execute_llm_action(self, response: str, original_input: str) -> str:
+        """解析 LLM 响应中的 [[ACTION:xxx]] 标记并执行系统操作"""
+        if "[[ACTION:" not in response:
+            return ""
+        import re
+        m = re.search(r'\[\[ACTION:(\w+)(?:,(.*?))?\]\]', response)
+        if not m:
+            return ""
+        action = m.group(1)
+        self.logger.info(f"LLM 请求操作: {action}")
+        try:
+            if action == "CREATE_TASK" and original_input:
+                return self._handle_complex_task_request(original_input)
+            elif action == "LIST_TASKS":
+                return self._list_tasks()
+            elif action == "LEARN" and original_input:
+                return self._handle_learning_request(original_input)
+            elif action == "PLANNING_INFO":
+                return self._get_planning_engine_info()
+        except Exception as e:
+            self.logger.error(f"执行操作 {action} 失败: {e}")
+        return ""
+
+    def _extract_facts_from_conversation(self, user_input: str, response: str):
+        """记录器 Phase A：从对话中提取关键事实并存入记忆"""
+        if not self.memory_engine or not self.brain_engine:
+            return
+        try:
+            from datetime import datetime
+            # 调用 LLM 提取事实（简短快速）
+            extract_prompt = (
+                "从以下对话中提取关键事实（姓名、偏好、事件、日程），"
+                "每行一条。如果没有重要信息，回复无。\n\n"
+                f"用户: {user_input}\n"
+                f"助手: {response}"
+            )
+            sys_prompt = "你是一个记忆提取器。只输出提取到的事实，每行一条。不要解释。"
+            facts_text = self.brain_engine.simple_query(extract_prompt, system_prompt=sys_prompt)
+            if facts_text and facts_text.strip() and facts_text.strip() != "无":
+                for line in facts_text.strip().split("\n"):
+                    line = line.strip().strip('-* ')
+                    if line and len(line) > 4:
+                        self.memory_engine.add_fact_memory(line, importance=0.7)
+                        self.logger.debug(f"记忆记录器保存事实: {line[:40]}...")
+        except Exception as e:
+            self.logger.debug(f"记忆记录器提取失败: {e}")
+
+    def _save_to_memory(self, user_input: str, response: str, mem_type: str = "conversation"):
+        """将对话保存到持久记忆"""
+        if not self.memory_engine:
+            return
+        try:
+            from datetime import datetime
+            metadata = {"type": mem_type, "timestamp": datetime.now().isoformat()}
+            self.memory_engine.add_conversation_memory(user_input, response, metadata)
+            self.logger.debug(f"对话已保存到记忆（类型: {mem_type}）")
+        except Exception as e:
+            self.logger.debug(f"保存记忆失败: {e}")
     
-    def _handle_system_info_request(self, input_text: str) -> str:
-        """处理系统信息请求"""
-        input_lower = input_text.lower()
-        
-        if "规划引擎" in input_lower or "任务规划" in input_lower:
-            return self._get_planning_engine_info()
-        elif "帮助" in input_lower or "help" in input_lower:
-            return self._get_help_text()
-        else:
-            # 默认返回帮助
-            return self._get_help_text()
+    def _retrieve_memory_context(self, query: str) -> str:
+        """检索相关记忆作为LLM上下文"""
+        if not self.memory_engine:
+            return ""
+        try:
+            related = self.memory_engine.search_memories(query, n_results=3)
+            if not related:
+                return ""
+            lines = []
+            for r in related:
+                mem_type = r.memory.metadata.get("type", "general")
+                content = r.memory.content[:100]
+                lines.append(f"[{mem_type}]({r.similarity:.2f}) {content}")
+            self.logger.info(f"检索到 {len(related)} 条相关记忆")
+            return "\n".join(lines)
+        except Exception as e:
+            self.logger.debug(f"记忆检索失败: {e}")
+            return ""
+
+
     
-    def _is_complex_task_request(self, input_text: str) -> bool:
-        """检查是否是复杂任务请求"""
-        # 先排除系统信息请求
-        if self._is_system_info_request(input_text):
-            return False
-        
-        task_keywords = [
-            "帮我", "需要", "想要", "计划一个",
-            "旅行", "聚会", "项目", "学习", "日常",
-            "周末", "生日", "会议", "活动"
-        ]
-        
-        # 任务动词 - 必须与上下文结合
-        task_verbs = ["规划", "安排", "组织", "准备", "策划"]
-        
-        input_lower = input_text.lower()
-        
-        # 检查是否包含任务动词且是真正的任务请求（不是系统信息）
-        has_task_verb = False
-        for verb in task_verbs:
-            if verb in input_lower:
-                # 排除特定短语
-                if f"{verb}引擎" in input_lower or f"{verb}系统" in input_lower:
-                    continue
-                has_task_verb = True
-                break
-        
-        # 必须同时包含任务动词和任务关键词，或者包含"帮我/需要/想要"等明确请求词
-        for keyword in task_keywords:
-            if keyword in input_lower:
-                if has_task_verb or keyword in ["帮我", "需要", "想要"]:
-                    return True
-        
-        return False
+
+    
+
     
     def _is_task_management_request(self, input_text: str) -> bool:
-        """检查是否是任务管理请求"""
+        """检查是否是任务管理请求（不含\"开始\"，避免误拦截普通对话）"""
         task_mgmt_keywords = [
             "任务列表", "我的任务", "查看任务", "任务进度",
             "完成步骤", "更新任务", "删除任务", "任务状态",
-            "开始执行", "执行任务", "开始", "执行"
+            "开始执行", "执行任务",
         ]
         
         input_lower = input_text.lower()
@@ -716,40 +769,92 @@ class JARVIS:
                 return (f"✅ 步骤完成：{step_to_complete.description}\n\n"
                        f"🎉 所有步骤已完成！任务'{task.goal}'执行完成。")
     
-    def _simple_response(self, input_text: str) -> str:
+    def _simple_response(self, input_text: str, memory_context: str = "") -> str:
         """
-        简单响应逻辑（第一阶段）
-        
+        LLM驱动的主响应逻辑（无硬编码关键词）
+
         Args:
             input_text: 用户输入文本
-            
+            memory_context: 相关记忆上下文
+
         Returns:
             str: 响应文本
         """
-        # 简单的关键字匹配
-        input_lower = input_text.lower()
-        
-        if "时间" in input_lower or "几点了" in input_lower:
+        # 精确工具命令（非关键词匹配）
+        input_lower = input_text.lower().strip()
+        if input_lower in ("现在几点了", "时间", "告诉我时间"):
             try:
                 result = self.tool_manager.execute_tool("get_time")
                 return f"当前时间是：{result}"
             except Exception as e:
                 self.logger.error(f"获取时间失败: {str(e)}")
                 return "抱歉，我无法获取当前时间。"
-        
-        elif "天气" in input_lower:
-            # 暂时不支持天气查询
+
+        if input_lower in ("天气", "今天天气"):
             return "天气查询功能将在后续版本中实现。"
-        
-        elif "帮助" in input_lower or "help" in input_lower:
-            return self._get_help_text()
-        
-        elif "规划引擎" in input_lower or "任务规划" in input_lower:
-            return self._get_planning_engine_info()
-        
-        else:
-            return f"我已经收到你的消息：'{input_text}'。\n\n" + self._get_suggestions()
+
+        # LLM 响应
+        if self.brain_engine:
+            try:
+                system_prompt = (
+                    "你是一个AI助手JARVIS，由用户构建的私人智能助手。"
+                    "请用中文友好地回答用户的问题。回答简洁明了，不要使用markdown格式。\n\n"
+                    "## 你可以执行的操作\n"
+                    "如果用户请求以下操作，请在回答末尾加上操作标记 （不要标记在中间或开头）：\n"
+                    "- 用户要求规划/安排/组织某事 → [[ACTION:CREATE_TASK]]\n"
+                    "- 用户要查看任务列表 → [[ACTION:LIST_TASKS]]\n"
+                    "- 用户要求你学习某个主题 → [[ACTION:LEARN]]\n"
+                    "- 用户询问我能做什么/功能 → [[ACTION:PLANNING_INFO]]\n"
+                    "- 用户问规划引擎信息 → [[ACTION:PLANNING_INFO]]\n"
+                    "如果不需要执行操作，不要加任何标记。"
+                )
+
+                if memory_context:
+                    system_prompt += (
+                        "\n\n## 相关历史记忆\n"
+                        f"{memory_context}\n\n"
+                        "参考上述记忆回答用户。"
+                    )
+
+                response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt)
+                if response and "查询失败" not in response:
+                    return response.strip()
+            except Exception as e:
+                self.logger.error(f"LLM响应失败: {str(e)}")
+
+        # 兜底
+        return f"我已经收到你的消息：'{input_text}'。\n\n" + self._get_suggestions()
     
+    def _handle_learning_request(self, input_text: str) -> str:
+        """处理主动学习请求 — 让LLM学习主题并存入记忆"""
+        if not self.brain_engine:
+            return "好的，我会去学习相关知识并记住。"
+        try:
+            learn_prompt = (
+                f"用户要求你学习以下主题：{input_text}\n\n"
+                "请提供该主题的核心知识点总结（简洁版），包括核心概念和关键知识点。用中文回答。"
+            )
+            sys_prompt = "你是一个主动学习助手。生成知识摘要后告知用户已掌握。"
+            response = self.brain_engine.simple_query(learn_prompt, system_prompt=sys_prompt)
+            if not response or "查询失败" in response:
+                return "好的，我会学习相关内容并记住。"
+            if self.memory_engine:
+                self.memory_engine.add_fact_memory(
+                    f"用户要求学习: {input_text}", importance=0.8,
+                    tags=["learning_goal"]
+                )
+                for line in response.split("\n"):
+                    line = line.strip().strip("#* ")
+                    if line and len(line) > 10:
+                        self.memory_engine.add_fact_memory(
+                            line, importance=0.6, tags=["knowledge"]
+                        )
+                self.logger.info(f"学习内容已存入记忆: {input_text[:30]}...")
+            return response
+        except Exception as e:
+            self.logger.error(f"学习处理失败: {e}")
+            return "好的，我会学习相关知识并记住。"
+
     def _get_help_text(self) -> str:
         """获取帮助文本"""
         tool_names = self.tool_manager.get_tool_names()
@@ -855,10 +960,21 @@ class JARVIS:
                 self.logger.error(f"处理输入时出错: {str(e)}")
                 print(f"抱歉，处理时出现错误: {str(e)}\n")
     
-    def run_web(self, host: str = "127.0.0.1", port: int = 8000):
-        """运行Web服务（第二阶段实现）"""
-        self.logger.info(f"Web服务将在 {host}:{port} 启动")
-        return "Web服务将在后续版本中实现"
+    def run_web(self, host: str = "127.0.0.1", port: int = 8011):
+        """运行Web服务（使用 web_active_jarvis.py 的 WebActiveJARVIS）"""
+        try:
+            from web_active_jarvis import WebActiveJARVIS
+            web_app = WebActiveJARVIS()
+            # 覆盖默认端口
+            web_app.config["web_host"] = host
+            web_app.config["web_port"] = port
+            print(f"🌐 启动 FastAPI Web 服务: http://{host}:{port}")
+            web_app.run_web()
+        except KeyboardInterrupt:
+            print("\n🛑 Web服务器已停止")
+        except Exception as e:
+            self.logger.error(f"Web服务启动失败: {str(e)}")
+            print(f"❌ Web服务启动失败: {e}")
 
 
 def main():
