@@ -214,14 +214,24 @@ start_service() {
 	pid=$!
 	echo "$pid" > "$(pid_file "$service")"
 
-	# 等待 3 秒确认启动
-	sleep 3
+	# 等待端口就绪（最多 15 秒，嵌入模型加载较慢）
+	local port
+	port="$(service_port "$service")"
+	local waited=0
+	while [[ $waited -lt 15 ]]; do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			break
+		fi
+		if [[ -z "$port" ]] || check_port "$port"; then
+			break
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
 
 	if kill -0 "$pid" 2>/dev/null; then
-		local port
-		port="$(service_port "$service")"
 		if [[ -n "$port" ]] && ! check_port "$port"; then
-			log_warn "$(service_desc "$service") 进程启动但端口 ${port} 未监听"
+			log_warn "$(service_desc "$service") 进程运行中但端口 ${port} 未监听（等待 ${waited}s）"
 		fi
 		log_info "$(service_desc "$service") 启动成功 (PID: ${pid})"
 	else
