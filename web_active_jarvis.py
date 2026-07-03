@@ -575,7 +575,7 @@ input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
 function renderMarkdown(text) {
   return text
     // Code block
-    .replace(/```(?:\\w*)\n([\\s\\S]*?)```/g, '<pre><code>$1</code></pre>')
+    .replace(/```(?:\\w*)\\n([\\s\\S]*?)```/g, '<pre><code>$1</code></pre>')
     // Inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     // Headers
@@ -594,18 +594,18 @@ function renderMarkdown(text) {
     .replace(/!\\[(.*?)\\]\\((.+?)\\)/g, '<img src="$2" alt="$1" style="max-width:100%">')
     // Unordered list
     .replace(/^[*\\-] (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\\/li>\n?)+/g, '<ul>$&</ul>')
+    .replace(/(<li>.*<\\/li>\\n?)+/g, '<ul>$&</ul>')
     // Ordered list
     .replace(/^\\d+\\. (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*?<\\/li>(?:\n?<li>.*?<\\/li>)*)/g, '<ol>$1</ol>')
+    .replace(/(<li>.*?<\\/li>(?:\\n?<li>.*?<\\/li>)*)/g, '<ol>$1</ol>')
     // Blockquote
     .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
     // Horizontal rule
     .replace(/^(---|\\*\\*\\*)$/gm, '<hr>')
     // Paragraphs (double newline)
-    .replace(/\n\n/g, '</p><p>')
+    .replace(/\\n\\n/g, '</p><p>')
     // Single newline => line break
-    .replace(/\n/g, '<br>')
+    .replace(/\\n/g, '<br>')
     // Wrap entire content in paragraph if it is plain text
     .replace(/^(<p>.*)/, '$1')
     .replace(/^([^<].+)/, '<p>$1</p>')
