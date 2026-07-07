@@ -5,7 +5,7 @@ from jarvis.main import JARVIS
 
 def quick_test():
     """快速测试手动执行模式"""
-    print("🤖 快速验证手动执行模式")
+    print("快速验证手动执行模式")
     print("-" * 40)
     
     # 初始化JARVIS

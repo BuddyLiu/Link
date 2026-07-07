@@ -541,7 +541,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </head>
 <body>
 <div class="header">
-<h1>&#x1F916; JARVIS</h1>
+<h1>JARVIS</h1>
 <a href="/debug">&#x2699; 调试</a>
 </div>
 <div id="chat-box"></div>
@@ -787,7 +787,7 @@ function showTyping() {
   if (existing) return;
   const div = document.createElement('div');
   div.className = 'msg assistant typing';
-  div.innerHTML = '<div class="bubble">&#x1F916; 思考中...</div>';
+  div.innerHTML = '<div class="bubble">思考中...</div>';
   chatBox.appendChild(div);
   chatBox.scrollTop = chatBox.scrollHeight;
 }
