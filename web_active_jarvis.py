@@ -1751,7 +1751,7 @@ async function loadArchives() {
         listHtml += '<td>' + escapeHtml(a.label||'') + '</td>';
         listHtml += '<td>' + (a.memory_count||0) + '</td>';
         listHtml += '<td style="color:' + verifiedColor + ';font-size:13px">' + verifiedIcon + '</td>';
-        listHtml += '<td><button onclick="restoreArchive(\'' + a.archive_id + '\')" style="padding:4px 12px;background:#34a853;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">恢复</button></td></tr>';
+        listHtml += `<td><button class="restore-btn" onclick="restoreArchive('${a.archive_id}')" style="padding:4px 12px;background:#34a853;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">恢复</button></td></tr>`;
       }
       listHtml += '</tbody></table></div>';
     }
@@ -1787,7 +1787,8 @@ async function createArchive() {
 async function restoreArchive(archiveId) {
   if (!confirm('确定要恢复归档 ' + archiveId.substring(0,30) + ' 吗？\\n当前记忆将被替换！')) return;
   if (!confirm('再次确认：当前所有记忆将被删除，替换为归档版本。')) return;
-  const btn = document.querySelector('[onclick="restoreArchive(\\'' + archiveId + '\\')"]');
+  const btns = document.querySelectorAll('.restore-btn');
+  const btn = btns.length === 1 ? btns[0] : document.querySelector(`[onclick*="restoreArchive('${archiveId.slice(0,12)}")]`);
   if (btn) { btn.disabled = true; btn.textContent = '恢复中...'; }
   try {
     const r = await fetch('/api/debug/archive/restore', {
