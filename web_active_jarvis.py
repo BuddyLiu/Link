@@ -1430,7 +1430,7 @@ tr:hover{background:#f0f7ff}
 <script>
 let data = null;
 
-let memPage = 1, intPage = 1;
+let memPage = 1, intPage = 1, currentTab = 'memory';
 const MEM_PER_PAGE = 20, INT_PER_PAGE = 10;
 
 async function loadData() {
@@ -1456,10 +1456,34 @@ async function loadData() {
 }
 
 function switchTab(el, name) {
+  currentTab = name;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
+}
+
+async function refreshCurrentTab() {
+  try {
+    if (currentTab === 'memory') {
+      loadMemoriesPage(memPage);
+    } else if (currentTab === 'brain') {
+      loadInteractionsPage(intPage);
+    } else if (currentTab === 'archive') {
+      loadArchives();
+    } else if (currentTab === 'search') {
+      // search is user-initiated, skip auto-refresh
+    } else {
+      // planning, system — full refresh for stats
+      const r = await fetch('/api/debug');
+      const d = await r.json();
+      if (currentTab === 'planning') renderPlanning(d.planning);
+      if (currentTab === 'system') renderSystem(d);
+    }
+    document.getElementById('last-update').textContent = '更新: ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    console.error('Auto-refresh failed:', e);
+  }
 }
 
 function renderMemory(m) {
@@ -1829,8 +1853,8 @@ async function resetMemory() {
 }
 
 loadData();
-// Auto-refresh every 10s
-setInterval(loadData, 10000);
+// Auto-refresh every 10s — only refresh active tab
+setInterval(refreshCurrentTab, 10000);
 </script>
 </body>
 </html>"""

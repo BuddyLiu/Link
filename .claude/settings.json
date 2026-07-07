@@ -81,7 +81,11 @@
       "Bash(awk 'NR>=169 && NR<=173 {printf \"%d: %s\\\\n\", NR, $0}')",
       "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('运行中:',d['web']['is_running']\\);print\\('记忆:',d['memory']['stats']['total_memories']\\)\")",
       "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\(f'{len\\(d[\\\\\"archives\\\\\"]\\)} 个归档'\\)\")",
-      "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\(f'第{d[\\\\\"page\\\\\"]}页/共{int\\(d[\\\\\"total\\\\\"]/d[\\\\\"per_page\\\\\"]\\)+1}页,{d[\\\\\"total\\\\\"]}条'\\)\")"
+      "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\(f'第{d[\\\\\"page\\\\\"]}页/共{int\\(d[\\\\\"total\\\\\"]/d[\\\\\"per_page\\\\\"]\\)+1}页,{d[\\\\\"total\\\\\"]}条'\\)\")",
+      "Bash(awk 'NR>=400 && NR<=410 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} \\(size: %{size_download} bytes\\)\" http://127.0.0.1:8011/debug)",
+      "Bash(awk 'NR>=422 && NR<=430 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(grep -v \"^[0-9]*:.*#\\\\|^[0-9]*:\\\\s*$\\\\|\\\\.pyc\")"
     ],
     "additionalDirectories": [
       "/private/tmp",
