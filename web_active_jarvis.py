@@ -504,6 +504,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .typing .bubble{color:#999;font-style:italic}
 .msg.system{align-items:center}
 .msg.system .bubble{background:transparent;color:#999;font-size:12px;max-width:100%;text-align:center}
+.copy-btn{font-size:11px;cursor:pointer;opacity:0;transition:opacity .2s;border:none;background:transparent;padding:2px 6px;border-radius:4px;color:#888}
+.copy-btn:hover{background:#e0e0e0;color:#333}
+.copy-btn.visible{opacity:1}
+.msg:hover .copy-btn{opacity:0.6}
+.code-wrap{position:relative;margin:6px 0}
+.code-copy{position:absolute;top:6px;right:6px;padding:2px 8px;font-size:11px;background:rgba(255,255,255,.15);color:#cdd6f4;border:1px solid rgba(255,255,255,.2);border-radius:4px;cursor:pointer;opacity:0;transition:opacity .2s}
+.code-wrap:hover .code-copy{opacity:1}
+.code-copy:hover{background:rgba(255,255,255,.3)}
 /* Markdown Styles */
 .msg .bubble pre{background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:8px;overflow-x:auto;font-size:13px;margin:6px 0;font-family:'SF Mono','Fira Code','Consolas',monospace}
 .msg .bubble code{background:#e8eaed;color:#d63384;padding:2px 6px;border-radius:4px;font-size:13px;font-family:'SF Mono','Fira Code',monospace}
@@ -571,11 +579,34 @@ function send() {
 
 input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
 
+// ----- Helper: smart auto-scroll & copy -----
+function isNearBottom() {
+  return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 120;
+}
+function scrollToBottom() {
+  if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = '已✓';
+    setTimeout(() => { btn.textContent = '复制'; }, 2000);
+  } catch { btn.textContent = '失败'; }
+}
+
+function copyCode(btn) {
+  const code = btn.parentElement.querySelector('code');
+  if (!code) return;
+  copyText(code.textContent, btn);
+}
+
 // ----- Markdown Parser (lightweight, no dependencies) -----
 function renderMarkdown(text) {
   return text
-    // Code block
-    .replace(/```(?:\\w*)\\n([\\s\\S]*?)```/g, '<pre><code>$1</code></pre>')
+    // Code block (wrap with copy button)
+    .replace(/```(?:\\w*)\\n([\\s\\S]*?)```/g,
+      '<div class="code-wrap"><button class="code-copy" onclick="copyCode(this)">复制</button><pre><code>$1</code></pre></div>')
     // Inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     // Headers
@@ -618,7 +649,7 @@ function typewriteMessage(role, fullText) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
   chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  scrollToBottom();
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
@@ -630,28 +661,31 @@ function typewriteMessage(role, fullText) {
 
   function type() {
     if (pos < rendered.length) {
-      // Fast-forward through HTML tags (render them instantly)
       if (rendered[pos] === '<') {
         const tagEnd = rendered.indexOf('>', pos);
         if (tagEnd >= 0) {
           htmlBuffer += rendered.slice(pos, tagEnd + 1);
           pos = tagEnd + 1;
           bubble.innerHTML = htmlBuffer + '<span class="cursor"></span>';
-          chatBox.scrollTop = chatBox.scrollHeight;
+          scrollToBottom();
           requestAnimationFrame(type);
           return;
         }
       }
-      // Normal character
       htmlBuffer += rendered[pos];
       pos++;
       bubble.innerHTML = htmlBuffer + '<span class="cursor"></span>';
-      chatBox.scrollTop = chatBox.scrollHeight;
+      scrollToBottom();
       setTimeout(type, TYPE_SPEED);
     } else {
-      // Done
+      // Done — add copy button
       bubble.innerHTML = htmlBuffer;
-      chatBox.scrollTop = chatBox.scrollHeight;
+      scrollToBottom();
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn visible';
+      copyBtn.textContent = '复制';
+      copyBtn.onclick = () => copyText(fullText, copyBtn);
+      bubble.parentElement.appendChild(copyBtn);
       sendBtn.disabled = false;
       input.focus();
     }
@@ -668,12 +702,26 @@ function addMessage(role, content) {
   if (role === 'system') {
     div.innerHTML = '<div class="bubble">' + escapeHtml(content) + '</div>';
   } else {
-    div.innerHTML = '<div class="bubble">' + renderMarkdown(escapeHtml(content)) + '</div><div class="time">' + time + '</div>';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = renderMarkdown(escapeHtml(content));
+    div.appendChild(bubble);
+    // Copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.textContent = '复制';
+    copyBtn.onclick = () => copyText(content, copyBtn);
+    div.appendChild(copyBtn);
+    // Time
+    const timeEl = document.createElement('div');
+    timeEl.className = 'time';
+    timeEl.textContent = time;
+    div.appendChild(timeEl);
   }
   const typing = chatBox.querySelector('.typing');
   if (typing) chatBox.insertBefore(div, typing);
   else chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  scrollToBottom();
 }
 
 function showTyping() {
