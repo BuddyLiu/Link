@@ -580,17 +580,30 @@ async function loadHistory(page) {
     if (d.messages.length === 0) { historyEnd = true; historyLoading = false; return; }
     var loadMore = document.getElementById('load-more');
     if (loadMore) loadMore.remove();
-    var insertBefore = chatBox.firstChild;
-    for (var i = 0; i < d.messages.length; i++) {
-      var msg = d.messages[i];
+
+    function createMsgDiv(msg) {
       var div = document.createElement('div');
       div.className = 'msg ' + msg.role;
       var bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = renderMarkdown(escapeHtml(msg.content));
       div.appendChild(bubble);
-      chatBox.insertBefore(div, insertBefore);
+      return div;
     }
+
+    if (page === 1) {
+      // 第一页追加到底部（最新的在最下面）
+      for (var i = 0; i < d.messages.length; i++) {
+        chatBox.appendChild(createMsgDiv(d.messages[i]));
+      }
+    } else {
+      // 更早的页面插到顶部（反向遍历保持顺序）
+      var firstMsg = chatBox.querySelector('.msg');
+      for (var i = d.messages.length - 1; i >= 0; i--) {
+        chatBox.insertBefore(createMsgDiv(d.messages[i]), firstMsg);
+      }
+    }
+
     if (page * 10 < d.total) {
       var btnDiv = document.createElement('div');
       btnDiv.id = 'load-more';
@@ -600,11 +613,14 @@ async function loadHistory(page) {
       btn.style.cssText = 'padding:6px 16px;background:#f0f2f5;color:#666;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:12px';
       btn.onclick = function() { historyPage++; loadHistory(historyPage); };
       btnDiv.appendChild(btn);
-      chatBox.insertBefore(btnDiv, chatBox.firstChild);
+      chatBox.insertBefore(btnDiv, chatBox.firstChild || null);
     } else {
       historyEnd = true;
     }
     historyPage = page;
+
+    // 加载完成后滚到底部
+    chatBox.scrollTop = chatBox.scrollHeight;
   } catch(e) { console.error('History load failed:', e); }
   historyLoading = false;
 }
@@ -1110,40 +1126,27 @@ function escapeHtml(s) {
             all_m = store.get_all_memories(limit=9999)
             # 只保留 conversation 类型
             convs = [m for m in all_m if m.metadata.get("type") == "conversation"]
-            convs.sort(key=lambda x: x.metadata.get("created_at", ""), reverse=True)
+            # 按时间升序排列（最早的在前）
+            convs.sort(key=lambda x: x.metadata.get("created_at", ""))
 
             total = len(convs)
+            # Page 1 = 最新的对话（倒序切片取最后 per_page 条）
+            rev = convs[::-1]  # 最新的在前
             start = (page - 1) * per_page
-            end = start + per_page
-            page_items = convs[start:end]
+            page_items = rev[start:start + per_page]
+            # 页内恢复时间正序（最早的在前）
+            page_items.reverse()
 
             messages = []
             for m in page_items:
                 content = m.content
-                # 解析 "用户: ...\n助手: ..." 格式
                 parts = content.split("\n助手: ", 1)
                 if len(parts) == 2:
                     user_part = parts[0].replace("用户: ", "", 1)
-                    messages.append({
-                        "role": "user",
-                        "content": user_part,
-                        "time": m.metadata.get("created_at", ""),
-                    })
-                    messages.append({
-                        "role": "assistant",
-                        "content": parts[1],
-                        "time": m.metadata.get("created_at", ""),
-                    })
+                    messages.append({"role": "user", "content": user_part, "time": m.metadata.get("created_at", "")})
+                    messages.append({"role": "assistant", "content": parts[1], "time": m.metadata.get("created_at", "")})
                 else:
-                    # 无法解析的格式，整体作为 assistant 显示
-                    messages.append({
-                        "role": "assistant",
-                        "content": content[:200],
-                        "time": m.metadata.get("created_at", ""),
-                    })
-
-            # 返回时按时间正序（最早的在最前面）
-            messages.reverse()
+                    messages.append({"role": "assistant", "content": content[:200], "time": m.metadata.get("created_at", "")})
             return {"messages": messages, "total": total, "page": page, "per_page": per_page}
         except Exception as e:
             return {"error": str(e), "messages": [], "total": 0}
