@@ -320,6 +320,27 @@ class JARVIS:
             except Exception as e:
                 return f"[[ERROR: 搜索文件失败 {e}]]"
 
+        elif action == "FILE_AUTHORIZE":
+            path = params.get("path", "")
+            mode = params.get("mode", "read")
+            perm_type = params.get("type", "temporary")
+            if not path:
+                return "[[ERROR: 缺少 path 参数]]"
+            from src.tools.file_permissions import get_permission_manager
+            pm = get_permission_manager()
+            result = pm.authorize(path, mode, perm_type)
+            return result["message"]
+
+        elif action == "FILE_AUTH_LIST":
+            from src.tools.file_permissions import get_permission_manager
+            pm = get_permission_manager()
+            perms = pm.list_permissions()
+            lines = ["当前文件访问权限："]
+            for p in perms:
+                mark = "📁" if p["under_project"] else "🔓"
+                lines.append(f"  {mark} {p['path']} ({p['mode']}, {p['type']})")
+            return "\n".join(lines)
+
         return f"[[ERROR: 未知的文件操作 {action}]]"
 
     def _extract_facts_from_conversation(self, user_input: str, response: str):
@@ -1080,6 +1101,12 @@ class JARVIS:
                     "- 写入文件 → [[ACTION:FILE_WRITE|path=文件路径|content=内容]]\n"
                     "- 编辑文件指定行 → [[ACTION:FILE_EDIT|path=路径|operation=replace|line=行号|content=新内容]]\n"
                     "- 搜索文件内容 → [[ACTION:FILE_GREP|pattern=关键词|include=.py]]\n"
+                    "- 授权外部文件访问 → [[ACTION:FILE_AUTHORIZE|path=路径|mode=read|type=temporary]]\n"
+                    "- 查看已授权路径 → [[ACTION:FILE_AUTH_LIST]]\n"
+                    "\n"
+                    "文件操作默认只能在当前项目目录内。如果需要访问项目外的文件，\n"
+                    "必须先通过 FILE_AUTHORIZE 授权。授权分临时（temporary）和持久（permanent）。\n"
+                    "如果用户要求你访问某个外部文件，但授权被拒，可以提醒用户授权。\n"
                     "如果不需要执行操作，不要加任何标记。操作标记放在回答末尾。"
                 )
 

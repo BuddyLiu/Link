@@ -16,9 +16,11 @@ from pathlib import Path
 try:
     from . import Tool, SystemTool, tool_manager
     from utils.logger import logger
+    from .file_permissions import get_permission_manager
 except ImportError:
     from . import Tool, SystemTool, tool_manager
     from ..utils.logger import logger
+    from ..tools.file_permissions import get_permission_manager
 
 
 class GetTimeTool(SystemTool):
@@ -119,9 +121,15 @@ class ListFilesTool(SystemTool):
     def execute(self, **kwargs) -> list:
         path = kwargs.get("path", ".")
         recursive = kwargs.get("recursive", False)
-        
+
+        # 权限检查
+        p = Path(path).resolve()
+        allowed, reason = get_permission_manager().is_path_allowed(str(p), "read")
+        if not allowed:
+            raise PermissionError(reason)
+
         try:
-            path_obj = Path(path).resolve()
+            path_obj = p
             if not path_obj.exists():
                 raise FileNotFoundError(f"目录不存在: {path}")
             
@@ -165,9 +173,15 @@ class ReadFileTool(SystemTool):
     def execute(self, **kwargs) -> str:
         path = kwargs["path"]
         encoding = kwargs.get("encoding", "utf-8")
-        
+
+        # 权限检查
+        p = Path(path).resolve()
+        allowed, reason = get_permission_manager().is_path_allowed(str(p), "read")
+        if not allowed:
+            raise PermissionError(reason)
+
         try:
-            path_obj = Path(path).resolve()
+            path_obj = p
             if not path_obj.exists():
                 raise FileNotFoundError(f"文件不存在: {path}")
             
@@ -289,15 +303,12 @@ class EditFileTool(SystemTool):
         }
         super().__init__("edit_file", "编辑文件指定行（替换/插入/删除）", parameters)
 
-    def _safe_path(self, path: str) -> Path:
-        """确保文件在项目目录内"""
+    def _safe_path(self, path: str, mode: str = "write") -> Path:
+        """检查路径访问权限"""
         p = Path(path).resolve()
-        # 项目根目录（common ancestor safety）
-        allowed = Path(os.getcwd()).resolve()
-        try:
-            p.relative_to(allowed)
-        except ValueError:
-            raise PermissionError(f"不允许访问 {allowed} 目录之外的文件: {p}")
+        allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
+        if not allowed:
+            raise PermissionError(reason)
         return p
 
     def execute(self, **kwargs) -> str:
@@ -369,13 +380,11 @@ class WriteFileTool(SystemTool):
         }
         super().__init__("write_file", "创建或覆盖写入文件", parameters)
 
-    def _safe_path(self, path: str) -> Path:
+    def _safe_path(self, path: str, mode: str = "write") -> Path:
         p = Path(path).resolve()
-        allowed = Path(os.getcwd()).resolve()
-        try:
-            p.relative_to(allowed)
-        except ValueError:
-            raise PermissionError(f"不允许访问 {allowed} 目录之外的文件: {p}")
+        allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
+        if not allowed:
+            raise PermissionError(reason)
         return p
 
     def execute(self, **kwargs) -> str:
@@ -402,13 +411,11 @@ class GrepFilesTool(SystemTool):
         }
         super().__init__("grep_files", "在文件中搜索文本", parameters)
 
-    def _safe_path(self, path: str) -> Path:
+    def _safe_path(self, path: str, mode: str = "read") -> Path:
         p = Path(path).resolve()
-        allowed = Path(os.getcwd()).resolve()
-        try:
-            p.relative_to(allowed)
-        except ValueError:
-            raise PermissionError(f"不允许访问 {allowed} 目录之外: {p}")
+        allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
+        if not allowed:
+            raise PermissionError(reason)
         return p
 
     def execute(self, **kwargs) -> str:
