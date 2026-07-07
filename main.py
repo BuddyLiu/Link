@@ -42,6 +42,7 @@ class JARVIS:
         
         # 第二阶段组件 - 记忆
         self.memory_engine = None
+        self._user_profile = ""
 
         # 第三阶段组件
         self.planning_engine = None
@@ -242,28 +243,66 @@ class JARVIS:
         return ""
 
     def _extract_facts_from_conversation(self, user_input: str, response: str):
-        """记录器 Phase A：从对话中提取关键事实并存入记忆"""
-        if not self.memory_engine or not self.brain_engine:
+        """从对话中提取关于用户的关键事实并存入记忆"""
+        if not self.memory_engine:
             return
-        try:
-            from datetime import datetime
-            # 调用 LLM 提取事实（简短快速）
-            extract_prompt = (
-                "从以下对话中提取关键事实（姓名、偏好、事件、日程），"
-                "每行一条。如果没有重要信息，回复无。\n\n"
-                f"用户: {user_input}\n"
-                f"助手: {response}"
-            )
-            sys_prompt = "你是一个记忆提取器。只输出提取到的事实，每行一条。不要解释。"
-            facts_text = self.brain_engine.simple_query(extract_prompt, system_prompt=sys_prompt)
-            if facts_text and facts_text.strip() and facts_text.strip() != "无":
-                for line in facts_text.strip().split("\n"):
-                    line = line.strip().strip('-* ')
-                    if line and len(line) > 4:
-                        self.memory_engine.add_fact_memory(line, importance=0.7)
-                        self.logger.debug(f"记忆记录器保存事实: {line[:40]}...")
-        except Exception as e:
-            self.logger.debug(f"记忆记录器提取失败: {e}")
+        facts = []
+
+        # 方法1: 正则提取常见自我介绍模式（高精确度，无需LLM）
+        facts += self._regex_extract_facts(user_input)
+
+        # 方法2: LLM提取（覆盖复杂表述）
+        if self.brain_engine:
+            try:
+                prompt = f"从用户的话中提取关于用户的事实：{user_input}\n只输出事实，每行一个。没有则回复无。"
+                llm_out = self.brain_engine.simple_query(
+                    prompt,
+                    system_prompt="提取用户个人信息，只输出事实，不要解释。"
+                )
+                if llm_out and llm_out.strip() not in ("无", ""):
+                    for line in llm_out.strip().split("\n"):
+                        line = line.strip().strip('-* ')
+                        if line and len(line) > 4 and "助手" not in line and "Assistant" not in line:
+                            if line not in facts:
+                                facts.append(line)
+            except Exception:
+                pass
+
+        # 去重并保存
+        seen = set()
+        saved = 0
+        for f in facts:
+            key = f[:20]
+            if key not in seen:
+                seen.add(key)
+                try:
+                    self.memory_engine.add_fact_memory(f, importance=0.85)
+                    saved += 1
+                except Exception:
+                    pass
+
+        if saved:
+            self.logger.info(f"记忆记录器保存 {saved} 条用户事实")
+            self._update_user_profile()
+
+    def _regex_extract_facts(self, text: str) -> list:
+        """正则提取常见自我介绍模式"""
+        facts = []
+        import re
+        # 我叫X / 我是X / 我的名字是X / 名字叫X
+        m = re.search(r'(?:我叫|我是|我的名字叫?|名字叫|人称)(\S{2,6})', text)
+        if m:
+            facts.append(f"用户叫{m.group(1)}")
+        # 我是XX工程师 / 我做XX / 我的职业是X
+        m = re.search(r'(?:我是|我做|我的职业是|我是[一名位]).{0,4}([一-鿿]{2,10}(?:工程师|设计师|产品|经理|开发|架构师))', text)
+        if m:
+            facts.append(f"用户是{m.group(1)}")
+        # 我喜欢X / 我平时X / 我爱X
+        m = re.search(r'(?:我喜欢|我平时|我爱|我热衷于|我爱好)(.{2,20})', text)
+        if m:
+            facts.append(f"用户喜欢{m.group(1)}")
+        # 我从事实处理X
+        return facts
 
     def _save_to_memory(self, user_input: str, response: str, mem_type: str = "conversation"):
         """将对话保存到持久记忆"""
@@ -277,24 +316,64 @@ class JARVIS:
         except Exception as e:
             self.logger.debug(f"保存记忆失败: {e}")
     
+    def _update_user_profile(self):
+        """从事实记忆中构建用户画像并缓存"""
+        if not self.memory_engine:
+            return
+        try:
+            all_mem = self.memory_engine.store.get_all_memories()
+            # 取 fact 类型，低阈值（有些事实重要性存的是默认值0.5）
+            user_facts = []
+            for m in all_mem:
+                if m.metadata.get("type") != "fact":
+                    continue
+                if "助手" in m.content[:10] or "助理" in m.content[:10]:
+                    continue
+                if len(m.content) < 6:
+                    continue
+                user_facts.append(m)
+
+            # 去重
+            seen = set()
+            lines = []
+            for m in sorted(user_facts, key=lambda x: x.importance, reverse=True):
+                key = m.content[:20]
+                if key not in seen:
+                    seen.add(key)
+                    lines.append(f"- {m.content[:120]}")
+            self._user_profile = "\n".join(lines) if lines else ""
+            if lines:
+                self.logger.info(f"用户画像已更新: {len(lines)} 条")
+        except Exception as e:
+            self.logger.debug(f"用户画像更新失败: {e}")
+
     def _retrieve_memory_context(self, query: str) -> str:
-        """检索相关记忆作为LLM上下文"""
+        """检索相关记忆作为LLM上下文，含用户画像"""
         if not self.memory_engine:
             return ""
+        parts = []
+
+        # 1. 用户画像（始终包含）
+        if hasattr(self, '_user_profile') and self._user_profile:
+            parts.append("【关于用户】\n" + self._user_profile)
+
+        # 2. 当前查询相关的记忆（对话 + 事实）
         try:
-            related = self.memory_engine.search_memories(query, n_results=3)
-            if not related:
-                return ""
-            lines = []
-            for r in related:
-                mem_type = r.memory.metadata.get("type", "general")
-                content = r.memory.content[:100]
-                lines.append(f"[{mem_type}]({r.similarity:.2f}) {content}")
-            self.logger.info(f"检索到 {len(related)} 条相关记忆")
-            return "\n".join(lines)
+            related = self.memory_engine.search_memories(query, n_results=5)
+            if related:
+                lines = []
+                for r in related:
+                    mt = r.memory.metadata.get("type", "?")
+                    content = r.memory.content[:150]
+                    if r.similarity >= 0.5:
+                        lines.append(f"- {content}")
+                if lines:
+                    parts.append("【相关记录】\n" + "\n".join(lines[:4]))
+                self.logger.info(f"检索到 {len(related)} 条相关记录")
         except Exception as e:
             self.logger.debug(f"记忆检索失败: {e}")
-            return ""
+
+        return "\n\n".join(parts) if parts else ""
 
 
     

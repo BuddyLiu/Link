@@ -214,11 +214,14 @@ class SimpleMemoryStore:
         # 更新时间字段
         metadata["updated_at"] = metadata["created_at"]
 
-        # 创建记忆记录
+        # 创建记忆记录（importance 同时存顶层和 metadata 内，便于搜索和显示）
+        imp = metadata.get("importance", 0.5)
         memory_record = {
             "id": memory_id,
             "content": content,
             "metadata": metadata,
+            "memory_type": metadata.get("type", "conversation"),
+            "importance": imp,
         }
 
         # 计算嵌入向量
