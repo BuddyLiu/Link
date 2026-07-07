@@ -1773,7 +1773,7 @@ async function createArchive() {
     });
     const d = await r.json();
     if (d.success) {
-      alert('&#x2705; 归档成功！\n' + d.archive.archive_id + '\n' + d.archive.memory_count + ' 条记忆');
+      alert('&#x2705; 归档成功！\\n' + d.archive.archive_id + '\\n' + d.archive.memory_count + ' 条记忆');
       loadArchives(); // refresh
     } else {
       alert('&#x274C; 归档失败: ' + (d.error||'unknown'));
