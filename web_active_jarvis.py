@@ -556,8 +556,9 @@ const chatBox = document.getElementById('chat-box');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const TYPE_SPEED = 30; // ms per character
+var historyPage = 1, historyLoading = false, historyEnd = false;
 
-ws.onopen = () => addMessage('system', '已连接到 JARVIS');
+ws.onopen = () => { addMessage('system', '已连接到 JARVIS'); loadHistory(); };
 ws.onclose = () => addMessage('system', '连接已断开');
 ws.onmessage = e => {
   const d = JSON.parse(e.data);
@@ -566,6 +567,47 @@ ws.onmessage = e => {
     typewriteMessage('assistant', d.data.result || '');
   }
 };
+
+// ── 历史会话分页加载 ──
+async function loadHistory(page) {
+  if (!page) page = historyPage;
+  if (historyLoading || historyEnd) return;
+  historyLoading = true;
+  try {
+    const r = await fetch('/api/chat/history?page=' + page + '&per_page=10');
+    const d = await r.json();
+    if (d.error || !d.messages) { historyLoading = false; return; }
+    if (d.messages.length === 0) { historyEnd = true; historyLoading = false; return; }
+    var loadMore = document.getElementById('load-more');
+    if (loadMore) loadMore.remove();
+    var insertBefore = chatBox.firstChild;
+    for (var i = 0; i < d.messages.length; i++) {
+      var msg = d.messages[i];
+      var div = document.createElement('div');
+      div.className = 'msg ' + msg.role;
+      var bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = renderMarkdown(escapeHtml(msg.content));
+      div.appendChild(bubble);
+      chatBox.insertBefore(div, insertBefore);
+    }
+    if (page * 10 < d.total) {
+      var btnDiv = document.createElement('div');
+      btnDiv.id = 'load-more';
+      btnDiv.style.cssText = 'text-align:center;padding:8px;margin-bottom:8px';
+      var btn = document.createElement('button');
+      btn.textContent = '⬆ 加载更早消息';
+      btn.style.cssText = 'padding:6px 16px;background:#f0f2f5;color:#666;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:12px';
+      btn.onclick = function() { historyPage++; loadHistory(historyPage); };
+      btnDiv.appendChild(btn);
+      chatBox.insertBefore(btnDiv, chatBox.firstChild);
+    } else {
+      historyEnd = true;
+    }
+    historyPage = page;
+  } catch(e) { console.error('History load failed:', e); }
+  historyLoading = false;
+}
 
 function send() {
   const text = input.value.trim();
@@ -847,6 +889,10 @@ function escapeHtml(s) {
         async def post_debug_memory_reset():
             return await self._reset_debug_memory()
 
+        @self.app.get("/api/chat/history")
+        async def get_chat_history(page: int = 1, per_page: int = 10):
+            return await self._get_chat_history(page, per_page)
+
 
     async def _get_debug_data(self) -> dict:
         data = {"timestamp": time.time(), "timestamp_str": __import__("datetime").datetime.now().isoformat()}
@@ -1054,6 +1100,53 @@ function escapeHtml(s) {
             return {"success": True, "cleared_count": count}
         except Exception as e:
             return {"error": str(e)}
+
+    async def _get_chat_history(self, page: int, per_page: int) -> dict:
+        """分页获取历史会话（仅 conversation 类型记忆）"""
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"error": "memory not available", "messages": [], "total": 0}
+        try:
+            store = self.brain_jarvis.memory_engine.store
+            all_m = store.get_all_memories(limit=9999)
+            # 只保留 conversation 类型
+            convs = [m for m in all_m if m.metadata.get("type") == "conversation"]
+            convs.sort(key=lambda x: x.metadata.get("created_at", ""), reverse=True)
+
+            total = len(convs)
+            start = (page - 1) * per_page
+            end = start + per_page
+            page_items = convs[start:end]
+
+            messages = []
+            for m in page_items:
+                content = m.content
+                # 解析 "用户: ...\n助手: ..." 格式
+                parts = content.split("\n助手: ", 1)
+                if len(parts) == 2:
+                    user_part = parts[0].replace("用户: ", "", 1)
+                    messages.append({
+                        "role": "user",
+                        "content": user_part,
+                        "time": m.metadata.get("created_at", ""),
+                    })
+                    messages.append({
+                        "role": "assistant",
+                        "content": parts[1],
+                        "time": m.metadata.get("created_at", ""),
+                    })
+                else:
+                    # 无法解析的格式，整体作为 assistant 显示
+                    messages.append({
+                        "role": "assistant",
+                        "content": content[:200],
+                        "time": m.metadata.get("created_at", ""),
+                    })
+
+            # 返回时按时间正序（最早的在最前面）
+            messages.reverse()
+            return {"messages": messages, "total": total, "page": page, "per_page": per_page}
+        except Exception as e:
+            return {"error": str(e), "messages": [], "total": 0}
 
     async def _handle_command(self, websocket: WebSocket, command: str):
         """处理命令"""
