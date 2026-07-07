@@ -248,7 +248,7 @@ class JARVIS:
             return
         facts = []
 
-        # 方法1: 正则提取常见自我介绍模式（高精确度，无需LLM）
+        # 方法1: 正则提取（高精确度，无需LLM）
         facts += self._regex_extract_facts(user_input)
 
         # 方法2: LLM提取（覆盖复杂表述）
@@ -262,46 +262,114 @@ class JARVIS:
                 if llm_out and llm_out.strip() not in ("无", ""):
                     for line in llm_out.strip().split("\n"):
                         line = line.strip().strip('-* ')
-                        if line and len(line) > 4 and "助手" not in line and "Assistant" not in line:
+                        if line and len(line) > 4 \
+                           and "助手" not in line \
+                           and "Assistant" not in line \
+                           and "JARVIS" not in line.upper() \
+                           and not line.endswith("。") or (line.endswith("。") and len(line) > 8):
                             if line not in facts:
                                 facts.append(line)
             except Exception:
                 pass
 
-        # 去重并保存
-        seen = set()
-        saved = 0
+        # 过滤垃圾：太短、非用户信息
+        clean_facts = []
         for f in facts:
-            key = f[:20]
-            if key not in seen:
-                seen.add(key)
-                try:
-                    self.memory_engine.add_fact_memory(f, importance=0.85)
-                    saved += 1
-                except Exception:
-                    pass
+            f = f.strip().strip('。，.').strip()
+            if len(f) < 4:
+                continue
+            if 'JARVIS' in f.upper() or '助手' in f or '助理' in f:
+                continue
+            if f not in clean_facts:
+                clean_facts.append(f)
+
+        # 保存前检测并删除矛盾事实（如用户职业从A变成B）
+        if clean_facts:
+            self._remove_contradicting_facts(clean_facts)
+
+        # 保存新事实
+        saved = 0
+        for f in clean_facts:
+            try:
+                self.memory_engine.add_fact_memory(f, importance=0.85)
+                saved += 1
+            except Exception:
+                pass
 
         if saved:
             self.logger.info(f"记忆记录器保存 {saved} 条用户事实")
             self._update_user_profile()
 
+    def _remove_contradicting_facts(self, new_facts: list):
+        """检测并删除与已有事实矛盾的事实（职业/偏好等更新时清理旧值）"""
+        if not self.memory_engine or not new_facts:
+            return
+        try:
+            # 定义事实类别及其匹配模式
+            # 新事实 → 匹配旧事实中的关键词
+            category_patterns = {
+                "用户职业": ["职业", "工程师", "开发", "设计师", "产品经理", "经理", "架构师"],
+                "用户叫": ["用户叫", "名为", "名字", "姓名"],
+                "用户偏好": ["喜欢", "爱好", "偏好", "热爱", "热衷于"],
+            }
+
+            # 判断一条事实属于哪个类别
+            def classify_fact(fact_text):
+                for cat, keywords in category_patterns.items():
+                    if any(kw in fact_text for kw in keywords):
+                        return cat
+                return None
+
+            # 新事实的类别
+            new_categories = set()
+            for f in new_facts:
+                c = classify_fact(f)
+                if c:
+                    new_categories.add(c)
+
+            if not new_categories:
+                return
+
+            # 查找同类别旧事实并删除
+            all_mem = self.memory_engine.store.get_all_memories()
+            deleted = 0
+            for m in all_mem:
+                if m.metadata.get("type") != "fact":
+                    continue
+                old_cat = classify_fact(m.content)
+                if old_cat in new_categories:
+                    # 检查是否与新事实相同（避免删除刚加的）
+                    if m.content not in new_facts:
+                        self.memory_engine.store.delete_memory(m.id)
+                        deleted += 1
+            if deleted:
+                self.logger.info(f"检测到职业/偏好更新，删除了 {deleted} 条旧事实")
+        except Exception as e:
+            self.logger.debug(f"矛盾检测失败: {e}")
+
     def _regex_extract_facts(self, text: str) -> list:
-        """正则提取常见自我介绍模式"""
+        """正则提取常见自我介绍模式（只提取关于用户的信息）"""
         facts = []
         import re
-        # 我叫X / 我是X / 我的名字是X / 名字叫X
-        m = re.search(r'(?:我叫|我是|我的名字叫?|名字叫|人称)(\S{2,6})', text)
-        if m:
+        # 我叫X / 我的名字是X / 名字叫X（不含"我是"，避免误匹配）
+        m = re.search(r'(?:我叫|我的名字叫?|名字叫|人称)(\S{2,6})', text)
+        if m and len(m.group(1)) >= 2 and 'JARVIS' not in m.group(1).upper():
             facts.append(f"用户叫{m.group(1)}")
-        # 我是XX工程师 / 我做XX / 我的职业是X
-        m = re.search(r'(?:我是|我做|我的职业是|我是[一名位]).{0,4}([一-鿿]{2,10}(?:工程师|设计师|产品|经理|开发|架构师))', text)
+        # 职业：我是XXX / 我做XXX / 我的职业是XXX
+        # 匹配"我是iOS开发工程师"、"我是一名产品经理"等
+        m = re.search(r'(?:我是|我做|我的职业是)(?:一位?|一名?|个)?(.{2,24}(?:工程师|设计师|产品经理|经理|开发|架构师|运营|市场|销售|产品|测试|运维))', text)
         if m:
-            facts.append(f"用户是{m.group(1)}")
-        # 我喜欢X / 我平时X / 我爱X
+            job = m.group(1).strip()
+            # 清理开头残留的"名"、"位"等
+            job = re.sub(r'^[名位个]', '', job).strip()
+            if job and job not in ('JARVIS', 'jarvis', '机器人') and len(job) >= 4:
+                facts.append(f"用户职业: {job}")
+        # 偏好/爱好：我喜欢X / 我平时X / 我爱X
         m = re.search(r'(?:我喜欢|我平时|我爱|我热衷于|我爱好)(.{2,20})', text)
         if m:
-            facts.append(f"用户喜欢{m.group(1)}")
-        # 我从事实处理X
+            pref = m.group(1).strip()
+            if len(pref) >= 2 and 'JARVIS' not in pref.upper():
+                facts.append(f"用户偏好: {pref}")
         return facts
 
     def _save_to_memory(self, user_input: str, response: str, mem_type: str = "conversation"):
