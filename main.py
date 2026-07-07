@@ -44,6 +44,11 @@ class JARVIS:
         self.memory_engine = None
         self._user_profile = ""
 
+        # 对话历史（用于 LLM 上下文维持）
+        self._conversation_history = []  # list[{"role":"user"/"assistant", "content": str}]
+        self._MAX_HISTORY_CHARS = 12000  # ~5000 tokens, 8K上下文预留空间给system+profile+response
+        self._history_summary = ""       # 被裁掉的早期对话摘要
+
         # 第三阶段组件
         self.planning_engine = None
         self.brain_engine = None
@@ -209,6 +214,11 @@ class JARVIS:
         action_result = self._execute_llm_action(response, input_text)
         if action_result:
             response = action_result
+
+        # 存储到对话历史（给下一轮 LLM 调用做上下文）
+        self._conversation_history.append({"role": "user", "content": input_text})
+        self._conversation_history.append({"role": "assistant", "content": response})
+        self._trim_history()
 
         # 保存对话到记忆
         self._save_to_memory(input_text, response, "conversation")
@@ -450,10 +460,44 @@ class JARVIS:
 
         return "\n\n".join(parts) if parts else ""
 
+    def _build_history_messages(self) -> list:
+        """将对话历史构建为 chat messages 列表供 LLM 使用"""
+        if not self._conversation_history:
+            return []
 
-    
+        extra = []
+        # 如果有早期对话摘要，以 system 消息形式放在最前面
+        if self._history_summary:
+            extra.append({"role": "system", "content": f"【历史摘要】\n{self._history_summary}"})
+        # 最近对话（已被 _trim_history 裁减到合适长度）
+        for m in self._conversation_history:
+            extra.append({"role": m["role"], "content": m["content"]})
+        return extra
 
-    
+    def _trim_history(self):
+        """当对话历史超出字符预算时，裁掉最旧轮次，保留关键内容作为摘要"""
+        total = sum(len(m["content"]) for m in self._conversation_history)
+        dropped_summaries = []
+        while total > self._MAX_HISTORY_CHARS and len(self._conversation_history) >= 4:
+            removed_user = self._conversation_history.pop(0)
+            removed_asst = self._conversation_history.pop(0)
+            total -= len(removed_user["content"]) + len(removed_asst["content"])
+            # 提取被裁对话的要点（取用户问题的前60字 + 回复的前60字）
+            q = removed_user["content"][:60].replace("\n", " ")
+            a = removed_asst["content"][:60].replace("\n", " ")
+            dropped_summaries.append(f"Q:{q} A:{a}")
+
+        if dropped_summaries:
+            # 合并最后几对被裁的对话作为摘要
+            raw = " | ".join(dropped_summaries[-3:])
+            self._history_summary = raw[:300]  # 限制摘要长度
+            self.logger.info(f"对话历史裁剪，新增摘要: {self._history_summary[:80]}...")
+
+        if self._conversation_history:
+            current_len = sum(len(m["content"]) for m in self._conversation_history)
+            self.logger.debug(f"对话历史: {len(self._conversation_history)//2} 轮, {current_len} 字符")
+
+
 
     
     def _is_task_management_request(self, input_text: str) -> bool:
@@ -972,7 +1016,8 @@ class JARVIS:
                         "直接从上述信息中查找答案，不要说自己不知道。\n"
                     )
 
-                response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt)
+                history_msgs = self._build_history_messages()
+                response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt, extra_messages=history_msgs)
                 if response and "查询失败" not in response:
                     return response.strip()
             except Exception as e:

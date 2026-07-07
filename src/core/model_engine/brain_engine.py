@@ -441,33 +441,35 @@ class BrainEngine:
             self._log("error", f"聊天完成失败: {str(e)}")
             raise
     
-    def simple_query(self, query: str, system_prompt: str = None) -> str:
+    def simple_query(self, query: str, system_prompt: str = None, extra_messages: list = None) -> str:
         """
         简单查询接口
-        
+
         Args:
             query: 查询文本
             system_prompt: 系统提示（可选）
-            
+            extra_messages: 额外的消息列表（可选），如对话历史。
+
         Returns:
             模型生成的文本
         """
         if not self.model_adapter:
             return f"模型适配器未初始化，无法处理查询: {query}"
-        
+
         self._log("debug", f"简单查询: {query[:30]}...")
-        
+
         try:
-            response = self.model_adapter.simple_query(query, system_prompt)
-            
+            response = self.model_adapter.simple_query(query, system_prompt, extra_messages)
+
             # 记录交互
             self._log_interaction(
                 "simple_query",
-                {"query": query, "system_prompt": system_prompt},
+                {"query": query, "system_prompt": system_prompt,
+                 "history_count": len(extra_messages) if extra_messages else 0},
                 response,
                 {"model": self.model_adapter.model_name}
             )
-            
+
             return response
             
         except Exception as e:

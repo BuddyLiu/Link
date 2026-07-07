@@ -115,22 +115,28 @@ class ModelAdapter(ABC):
         """
         pass
     
-    def simple_query(self, query: str, system_prompt: str = None) -> str:
+    def simple_query(self, query: str, system_prompt: str = None, extra_messages: list = None) -> str:
         """
         简单查询接口
-        
+
         Args:
             query: 用户查询
             system_prompt: 系统提示（可选）
-            
+            extra_messages: 额外的消息列表（可选），如对话历史。
+                           每条消息格式为 {"role": str, "content": str}，
+                           插入在 system_prompt 和当前 user 消息之间。
+
         Returns:
             模型生成的文本
         """
         messages = []
-        
+
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        
+
+        if extra_messages:
+            messages.extend(extra_messages)
+
         messages.append({"role": "user", "content": query})
         
         try:

@@ -48,7 +48,18 @@
       "Read(//proc/55102/**)",
       "Bash(curl -sv http://127.0.0.1:8011/api/debug)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} \\(%{size_download} bytes\\)\\\\n\" http://127.0.0.1:8011/)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Brain:', d.get\\('brain',{}\\).get\\('available'\\)\\); print\\('Clients:', d.get\\('web',{}\\).get\\('clients'\\)\\)\")",
+      "Bash(git checkout *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://127.0.0.1:8011/)",
+      "Bash(sed -i '' \"s|replace\\(/\\\\n/g, '<br>'\\)|replace\\(/\\\\\\\\\\\\\\\\n/g, '<br>'\\)|\" web_active_jarvis.py)",
+      "Bash(sed -i '' \"s|replace\\(/\\\\n\\\\n/g, '</p><p>'\\)|replace\\(/\\\\\\\\\\\\\\\\n\\\\\\\\\\\\\\\\n/g, '</p><p>'\\)|\" web_active_jarvis.py)",
+      "Bash(lsof -ti:8011)",
+      "Bash(xargs kill -9)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://127.0.0.1:8011/)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('Memory:', d.get\\('memory',{}\\).get\\('stats',{}\\)\\); print\\('Brain:', 'available' if d.get\\('brain',{}\\).get\\('available'\\) else 'N/A'\\)\")",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -I{} echo \"JARVIS PID: {}\")"
     ],
     "additionalDirectories": [
       "/private/tmp",
