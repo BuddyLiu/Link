@@ -122,7 +122,7 @@ def test_manual_execution_mode():
     print("\n🎉 手动执行模式测试完成")
 
 if __name__ == "__main__":
-    print("🤖 JARVIS自动任务执行测试")
+    print("JARVIS自动任务执行测试")
     print("="*60)
     
     try:

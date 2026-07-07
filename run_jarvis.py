@@ -351,7 +351,7 @@ def run_auto_execution_demo(args) -> int:
 def print_help() -> None:
     """打印详细的帮助信息"""
     help_text = """
-🤖 JARVIS智能体统一启动器
+JARVIS智能体统一启动器
 
 使用方法:
   python3 run_jarvis.py [模式] [选项]
@@ -468,7 +468,7 @@ def main() -> int:
     
     # 显示启动横幅
     print("\n" + "="*60)
-    print("🤖 JARVIS智能体 - 统一启动入口")
+    print("JARVIS智能体 - 统一启动入口")
     print("🎯 版本: 3.0 | 架构: 模块化 | 阶段: 第三阶段")
     print("="*60)
     

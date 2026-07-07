@@ -134,7 +134,7 @@ def test_integration():
 def main():
     """主函数"""
     print("=" * 60)
-    print("🤖 JARVIS 新组件简化测试")
+    print("JARVIS 新组件简化测试")
     print("=" * 60)
     
     # 切换到虚拟环境

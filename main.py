@@ -1060,7 +1060,7 @@ class JARVIS:
         """获取帮助文本"""
         tool_names = self.tool_manager.get_tool_names()
         
-        help_text = "🤖 JARVIS智能体（第三阶段）可用功能：\n\n"
+        help_text = "JARVIS智能体（第三阶段）可用功能：\n\n"
         help_text += "1. 📋 基础功能：\n"
         help_text += "   - 询问时间：可以说'现在几点了'或'告诉我时间'\n"
         help_text += "   - 获取帮助：可以说'帮助'或'help'\n"
@@ -1128,7 +1128,7 @@ class JARVIS:
     def run_cli(self):
         """运行命令行交互界面"""
         print("\n" + "="*50)
-        print("🤖 JARVIS智能体 v3.0 - 第三阶段")
+        print("JARVIS智能体 v3.0 - 第三阶段")
         print("🎯 支持复杂任务规划、反思和主动提醒")
         print("="*50)
         print("输入 '退出' 或 'exit' 结束程序")

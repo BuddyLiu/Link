@@ -111,7 +111,7 @@ def main():
     
     args = parser.parse_args()
     
-    print("🤖 JARVIS智能体启动器")
+    print("JARVIS智能体启动器")
     print("="*50)
     print("📱 版本: 主动运行模式增强版")
     print("🎯 功能: 事件驱动架构，类似iOS RunLoop")

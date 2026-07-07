@@ -77,7 +77,11 @@
       "Bash(curl -s http://127.0.0.1:8011/api/debug/archives)",
       "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=3\")",
       "Bash(curl -s \"http://127.0.0.1:8011/api/debug/interactions?page=1&per_page=2\")",
-      "Bash(curl -s http://127.0.0.1:8011/debug)"
+      "Bash(curl -s http://127.0.0.1:8011/debug)",
+      "Bash(awk 'NR>=169 && NR<=173 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('运行中:',d['web']['is_running']\\);print\\('记忆:',d['memory']['stats']['total_memories']\\)\")",
+      "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\(f'{len\\(d[\\\\\"archives\\\\\"]\\)} 个归档'\\)\")",
+      "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\(f'第{d[\\\\\"page\\\\\"]}页/共{int\\(d[\\\\\"total\\\\\"]/d[\\\\\"per_page\\\\\"]\\)+1}页,{d[\\\\\"total\\\\\"]}条'\\)\")"
     ],
     "additionalDirectories": [
       "/private/tmp",

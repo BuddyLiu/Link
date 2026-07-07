@@ -151,7 +151,7 @@ def test_brain_engine_direct():
         print(f"❌ 大脑引擎直接测试失败: {e}")
 
 if __name__ == "__main__":
-    print("🤖 JARVIS任务执行测试")
+    print("JARVIS任务执行测试")
     print("=" * 60)
     
     try:

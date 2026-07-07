@@ -10,7 +10,7 @@ from main import JARVIS
 def demo_auto_task_execution():
     """演示自动任务执行功能"""
     print("=" * 70)
-    print("🤖 JARVIS 自动任务执行功能演示")
+    print("JARVIS 自动任务执行功能演示")
     print("=" * 70)
     print("场景：用户创建一个任务后，系统自动开始执行，减少手动干预")
     print()

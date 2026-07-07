@@ -1518,7 +1518,7 @@ async function loadMemoriesPage(page) {
         html += '<td>' + (mem.importance||0) + '</td>';
         html += '<td class="content-cell">' + short + (mem.content.length > 100 ? '...' : '') + '</td>';
         html += '<td style="font-size:11px;color:#888;white-space:nowrap">' + (mem.created_at||'').slice(0,16) + '</td>';
-        html += '<td><a onclick="showMemDetail(\'' + mem.id + '\')" style="cursor:pointer;color:#1a73e8;font-size:12px">详情</a></td></tr>';
+        html += `<td><a onclick="showMemDetail('${mem.id}')" style="cursor:pointer;color:#1a73e8;font-size:12px">详情</a></td></tr>`;
       }
       html += '</tbody></table></div>';
     } else {
@@ -1546,7 +1546,7 @@ async function showMemDetail(id) {
   box.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
   box.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:16px">' +
     '<h3 style="margin:0;font-size:16px">记忆详情</h3>' +
-    '<a onclick="this.closest(\'div[style]\\').parentElement.remove()" style="cursor:pointer;font-size:20px;color:#999">&times;</a></div>' +
+    `<a onclick="this.closest('div[style]').parentElement.remove()" style="cursor:pointer;font-size:20px;color:#999">&times;</a></div>` +
     '<table style="width:100%;font-size:13px"><tr><td style="padding:6px 8px;color:#666;width:80px"><b>ID</b></td><td style="padding:6px 8px;word-break:break-all">' + escapeHtml(mem.id) + '</td></tr>' +
     '<tr><td style="padding:6px 8px;color:#666"><b>类型</b></td><td style="padding:6px 8px"><span class="badge badge-' + (mem.type||'system') + '">' + (mem.type||'?') + '</span></td></tr>' +
     '<tr><td style="padding:6px 8px;color:#666"><b>重要性</b></td><td style="padding:6px 8px">' + (mem.importance||0) + '</td></tr>' +
@@ -1636,7 +1636,7 @@ function showIntDetail(el) {
   box.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
   box.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:12px">' +
     '<h3 style="margin:0;font-size:15px;color:#333">LLM 交互详情</h3>' +
-    '<a onclick="this.closest(\'div[style]\\').parentElement.remove()" style="cursor:pointer;font-size:20px;color:#999">&times;</a></div>' +
+    `<a onclick="this.closest('div[style]').parentElement.remove()" style="cursor:pointer;font-size:20px;color:#999">&times;</a></div>` +
     '<div style="font-size:11px;color:#888;margin-bottom:12px">' + meta + '</div>' +
     '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:#1a73e8;margin-bottom:4px">&#x25B6; 输入</div>' +
     '<div style="background:#f0f7ff;border-radius:8px;padding:12px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word">' + (inputFull || '-') + '</div></div>' +
@@ -1838,7 +1838,7 @@ setInterval(loadData, 10000);
 def main():
     """主函数"""
     print("="*60)
-    print("🤖 JARVIS主动运行模式（Web版本）")
+    print("JARVIS主动运行模式（Web版本）")
     print("="*60)
     print("💡 解决CLI模式下心跳输出干扰用户输入的问题")
     print("💡 提供Web界面，支持实时事件监控")

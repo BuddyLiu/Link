@@ -239,7 +239,7 @@ class TaskEventHandler(EventHandler):
     def _handle_user_input(self, event: Event) -> str:
         """处理用户输入事件"""
         if not self.jarvis:
-            return "🤖 JARVIS主动模式: 收到用户输入"
+            return "JARVIS主动模式: 收到用户输入"
         
         text = event.data.get("text", "")
         return f"📝 处理用户输入: {text}"
@@ -657,7 +657,7 @@ class ActiveJARVIS:
     def run_cli(self):
         """运行交互式CLI（兼容原有接口）"""
         print("\n" + "="*60)
-        print("🤖 JARVIS主动运行模式 - 交互式CLI（独立版本）")
+        print("JARVIS主动运行模式 - 交互式CLI（独立版本）")
         print("="*60)
         print("输入 '退出' 或 'exit' 返回")
         print("输入 '状态' 或 'status' 查看运行状态")
@@ -776,7 +776,7 @@ def quick_test():
 
 
 if __name__ == "__main__":
-    print("🤖 JARVIS主动运行模式（独立版本）")
+    print("JARVIS主动运行模式（独立版本）")
     print("="*60)
     
     # 运行快速测试

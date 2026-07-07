@@ -646,7 +646,7 @@ class ActiveJARVIS:
     def run_cli(self):
         """运行交互式CLI（兼容原有接口）"""
         print("\n" + "="*60)
-        print("🤖 JARVIS主动运行模式 - 交互式CLI")
+        print("JARVIS主动运行模式 - 交互式CLI")
         print("="*60)
         print("输入 '退出' 或 'exit' 返回")
         print("输入 '状态' 或 'status' 查看运行状态")

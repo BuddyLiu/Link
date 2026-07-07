@@ -306,7 +306,7 @@ class TestNewComponents:
     def run_all_tests(self):
         """运行所有测试"""
         print("=" * 60)
-        print("🤖 JARVIS新组件测试套件")
+        print("JARVIS新组件测试套件")
         print("=" * 60)
         
         results = {

@@ -9,7 +9,7 @@ from jarvis.main import JARVIS
 def test_manual_task_execution():
     """测试手动任务执行功能"""
     print("=" * 70)
-    print("🤖 JARVIS 手动任务执行功能测试")
+    print("JARVIS 手动任务执行功能测试")
     print("=" * 70)
     print("目标：每执行一个步骤都需要用户输入'完成步骤 project_XXX'才能继续")
     print()
