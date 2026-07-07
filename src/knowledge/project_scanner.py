@@ -68,8 +68,63 @@ class ProjectScanner:
         self._read_config_files()
         self._detect_tech_stack()
         self._scan_structure(max_depth)
+        self._detect_architecture()
+        self._analyze_entry_points()
+        self._analyze_python_code()
+        self._detect_conventions()
         self._detect_test_framework()
+        self._detect_ci_cd()
         return self.knowledge
+
+    def learn_from_file(self, filepath: str) -> List[tuple]:
+        """从单个文件提取知识（供自动学习使用）"""
+        fpath = Path(filepath).resolve()
+        if self._is_ignored(fpath) or not fpath.is_file():
+            return []
+        facts = []
+        ext = fpath.suffix.lower()
+        try:
+            content = fpath.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return []
+
+        rel = str(fpath.relative_to(self.root)) if fpath != self.root else fpath.name
+
+        if ext == ".py":
+            # 提取类和函数
+            classes = re.findall(r'^class\s+(\w+)', content, re.MULTILINE)
+            for c in classes:
+                facts.append((f"文件 {rel} 定义了类: {c}", 0.55, ["project_knowledge", "code_structure"]))
+            funcs = re.findall(r'^async?\s+def\s+(\w+)', content, re.MULTILINE)
+            for f in funcs[:5]:
+                facts.append((f"文件 {rel} 定义了函数: {f}", 0.5, ["project_knowledge", "code_structure"]))
+            # 导入
+            imports = re.findall(r'^(?:from\s+[\w.]+\s+)?import\s+[\w,\s]+', content, re.MULTILINE)
+            if imports and len(imports) <= 8:
+                facts.append((f"文件 {rel} 导入了: {len(imports)} 个模块",
+                              0.45, ["project_knowledge", "deps"]))
+
+        elif ext in (".js", ".ts"):
+            classes = re.findall(r'(?:export\s+)?(?:default\s+)?class\s+(\w+)', content)
+            for c in classes[:3]:
+                facts.append((f"文件 {rel} 定义了类: {c}", 0.55, ["project_knowledge", "code_structure"]))
+            funcs = re.findall(r'(?:export\s+)?(?:async\s+)?function\s+(\w+)', content)
+            for f in funcs[:3]:
+                facts.append((f"文件 {rel} 定义了函数: {f}", 0.5, ["project_knowledge", "code_structure"]))
+
+        return facts
+
+    def to_simple_facts(self) -> str:
+        """生成小模型易读的平铺陈述列表（每行一个事实）"""
+        if not self.knowledge:
+            return ""
+        lines = ["【项目知识】"]
+        for cat, items in self.knowledge.items():
+            for item in items:
+                # 去掉图标和前缀格式
+                clean = item.replace("📁 ", "").replace("📄 ", "")
+                lines.append(f"- {clean}")
+        return "\n".join(lines[:15])  # 最多 15 条
 
     def to_context_string(self) -> str:
         """格式化为 LLM 上下文"""
@@ -81,6 +136,7 @@ class ProjectScanner:
                 "project_info": "项目信息",
                 "tech_stack": "技术栈",
                 "structure": "目录结构",
+                "architecture": "架构",
                 "conventions": "开发规范",
                 "tools": "工具配置",
                 "testing": "测试",
@@ -276,6 +332,238 @@ class ProjectScanner:
                 elif (self.root / ind).exists():
                     self.knowledge.setdefault("testing", []).append(f"测试框架: {framework}")
                     break
+
+
+    # ── 架构检测 ──
+
+    def _detect_architecture(self):
+        """检测项目架构模式和框架"""
+        arch_facts = []
+        py_files = list(self.root.rglob("*.py"))
+
+        # 检测 Web 框架
+        for f in py_files:
+            if self._is_ignored(f):
+                continue
+            try:
+                text = f.read_text("utf-8", errors="ignore")[:500]
+            except Exception:
+                continue
+            if "from fastapi" in text or "import fastapi" in text:
+                arch_facts.append("Web框架: FastAPI")
+                break
+            if "from flask" in text or "import flask" in text:
+                arch_facts.append("Web框架: Flask")
+                break
+            if "from django" in text:
+                arch_facts.append("Web框架: Django")
+                break
+
+        # 检测 ORM
+        for f in py_files:
+            if self._is_ignored(f):
+                continue
+            try:
+                text = f.read_text("utf-8", errors="ignore")[:500]
+            except Exception:
+                continue
+            if "from sqlalchemy" in text or "import sqlalchemy" in text:
+                arch_facts.append("ORM: SQLAlchemy")
+                break
+            if "from tortoise" in text:
+                arch_facts.append("ORM: Tortoise ORM")
+                break
+            if "from beanie" in text or "from mongoengine" in text:
+                arch_facts.append("ORM: MongoDB ODM")
+                break
+
+        # 检测 CLI 框架
+        for f in py_files:
+            if self._is_ignored(f):
+                continue
+            try:
+                text = f.read_text("utf-8", errors="ignore")[:500]
+            except Exception:
+                continue
+            if "import typer" in text or "from typer" in text:
+                arch_facts.append("CLI框架: Typer")
+                break
+            if "import click" in text or "from click" in text:
+                arch_facts.append("CLI框架: Click")
+                break
+            if "import argparse" in text or "from argparse" in text:
+                arch_facts.append("CLI方式: argparse")
+                break
+
+        # 检测异步框架
+        for f in py_files:
+            if self._is_ignored(f):
+                continue
+            try:
+                text = f.read_text("utf-8", errors="ignore")[:500]
+            except Exception:
+                continue
+            if "import asyncio" in text or "from asyncio" in text:
+                arch_facts.append("异步: asyncio")
+                break
+
+        # 检测类型注解使用
+        type_hints = 0
+        for f in py_files:
+            if self._is_ignored(f) or type_hints > 3:
+                continue
+            try:
+                text = f.read_text("utf-8", errors="ignore")
+                if ": " in text and "-> " in text:
+                    type_hints += 1
+            except Exception:
+                continue
+        if type_hints >= 2:
+            arch_facts.append("编码风格: 使用类型注解")
+
+        # 检测项目类型
+        if any((self.root / n).exists() for n in ["setup.py", "pyproject.toml"]):
+            arch_facts.append("项目类型: Python 包/库")
+        if (self.root / "Dockerfile").exists():
+            arch_facts.append("部署: Docker")
+        if (self.root / "docker-compose.yml").exists() or (self.root / "docker-compose.yaml").exists():
+            arch_facts.append("部署: Docker Compose")
+        if (self.root / "Makefile").exists():
+            arch_facts.append("构建工具: Make")
+
+        if arch_facts:
+            self.knowledge["architecture"] = arch_facts
+
+    # ── 入口分析 ──
+
+    def _analyze_entry_points(self):
+        """分析项目入口点"""
+        # Python 入口
+        for entry in ["main.py", "app.py", "cli.py", "run.py", "__main__.py"]:
+            fpath = self.root / entry
+            if fpath.exists():
+                size = fpath.stat().st_size
+                self.knowledge.setdefault("structure", []).append(f"入口文件: {entry} ({size//1024}KB)")
+                # 检测入口文件中的路由/命令
+                try:
+                    text = fpath.read_text("utf-8", errors="ignore")[:1000]
+                    routes = re.findall(r'@\w+\.(?:get|post|put|delete|patch)\s*\(\s*["\']([^"\']+)', text)
+                    for r in routes[:5]:
+                        self.knowledge.setdefault("structure", []).append(f"路由: {r}")
+                    commands = re.findall(r'@\w+\.(?:command|callback)\s*\(\s*["\']([^"\']+)', text)
+                    for c in commands[:3]:
+                        self.knowledge.setdefault("structure", []).append(f"命令: {c}")
+                except Exception:
+                    pass
+                break
+
+    # ── 代码分析 ──
+
+    def _analyze_python_code(self):
+        """分析 Python 源码提取关键结构"""
+        py_files = sorted(self.root.rglob("*.py"))
+        total_classes = 0
+        total_funcs = 0
+        module_summary = []
+
+        for f in py_files[:30]:  # 只看前 30 个文件
+            if self._is_ignored(f):
+                continue
+            try:
+                text = f.read_text("utf-8", errors="ignore")
+            except Exception:
+                continue
+            classes = re.findall(r'^class\s+(\w+)', text, re.MULTILINE)
+            funcs = re.findall(r'^\s+(?:async\s+)?def\s+(\w+)', text, re.MULTILINE)
+            total_classes += len(classes)
+            total_funcs += len(funcs)
+            if classes or funcs:
+                rel = f.relative_to(self.root)
+                module_summary.append(f"{rel} ({len(classes)}类, {len(funcs)}函数)")
+
+        if total_classes > 0 or total_funcs > 0:
+            self.knowledge.setdefault("structure", []).append(
+                f"代码统计: {total_classes} 个类, {total_funcs} 个方法（扫描 {min(len(list(self.root.rglob('*.py'))), 30)} 个文件）"
+            )
+        if module_summary[:6]:
+            self.knowledge.setdefault("structure", []).append(
+                f"关键模块: {'; '.join(module_summary[:6])}"
+            )
+
+    # ── 规范提取 ──
+
+    def _detect_conventions(self):
+        """从配置文件提取编码规范"""
+        # ruff 配置 (pyproject.toml)
+        ruff_path = self.root / "pyproject.toml"
+        if ruff_path.exists():
+            try:
+                text = ruff_path.read_text("utf-8", errors="ignore")
+                # ruff 规则
+                ruff_rules = re.findall(r'select\s*=\s*\[([^\]]+)\]', text)
+                if ruff_rules:
+                    rules = [r.strip().strip('"\'') for r in ruff_rules[0].split(",")]
+                    self.knowledge.setdefault("conventions", []).append(f"Lint规则: {', '.join(rules[:5])}")
+                # line-length
+                ll = re.search(r'line-length\s*=\s*(\d+)', text)
+                if ll:
+                    self.knowledge.setdefault("conventions", []).append(f"行宽限制: {ll.group(1)}")
+            except Exception:
+                pass
+
+        # .prettierrc / .prettierrc.json / .prettierrc.js
+        for pf in [".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.yaml"]:
+            pf_path = self.root / pf
+            if pf_path.exists():
+                try:
+                    text = pf_path.read_text("utf-8", errors="ignore")
+                    # 缩进
+                    m = re.search(r'tabWidth["\']?\s*[:=]\s*(\d+)', text)
+                    if m:
+                        self.knowledge.setdefault("conventions", []).append(f"缩进: {m.group(1)}")
+                    m = re.search(r'useTabs["\']?\s*[:=]\s*(true|false)', text)
+                    if m and m.group(1) == "true":
+                        self.knowledge.setdefault("conventions", []).append("缩进风格: Tab")
+                    m = re.search(r'semi["\']?\s*[:=]\s*(true|false)', text)
+                    if m:
+                        self.knowledge.setdefault("conventions", []).append(f"分号: {m.group(1)}")
+                    m = re.search(r'quote["\']?\s*[:=]\s*["\'](single|double)["\']', text)
+                    if m:
+                        self.knowledge.setdefault("conventions", []).append(f"引号: {m.group(1)}")
+                except Exception:
+                    pass
+                break
+
+        # .gitignore 内容摘要
+        gitignore = self.root / ".gitignore"
+        if gitignore.exists():
+            try:
+                lines = gitignore.read_text("utf-8", errors="ignore").strip().split("\n")
+                if lines:
+                    self.knowledge.setdefault("conventions", []).append(f"忽略规则: {len(lines)} 条")
+            except Exception:
+                pass
+
+    # ── CI/CD ──
+
+    def _detect_ci_cd(self):
+        """检测 CI/CD 配置"""
+        gh_actions = self.root / ".github" / "workflows"
+        if gh_actions.exists():
+            wfs = list(gh_actions.glob("*.yml")) + list(gh_actions.glob("*.yaml"))
+            if wfs:
+                names = []
+                for wf in wfs:
+                    try:
+                        text = wf.read_text("utf-8", errors="ignore")[:200]
+                        m = re.search(r'name:\s*(.+)$', text, re.MULTILINE)
+                        if m:
+                            names.append(m.group(1).strip())
+                    except Exception:
+                        pass
+                self.knowledge.setdefault("tools", []).append(
+                    f"CI: GitHub Actions ({', '.join(names[:3])})" if names else "CI: GitHub Actions"
+                )
 
 
 def test_scanner():

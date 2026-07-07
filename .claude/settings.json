@@ -85,7 +85,12 @@
       "Bash(awk 'NR>=400 && NR<=410 {printf \"%d: %s\\\\n\", NR, $0}')",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} \\(size: %{size_download} bytes\\)\" http://127.0.0.1:8011/debug)",
       "Bash(awk 'NR>=422 && NR<=430 {printf \"%d: %s\\\\n\", NR, $0}')",
-      "Bash(grep -v \"^[0-9]*:.*#\\\\|^[0-9]*:\\\\s*$\\\\|\\\\.pyc\")"
+      "Bash(grep -v \"^[0-9]*:.*#\\\\|^[0-9]*:\\\\s*$\\\\|\\\\.pyc\")",
+      "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=50\")",
+      "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=100\")",
+      "Bash(grep -i \"project_scanner\\\\|知识\\\\|scan\" /tmp/jarvis_test.log 2>/dev/null | tail -5)",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"Web框架\"}')",
+      "Bash(xargs -I{} echo \"Mentions in log: {}\")"
     ],
     "additionalDirectories": [
       "/private/tmp",

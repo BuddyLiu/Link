@@ -78,7 +78,13 @@ class JARVIS:
         
         # 初始化大脑引擎
         self._initialize_brain_engine()
-        
+
+        # 自动扫描项目知识（后台执行，不影响启动）
+        try:
+            self._scan_current_project()
+        except Exception:
+            pass
+
         self.logger.info("JARVIS组件初始化完成")
     
     def _initialize_tools(self):
@@ -285,6 +291,8 @@ class JARVIS:
                 return "[[ERROR: 缺少 path 参数]]"
             try:
                 result = self.tool_manager.execute_tool("read_file", path=path)
+                # 自动学习：从读取的文件中提取知识
+                self._learn_from_file(path)
                 return f"文件 {path} 的内容：\n\n```\n{result}\n```"
             except Exception as e:
                 return f"[[ERROR: 读取文件失败 {e}]]"
@@ -542,9 +550,10 @@ class JARVIS:
             from src.knowledge.project_scanner import ProjectScanner
             scanner = ProjectScanner(".")
             scanner.scan()
-            context = scanner.to_context_string()
+            # 小模型友好格式（平铺陈述句，少分级缩进）
+            context = scanner.to_simple_facts()
 
-            # 存入记忆（作为项目知识事实）
+            # 存入记忆（作为项目知识事实，粒度可搜索）
             if self.memory_engine:
                 for fact_text, importance, tags in scanner.to_memory_facts():
                     try:
@@ -568,15 +577,31 @@ class JARVIS:
             return self._scan_current_project()
         return self._project_context
 
+    def _learn_from_file(self, filepath: str):
+        """从单个文件提取知识并存入记忆"""
+        if not self.memory_engine:
+            return
+        try:
+            from src.knowledge.project_scanner import ProjectScanner
+            scanner = ProjectScanner(".")
+            facts = scanner.learn_from_file(filepath)
+            saved = 0
+            for fact_text, importance, tags in facts:
+                try:
+                    self.memory_engine.add_fact_memory(fact_text, importance=importance, tags=tags)
+                    saved += 1
+                except Exception:
+                    pass
+            if saved:
+                self.logger.info(f"从 {filepath} 学习了 {saved} 条知识")
+        except Exception as e:
+            self.logger.debug(f"文件知识提取失败: {e}")
+
     def _retrieve_memory_context(self, query: str) -> str:
         """检索相关记忆作为LLM上下文，含用户画像和项目知识"""
         if not self.memory_engine:
             return ""
         parts = []
-
-        # 0. 项目知识（始终包含）
-        if self._project_context:
-            parts.append(self._project_context)
 
         # 1. 用户画像（始终包含）
         if hasattr(self, '_user_profile') and self._user_profile:
@@ -602,16 +627,20 @@ class JARVIS:
 
     def _build_history_messages(self) -> list:
         """将对话历史构建为 chat messages 列表供 LLM 使用"""
-        if not self._conversation_history:
-            return []
-
         extra = []
+        # 项目知识（直接以 system 消息注入，模型更容易看到）
+        if hasattr(self, '_project_context') and self._project_context:
+            extra.append({
+                "role": "system",
+                "content": f"[项目知识]\n{self._project_context}\n（以上是当前项目的准确信息，回答项目问题时必须使用）"
+            })
         # 如果有早期对话摘要，以 system 消息形式放在最前面
         if self._history_summary:
             extra.append({"role": "system", "content": f"【历史摘要】\n{self._history_summary}"})
         # 最近对话（已被 _trim_history 裁减到合适长度）
-        for m in self._conversation_history:
-            extra.append({"role": m["role"], "content": m["content"]})
+        if self._conversation_history:
+            for m in self._conversation_history:
+                extra.append({"role": m["role"], "content": m["content"]})
         return extra
 
     def _trim_history(self):
@@ -1165,10 +1194,9 @@ class JARVIS:
 
                 if memory_context:
                     system_prompt += (
-                        "\n\n## 关于用户的信息\n"
-                        "（这是用户亲口告诉你的，是准确的，必须使用）\n"
+                        "\n\n## 参考信息\n"
                         f"{memory_context}\n\n"
-                        "你必须使用上述信息回答。当用户问自己的信息（如名字、职业、手机号、偏好等），"
+                        "你必须使用上述信息回答。当用户问相关的信息时，"
                         "直接从上述信息中查找答案，不要说自己不知道。\n"
                     )
 
