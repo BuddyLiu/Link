@@ -53,6 +53,10 @@ class JARVIS:
         self.planning_engine = None
         self.brain_engine = None
         self.active_tasks = {}
+
+        # 项目知识库
+        self._project_context = ""
+        self._project_scanned = False
         
         # 初始化组件
         self._initialize_components()
@@ -262,6 +266,13 @@ class JARVIS:
                 return self._get_planning_engine_info()
             elif action.startswith("FILE_"):
                 return self._handle_file_action(action, parse_params(param_str))
+            elif action == "SCAN_PROJECT":
+                self._project_scanned = False
+                return self._get_project_context()
+            elif action == "PROJECT_INFO":
+                if self._project_context:
+                    return self._project_context
+                return self._get_project_context()
         except Exception as e:
             self.logger.error(f"执行操作 {action} 失败: {e}")
         return ""
@@ -523,11 +534,49 @@ class JARVIS:
         except Exception as e:
             self.logger.debug(f"用户画像更新失败: {e}")
 
+    # ── 项目知识库 ─────────────────────────────────────
+
+    def _scan_current_project(self) -> str:
+        """扫描当前项目，提取知识存入记忆，返回上下文摘要"""
+        try:
+            from src.knowledge.project_scanner import ProjectScanner
+            scanner = ProjectScanner(".")
+            scanner.scan()
+            context = scanner.to_context_string()
+
+            # 存入记忆（作为项目知识事实）
+            if self.memory_engine:
+                for fact_text, importance, tags in scanner.to_memory_facts():
+                    try:
+                        self.memory_engine.add_fact_memory(
+                            fact_text, importance=importance, tags=tags
+                        )
+                    except Exception:
+                        pass
+                self.logger.info(f"项目知识已存入记忆")
+
+            self._project_context = context
+            self._project_scanned = True
+            return context
+        except Exception as e:
+            self.logger.error(f"项目扫描失败: {e}")
+            return f"项目扫描失败: {e}"
+
+    def _get_project_context(self) -> str:
+        """获取项目知识上下文（含缓存）"""
+        if not self._project_scanned:
+            return self._scan_current_project()
+        return self._project_context
+
     def _retrieve_memory_context(self, query: str) -> str:
-        """检索相关记忆作为LLM上下文，含用户画像"""
+        """检索相关记忆作为LLM上下文，含用户画像和项目知识"""
         if not self.memory_engine:
             return ""
         parts = []
+
+        # 0. 项目知识（始终包含）
+        if self._project_context:
+            parts.append(self._project_context)
 
         # 1. 用户画像（始终包含）
         if hasattr(self, '_user_profile') and self._user_profile:
@@ -1107,6 +1156,10 @@ class JARVIS:
                     "文件操作默认只能在当前项目目录内。如果需要访问项目外的文件，\n"
                     "必须先通过 FILE_AUTHORIZE 授权。授权分临时（temporary）和持久（permanent）。\n"
                     "如果用户要求你访问某个外部文件，但授权被拒，可以提醒用户授权。\n"
+                    "\n"
+                    "## 项目知识库\n"
+                    "- 用户要求了解/扫描当前项目 → [[ACTION:SCAN_PROJECT]]\n"
+                    "- 用户问项目的技术栈/结构 → [[ACTION:PROJECT_INFO]]\n"
                     "如果不需要执行操作，不要加任何标记。操作标记放在回答末尾。"
                 )
 
