@@ -68,7 +68,11 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('deepseek embed:', 'ok' if 'embeddings' in d else d\\)\")",
       "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"iOS开发\"}')",
       "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"手机号\"}')",
-      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"SwiftUI\"}')"
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"SwiftUI\"}')",
+      "Bash(grep -i \"graph\\\\|edge\\\\|build\" /tmp/jarvis_test.log 2>/dev/null | tail -5)",
+      "Read(//private/tmp/**)",
+      "Bash(grep -i \"嵌入\\\\|embed\\\\|vector\\\\|graph\\\\|edge\" /tmp/jarvis_test.log | tail -10)",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"Swift\"}')"
     ],
     "additionalDirectories": [
       "/private/tmp",

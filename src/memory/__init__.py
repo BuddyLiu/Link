@@ -17,6 +17,7 @@ __author__ = "JARVIS Team"
 from .simple_memory_store import SimpleMemoryStore as MemoryStore
 from .embedding_service import EmbeddingService
 from .memory_entry import MemoryEntry, MemoryType
+from .graph_index import GraphIndex
 
 
 @dataclass
@@ -152,5 +153,6 @@ __all__ = [
     'EmbeddingService',
     'MemoryManager',
     'SearchResult',
+    'GraphIndex',
     'create_memory_manager',
 ]

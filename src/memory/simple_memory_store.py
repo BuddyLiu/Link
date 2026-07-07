@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 from .memory_entry import MemoryEntry, MemoryType
 from .embedding_service import EmbeddingService
+from .graph_index import GraphIndex
 from ..utils.logger import logger
 
 
@@ -53,6 +54,9 @@ class SimpleMemoryStore:
             )
         else:
             self.embedding_service = embedding_service
+
+        # 图记忆索引（记忆关联关系）
+        self.graph_index = GraphIndex(persist_directory=persist_directory)
 
         # 内存中的记忆索引
         self._memories: List[Dict[str, Any]] = []
@@ -249,8 +253,44 @@ class SimpleMemoryStore:
         # 持久化到磁盘
         self._save_to_disk()
 
+        # ─── 图记忆：为新增记忆建立关联边 ───
+        if self.graph_index and embedding is not None and len(self._memories) > 1:
+            self._build_graph_edges(memory_id, content)
+
         self.logger.info(f"添加记忆成功，ID: {memory_id}, 类型: {metadata.get('type', 'unknown')}")
         return memory_id
+
+    def _build_graph_edges(self, memory_id: str, content: str):
+        """为新记忆自动建立三种关联边"""
+        try:
+            # 1. 时间相邻边 → 上一条添加的记忆
+            if len(self._memories) >= 2:
+                prev_id = self._memories[-2]["id"]
+                if prev_id != memory_id:
+                    self.graph_index.add_edge(memory_id, prev_id, "时间相邻", 0.4)
+
+            # 2. 语义相似边 → embedding 最相似的前 3 条
+            new_emb = self._embeddings[-1]
+            old_embs = self._embeddings[:-1]
+            old_norms = np.linalg.norm(old_embs, axis=1)
+            new_norm = np.linalg.norm(new_emb)
+            if new_norm > 0 and np.any(old_norms > 0):
+                sims = np.dot(old_embs, new_emb) / (old_norms * new_norm + 1e-8)
+                top_k = min(3, len(sims))
+                top_indices = np.argsort(sims)[-top_k:][::-1]
+                for idx in top_indices:
+                    sim_score = float(sims[idx])
+                    if sim_score > 0.75:
+                        target_id = self._memories[idx]["id"]
+                        if target_id != memory_id:
+                            self.graph_index.add_edge(memory_id, target_id,
+                                                      "语义相似", round(sim_score, 2))
+
+            # 3. 相同会话边 → 同一轮提取的 fact 之间已在 ProcessInput 中由调用方建立
+            # （通过 add_edge 独立调用，见 _extract_facts_from_conversation）
+
+        except Exception as e:
+            self.logger.info(f"建图边异常（不影响记忆存储）: {e}")
 
     def search_memories(self, query: str, n_results: int = None) -> List[Tuple[Any, float]]:
         """
@@ -357,6 +397,35 @@ class SimpleMemoryStore:
                     seen_indices.add(idx)
                     merged.append((idx, sim))
 
+        # ─── 图索引扩散激活 ───
+        # 取向量/关键词搜索中 top-3 作为种子，沿图扩散到关联记忆
+        graph_added = []
+        if self.graph_index and merged:
+            seed_ids = [(self._memories[idx]["id"], score) for idx, score in merged[:3]]
+            graph_results = self.graph_index.activate(
+                seed_ids, max_depth=2, activation_threshold=0.2, decay=0.7
+            )
+            if graph_results:
+                existing_ids = {self._memories[idx]["id"] for idx, _ in merged}
+                for node_id, activation in graph_results:
+                    if node_id not in existing_ids:
+                        # 在 _memories 中查找该 ID
+                        for idx, mem in enumerate(self._memories):
+                            if mem.get("id") == node_id:
+                                # 图结果按激活值 × 0.7 折算，不压过直接搜索命中
+                                graph_added.append((idx, round(activation * 0.7, 3)))
+                                existing_ids.add(node_id)
+                                break
+                if graph_added:
+                    merged.extend(graph_added)
+                    # 重新排序（关键词/向量分高在前，图扩散在后）
+                    merged.sort(key=lambda x: x[1], reverse=True)
+
+        # 记录共同激活（强化被同时检索到的记忆之间的边）
+        if self.graph_index and merged:
+            top_co_ids = [self._memories[idx]["id"] for idx, _ in merged[:n_results]]
+            self.graph_index.record_co_activation(top_co_ids)
+
         # 转换为 MemoryEntry
         results = []
         for idx, score in merged[:n_results]:
@@ -364,7 +433,8 @@ class SimpleMemoryStore:
             memory_entry = MemoryEntry.from_dict(memory_record)
             results.append((memory_entry, score))
 
-        self.logger.info(f"混合搜索完成，查询: '{query[:30]}...'，找到 {len(results)} 条记忆")
+        graph_info = f"，图扩散 +{len(graph_added)}" if graph_added else ""
+        self.logger.info(f"混合搜索完成，查询: '{query[:30]}'，找到 {len(results)} 条记忆{graph_info}")
         return results
 
     def get_memory(self, memory_id: str) -> Optional[Any]:
@@ -381,6 +451,9 @@ class SimpleMemoryStore:
                 self._memories.pop(i)
                 if self._embeddings is not None:
                     self._embeddings = np.delete(self._embeddings, i, axis=0)
+                # 同步删除图索引中的节点
+                if self.graph_index:
+                    self.graph_index.remove_node(memory_id)
                 self._save_to_disk()
                 self.logger.info(f"删除记忆成功，ID: {memory_id}")
                 return True
@@ -506,7 +579,7 @@ class SimpleMemoryStore:
             mem_type = m.get("metadata", {}).get("type", "unknown")
             type_counts[mem_type] = type_counts.get(mem_type, 0) + 1
 
-        return {
+        stats = {
             "total_memories": len(self._memories),
             "type_counts": type_counts,
             "database_path": self.persist_directory,
@@ -514,10 +587,18 @@ class SimpleMemoryStore:
             "embeddings_loaded": self._embeddings is not None,
         }
 
+        # 图索引统计
+        if self.graph_index:
+            stats["graph"] = self.graph_index.get_stats()
+
+        return stats
+
     def reset_memory(self) -> bool:
         """重置所有记忆"""
         self._memories = []
         self._embeddings = None
+        if self.graph_index:
+            self.graph_index.reset()
         self._save_to_disk()
         self.logger.warning("已重置所有记忆")
         return True
