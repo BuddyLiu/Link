@@ -234,11 +234,23 @@ class JARVIS:
         if "[[ACTION:" not in response:
             return ""
         import re
-        m = re.search(r'\[\[ACTION:(\w+)(?:,(.*?))?\]\]', response)
+        m = re.search(r'\[\[ACTION:(\w+)(?:\|(.+?))?\]\]', response)
         if not m:
             return ""
         action = m.group(1)
-        self.logger.info(f"LLM 请求操作: {action}")
+        param_str = m.group(2) or ""
+        self.logger.info(f"LLM 请求操作: {action} | {param_str[:80]}")
+
+        def parse_params(s: str) -> dict:
+            """解析 key=value|key=value 格式的参数"""
+            params = {}
+            for pair in s.split("|"):
+                pair = pair.strip()
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    params[k.strip()] = v.strip()
+            return params
+
         try:
             if action == "CREATE_TASK" and original_input:
                 return self._handle_complex_task_request(original_input)
@@ -248,9 +260,67 @@ class JARVIS:
                 return self._handle_learning_request(original_input)
             elif action == "PLANNING_INFO":
                 return self._get_planning_engine_info()
+            elif action.startswith("FILE_"):
+                return self._handle_file_action(action, parse_params(param_str))
         except Exception as e:
             self.logger.error(f"执行操作 {action} 失败: {e}")
         return ""
+
+    def _handle_file_action(self, action: str, params: dict) -> str:
+        """处理文件操作 [[ACTION:FILE_xxx]]"""
+        if action == "FILE_READ":
+            path = params.get("path", "")
+            if not path:
+                return "[[ERROR: 缺少 path 参数]]"
+            try:
+                result = self.tool_manager.execute_tool("read_file", path=path)
+                return f"文件 {path} 的内容：\n\n```\n{result}\n```"
+            except Exception as e:
+                return f"[[ERROR: 读取文件失败 {e}]]"
+
+        elif action == "FILE_WRITE":
+            path = params.get("path", "")
+            content = params.get("content", "")
+            if not path:
+                return "[[ERROR: 缺少 path 参数]]"
+            try:
+                result = self.tool_manager.execute_tool("write_file", path=path, content=content)
+                return result
+            except Exception as e:
+                return f"[[ERROR: 写入文件失败 {e}]]"
+
+        elif action == "FILE_EDIT":
+            path = params.get("path", "")
+            op = params.get("operation", "replace")
+            line = int(params.get("line", 0))
+            content = params.get("content", "")
+            count = int(params.get("count", 1))
+            if not path or line < 1:
+                return "[[ERROR: 缺少 path 或 line 参数]]"
+            try:
+                result = self.tool_manager.execute_tool(
+                    "edit_file", path=path, operation=op,
+                    line=line, content=content, count=count
+                )
+                return result
+            except Exception as e:
+                return f"[[ERROR: 编辑文件失败 {e}]]"
+
+        elif action == "FILE_GREP":
+            pattern = params.get("pattern", "")
+            include = params.get("include", "")
+            if not pattern:
+                return "[[ERROR: 缺少 pattern 参数]]"
+            try:
+                kwargs = {"pattern": pattern}
+                if include:
+                    kwargs["include"] = include
+                result = self.tool_manager.execute_tool("grep_files", **kwargs)
+                return result
+            except Exception as e:
+                return f"[[ERROR: 搜索文件失败 {e}]]"
+
+        return f"[[ERROR: 未知的文件操作 {action}]]"
 
     def _extract_facts_from_conversation(self, user_input: str, response: str):
         """从对话中提取关于用户的关键事实并存入记忆"""
@@ -1004,7 +1074,13 @@ class JARVIS:
                     "- 用户要求你学习某个主题 → [[ACTION:LEARN]]\n"
                     "- 用户询问我能做什么/功能 → [[ACTION:PLANNING_INFO]]\n"
                     "- 用户问规划引擎信息 → [[ACTION:PLANNING_INFO]]\n"
-                    "如果不需要执行操作，不要加任何标记。"
+                    "\n"
+                    "## 文件操作（仅在你确实需要读写文件时使用）\n"
+                    "- 读取文件 → [[ACTION:FILE_READ|path=文件路径]]\n"
+                    "- 写入文件 → [[ACTION:FILE_WRITE|path=文件路径|content=内容]]\n"
+                    "- 编辑文件指定行 → [[ACTION:FILE_EDIT|path=路径|operation=replace|line=行号|content=新内容]]\n"
+                    "- 搜索文件内容 → [[ACTION:FILE_GREP|pattern=关键词|include=.py]]\n"
+                    "如果不需要执行操作，不要加任何标记。操作标记放在回答末尾。"
                 )
 
                 if memory_context:

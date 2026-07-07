@@ -261,6 +261,203 @@ class ExecuteCommandTool(SystemTool):
             raise ValueError(f"执行命令失败: {str(e)}")
 
 
+class EditFileTool(SystemTool):
+    """编辑文件工具——替换/插入/删除文件的指定行"""
+
+    def __init__(self):
+        parameters = {
+            "path": {"type": "string", "description": "文件路径", "required": True},
+            "operation": {
+                "type": "string",
+                "description": "操作类型: replace(替换行), insert(插入行), delete(删除行)",
+                "enum": ["replace", "insert", "delete"],
+                "required": True,
+            },
+            "line": {"type": "integer", "description": "行号（从1开始）", "required": True},
+            "content": {
+                "type": "string",
+                "description": "新内容（replace/insert 时需要）。insert 时插入到此行之前",
+                "required": False,
+                "default": "",
+            },
+            "count": {
+                "type": "integer",
+                "description": "从 line 开始替换/删除的行数，默认 1",
+                "required": False,
+                "default": 1,
+            },
+        }
+        super().__init__("edit_file", "编辑文件指定行（替换/插入/删除）", parameters)
+
+    def _safe_path(self, path: str) -> Path:
+        """确保文件在项目目录内"""
+        p = Path(path).resolve()
+        # 项目根目录（common ancestor safety）
+        allowed = Path(os.getcwd()).resolve()
+        try:
+            p.relative_to(allowed)
+        except ValueError:
+            raise PermissionError(f"不允许访问 {allowed} 目录之外的文件: {p}")
+        return p
+
+    def execute(self, **kwargs) -> str:
+        path = self._safe_path(kwargs["path"])
+        operation = kwargs["operation"]
+        line = int(kwargs["line"])
+        content = kwargs.get("content", "")
+        count = int(kwargs.get("count", 1))
+
+        if not path.exists():
+            raise FileNotFoundError(f"文件不存在: {path}")
+        if not path.is_file():
+            raise ValueError(f"不是文件: {path}")
+        if line < 1:
+            raise ValueError("行号必须 >= 1")
+
+        with open(path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        total = len(lines)
+
+        if operation == "replace":
+            if line > total:
+                raise ValueError(f"行号 {line} 超出文件范围（共 {total} 行）")
+            end = min(line + count - 1, total)
+            old_text = "".join(lines[line - 1:end])
+            lines[line - 1:end] = [(content if content else "") + "\n"]
+            if not content.endswith("\n"):
+                lines[line - 1] = lines[line - 1].rstrip("\n") + "\n"
+            new_text = lines[line - 1]
+            logger.info(f"编辑文件 {path}: 替换第 {line}-{end} 行")
+            result = f"已替换第 {line} 行（原: {old_text[:60].strip()}）"
+
+        elif operation == "insert":
+            if line > total + 1:
+                raise ValueError(f"行号 {line} 超出范围（共 {total} 行，可插入到第 {total+1} 行）")
+            insert_text = (content if content else "") + "\n"
+            if not content.endswith("\n"):
+                insert_text = content + "\n"
+            lines.insert(line - 1, insert_text)
+            logger.info(f"编辑文件 {path}: 在第 {line} 行前插入")
+            result = f"已在第 {line} 行前插入"
+
+        elif operation == "delete":
+            if line > total:
+                raise ValueError(f"行号 {line} 超出文件范围（共 {total} 行）")
+            end = min(line + count - 1, total)
+            deleted = "".join(lines[line - 1:end])
+            del lines[line - 1:end]
+            logger.info(f"编辑文件 {path}: 删除第 {line}-{end} 行")
+            result = f"已删除第 {line}-{end} 行（共 {count} 行）"
+
+        else:
+            raise ValueError(f"不支持的操作: {operation}")
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+
+        return result
+
+
+class WriteFileTool(SystemTool):
+    """写入文件工具——创建新文件或覆盖已有文件"""
+
+    def __init__(self):
+        parameters = {
+            "path": {"type": "string", "description": "文件路径", "required": True},
+            "content": {"type": "string", "description": "文件内容", "required": True},
+        }
+        super().__init__("write_file", "创建或覆盖写入文件", parameters)
+
+    def _safe_path(self, path: str) -> Path:
+        p = Path(path).resolve()
+        allowed = Path(os.getcwd()).resolve()
+        try:
+            p.relative_to(allowed)
+        except ValueError:
+            raise PermissionError(f"不允许访问 {allowed} 目录之外的文件: {p}")
+        return p
+
+    def execute(self, **kwargs) -> str:
+        path = self._safe_path(kwargs["path"])
+        content = kwargs["content"]
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        logger.info(f"写入文件 {path} ({len(content)} 字符)")
+        return f"已写入 {path} ({len(content)} 字符)"
+
+
+class GrepFilesTool(SystemTool):
+    """搜索文件内容工具——在项目中搜索文本"""
+
+    def __init__(self):
+        parameters = {
+            "pattern": {"type": "string", "description": "搜索关键词", "required": True},
+            "path": {"type": "string", "description": "搜索路径（默认当前目录）", "required": False, "default": "."},
+            "include": {"type": "string", "description": "文件后缀过滤，如 '.py,.txt'", "required": False, "default": ""},
+            "max_results": {"type": "integer", "description": "最大结果数", "required": False, "default": 20},
+        }
+        super().__init__("grep_files", "在文件中搜索文本", parameters)
+
+    def _safe_path(self, path: str) -> Path:
+        p = Path(path).resolve()
+        allowed = Path(os.getcwd()).resolve()
+        try:
+            p.relative_to(allowed)
+        except ValueError:
+            raise PermissionError(f"不允许访问 {allowed} 目录之外: {p}")
+        return p
+
+    def execute(self, **kwargs) -> str:
+        pattern = kwargs["pattern"]
+        search_path = self._safe_path(kwargs.get("path", "."))
+        include = kwargs.get("include", "")
+        max_results = int(kwargs.get("max_results", 20))
+
+        if not search_path.exists():
+            raise FileNotFoundError(f"路径不存在: {search_path}")
+
+        allowed_exts = [e.strip().lower() for e in include.split(",") if e.strip()] if include else None
+
+        results = []
+        try:
+            for fpath in search_path.rglob("*"):
+                if not fpath.is_file():
+                    continue
+                if allowed_exts and fpath.suffix.lower() not in allowed_exts:
+                    continue
+                # 跳过隐藏目录和二进制文件
+                if any(p.startswith(".") for p in fpath.relative_to(search_path).parts):
+                    continue
+                try:
+                    if fpath.stat().st_size > 1024 * 1024:  # 跳过 >1MB 的文件
+                        continue
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                        for ln, line in enumerate(f, 1):
+                            if pattern.lower() in line.lower():
+                                preview = line.strip()[:120]
+                                rel = fpath.relative_to(Path(os.getcwd()))
+                                results.append(f"{rel}:{ln}: {preview}")
+                                if len(results) >= max_results:
+                                    raise StopIteration
+                                break  # 每个文件只匹配一次，显示第一处
+                except (IOError, UnicodeDecodeError):
+                    continue
+        except StopIteration:
+            pass
+
+        if not results:
+            return f"在 {search_path} 中未找到 '{pattern}'"
+
+        output = "\n".join(results)
+        if len(results) >= max_results:
+            output += f"\n...（仅显示前 {max_results} 条）"
+        return output
+
+
 class SearchWebTool(SystemTool):
     """搜索网络工具（基础版本）"""
     
@@ -426,6 +623,9 @@ def initialize_system_tools(tool_manager_instance = None):
         GetSystemInfoTool(),
         ListFilesTool(),
         ReadFileTool(),
+        EditFileTool(),
+        WriteFileTool(),
+        GrepFilesTool(),
         ExecuteCommandTool(),
         SearchWebTool(),
         CalculateTool(),
@@ -467,6 +667,9 @@ __all__ = [
     'GetSystemInfoTool',
     'ListFilesTool',
     'ReadFileTool',
+    'EditFileTool',
+    'WriteFileTool',
+    'GrepFilesTool',
     'ExecuteCommandTool',
     'SearchWebTool',
     'CalculateTool',
