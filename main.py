@@ -364,6 +364,13 @@ class JARVIS:
             job = re.sub(r'^[名位个]', '', job).strip()
             if job and job not in ('JARVIS', 'jarvis', '机器人') and len(job) >= 4:
                 facts.append(f"用户职业: {job}")
+        # 手机号：1XX... / 我的手机号是X / X 这是我的手机号
+        m = re.search(r'(1[3-9]\d{9})(?:\s*这是我?的手机号)?|(?:我的手机号(?:\s*是)?[:：\s]*|手机号[:：\s]*)(1[3-9]\d{9})', text)
+        if m:
+            phone = m.group(1) or m.group(2)
+            if phone:
+                facts.append(f"用户手机号: {phone}")
+
         # 偏好/爱好：我喜欢X / 我平时X / 我爱X
         m = re.search(r'(?:我喜欢|我平时|我爱|我热衷于|我爱好)(.{2,20})', text)
         if m:
@@ -958,9 +965,11 @@ class JARVIS:
 
                 if memory_context:
                     system_prompt += (
-                        "\n\n## 相关历史记忆\n"
+                        "\n\n## 关于用户的信息\n"
+                        "（这是用户亲口告诉你的，是准确的，必须使用）\n"
                         f"{memory_context}\n\n"
-                        "参考上述记忆回答用户。"
+                        "你必须使用上述信息回答。当用户问自己的信息（如名字、职业、手机号、偏好等），"
+                        "直接从上述信息中查找答案，不要说自己不知道。\n"
                     )
 
                 response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt)
