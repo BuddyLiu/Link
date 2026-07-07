@@ -112,6 +112,7 @@ class OllamaAdapter(ModelAdapter):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 8192,
             },
             "stream": False
         }
@@ -231,6 +232,8 @@ class OllamaAdapter(ModelAdapter):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 8192,
+                "num_ctx": 8192,
             },
             "stream": False
         }
