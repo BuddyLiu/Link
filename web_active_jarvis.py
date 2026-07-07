@@ -1420,7 +1420,7 @@ tr:hover{background:#f0f7ff}
 
 <div id="loading">加载调试数据...</div>
 
-<div id="panel-memory" class="panel"></div>
+<div id="panel-memory" class="panel active"></div>
 <div id="panel-brain" class="panel"></div>
 <div id="panel-planning" class="panel"></div>
 <div id="panel-system" class="panel"></div>
