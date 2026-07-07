@@ -72,7 +72,12 @@
       "Bash(grep -i \"graph\\\\|edge\\\\|build\" /tmp/jarvis_test.log 2>/dev/null | tail -5)",
       "Read(//private/tmp/**)",
       "Bash(grep -i \"嵌入\\\\|embed\\\\|vector\\\\|graph\\\\|edge\" /tmp/jarvis_test.log | tail -10)",
-      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"Swift\"}')"
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"Swift\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/archive -H 'Content-Type: application/json' -d '{\"label\": \"before_test\"}')",
+      "Bash(curl -s http://127.0.0.1:8011/api/debug/archives)",
+      "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=3\")",
+      "Bash(curl -s \"http://127.0.0.1:8011/api/debug/interactions?page=1&per_page=2\")",
+      "Bash(curl -s http://127.0.0.1:8011/debug)"
     ],
     "additionalDirectories": [
       "/private/tmp",

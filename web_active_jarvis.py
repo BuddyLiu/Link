@@ -775,13 +775,40 @@ function escapeHtml(s) {
                 return {"error": "no query", "results": []}
             return await self._search_debug_memory(query)
 
+        @self.app.get("/api/debug/memories")
+        async def get_debug_memories(page: int = 1, per_page: int = 20):
+            return await self._get_memories_paginated(page, per_page)
+
+        @self.app.get("/api/debug/interactions")
+        async def get_debug_interactions(page: int = 1, per_page: int = 10):
+            return await self._get_interactions_paginated(page, per_page)
+
+        @self.app.post("/api/debug/archive")
+        async def post_debug_archive(request_data: dict):
+            return await self._create_debug_archive(request_data)
+
+        @self.app.get("/api/debug/archives")
+        async def get_debug_archives():
+            return await self._list_debug_archives()
+
+        @self.app.post("/api/debug/archive/restore")
+        async def post_debug_restore(request_data: dict):
+            return await self._restore_debug_archive(request_data)
+
+        @self.app.post("/api/debug/memory/reset")
+        async def post_debug_memory_reset():
+            return await self._reset_debug_memory()
+
 
     async def _get_debug_data(self) -> dict:
         data = {"timestamp": time.time(), "timestamp_str": __import__("datetime").datetime.now().isoformat()}
         import sys, platform, os
         data["system"] = {"python": sys.version, "platform": platform.platform(), "hostname": platform.node(), "cwd": os.getcwd()}
+        web_running = getattr(self, '_web_started', False) or self.is_running
         data["web"] = {
-            "is_running": self.is_running, "clients": len(self.websocket_clients),
+            "is_running": web_running,
+            "server_mode": "web" if getattr(self, '_web_started', False) else "active",
+            "clients": len(self.websocket_clients),
             "event_queue": self.event_queue.qsize(), "events_processed": self.stats.get("events_processed", 0),
             "events_dropped": self.stats.get("events_dropped", 0),
             "event_history_count": len(self.event_history),
@@ -873,6 +900,112 @@ function escapeHtml(s) {
         except Exception as e:
             return {"error": str(e), "results": []}
 
+    async def _get_memories_paginated(self, page: int, per_page: int) -> dict:
+        """分页获取记忆列表"""
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"error": "memory not available", "memories": [], "total": 0}
+        try:
+            store = self.brain_jarvis.memory_engine.store
+            all_m = store.get_all_memories(limit=9999)
+            total = len(all_m)
+            start = (page - 1) * per_page
+            end = start + per_page
+            page_items = all_m[start:end]
+
+            memories = []
+            for m in page_items:
+                memories.append({
+                    "id": m.id,
+                    "content": m.content,
+                    "type": m.metadata.get("type", "?"),
+                    "importance": m.importance,
+                    "created_at": m.metadata.get("created_at", "?"),
+                    "tags": m.metadata.get("tags", []),
+                })
+            return {"memories": memories, "total": total, "page": page, "per_page": per_page}
+        except Exception as e:
+            return {"error": str(e), "memories": [], "total": 0}
+
+    async def _get_interactions_paginated(self, page: int, per_page: int) -> dict:
+        """分页获取 LLM 交互历史"""
+        if not self.brain_jarvis or not self.brain_jarvis.brain_engine:
+            return {"error": "brain not available", "interactions": [], "total": 0}
+        try:
+            be = self.brain_jarvis.brain_engine
+            if not hasattr(be, "get_interaction_history"):
+                return {"error": "no history", "interactions": [], "total": 0}
+
+            all_history = be.get_interaction_history(limit=9999)
+            total = len(all_history)
+            start = (page - 1) * per_page
+            end = start + per_page
+
+            interactions = []
+            for h in all_history[start:end]:
+                interactions.append({
+                    "time": h.get("timestamp", "?"),
+                    "type": h.get("type", "?"),
+                    "input": str(h.get("input", "")),
+                    "output": str(h.get("output", "")),
+                    "duration": round(h.get("metadata", {}).get("duration", 0), 2),
+                })
+            return {
+                "interactions": interactions, "total": total,
+                "page": page, "per_page": per_page,
+            }
+        except Exception as e:
+            return {"error": str(e), "interactions": [], "total": 0}
+
+    async def _create_debug_archive(self, data: dict) -> dict:
+        """创建记忆归档"""
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"error": "memory not available"}
+        try:
+            store = self.brain_jarvis.memory_engine.store
+            label = data.get("label", "")
+            result = store.create_archive(label)
+            return {"success": True, "archive": result}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def _list_debug_archives(self) -> dict:
+        """列出所有归档"""
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"error": "memory not available", "archives": []}
+        try:
+            store = self.brain_jarvis.memory_engine.store
+            archives = store.list_archives()
+            return {"archives": archives, "total": len(archives)}
+        except Exception as e:
+            return {"error": str(e), "archives": []}
+
+    async def _restore_debug_archive(self, data: dict) -> dict:
+        """从归档恢复记忆"""
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"error": "memory not available"}
+        try:
+            store = self.brain_jarvis.memory_engine.store
+            archive_id = data.get("archive_id", "")
+            if not archive_id:
+                return {"error": "archive_id required"}
+            result = store.restore_archive(archive_id)
+            return {"success": True, "result": result}
+        except ValueError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": f"恢复失败: {e}"}
+
+    async def _reset_debug_memory(self) -> dict:
+        """清空所有记忆"""
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"error": "memory not available"}
+        try:
+            store = self.brain_jarvis.memory_engine.store
+            count = store.get_stats().get("total_memories", 0)
+            store.reset_memory()
+            return {"success": True, "cleared_count": count}
+        except Exception as e:
+            return {"error": str(e)}
 
     async def _handle_command(self, websocket: WebSocket, command: str):
         """处理命令"""
@@ -1191,6 +1324,8 @@ function escapeHtml(s) {
     def run_web(self):
         """运行Web服务器"""
         try:
+            self._web_started = True
+            self.stats["start_time"] = time.time()
             print(f"🌐 启动Web服务器...")
             print(f"   访问地址: http://{self.config['web_host']}:{self.config['web_port']}")
             print(f"   WebSocket地址: ws://{self.config['web_host']}:{self.config['web_port']}/ws")
@@ -1280,6 +1415,7 @@ tr:hover{background:#f0f7ff}
 <button class="tab" onclick="switchTab(this,'planning')">&#x1F3AF; 规划引擎</button>
 <button class="tab" onclick="switchTab(this,'system')">&#x2699; 系统信息</button>
 <button class="tab" onclick="switchTab(this,'search')">&#x1F50D; 搜索测试</button>
+<button class="tab" onclick="switchTab(this,'archive')">&#x1F4E6; 归档</button>
 </div>
 
 <div id="loading">加载调试数据...</div>
@@ -1289,9 +1425,13 @@ tr:hover{background:#f0f7ff}
 <div id="panel-planning" class="panel"></div>
 <div id="panel-system" class="panel"></div>
 <div id="panel-search" class="panel"><div class="search-box"><input id="search-input" placeholder="输入搜索关键词..." onkeydown="if(event.key==='Enter')searchMemory()"><button onclick="searchMemory()">搜索</button></div><div id="search-results" class="search-results"></div></div>
+<div id="panel-archive" class="panel"></div>
 
 <script>
 let data = null;
+
+let memPage = 1, intPage = 1;
+const MEM_PER_PAGE = 20, INT_PER_PAGE = 10;
 
 async function loadData() {
   document.getElementById('loading').style.display = 'block';
@@ -1306,6 +1446,8 @@ async function loadData() {
     renderBrain(data.brain);
     renderPlanning(data.planning);
     renderSystem(data);
+    // Load archives in background
+    loadArchives();
   } catch(e) {
     document.getElementById('loading').innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
     return;
@@ -1327,9 +1469,13 @@ function renderMemory(m) {
   if (m.stats) {
     html += '<div class="section"><h3>&#x1F4CA; 统计</h3><div class="grid">';
     html += '<div class="stat-card"><div class="label">记忆总数</div><div class="value">' + (m.stats.total_memories||0) + '</div></div>';
+    if (m.stats.graph) {
+      html += '<div class="stat-card"><div class="label">图节点</div><div class="value">' + (m.stats.graph.nodes||0) + '</div></div>';
+      html += '<div class="stat-card"><div class="label">图边数</div><div class="value">' + (m.stats.graph.edges||0) + '</div></div>';
+    }
     if (m.stats.type_counts) {
       for (const [k,v] of Object.entries(m.stats.type_counts)) {
-        html += '<div class="stat-card"><div class="label">类型: ' + k + '</div><div class="value">' + v + '</div></div>';
+        html += '<div class="stat-card"><div class="label">' + k + '</div><div class="value">' + v + '</div></div>';
       }
     }
     html += '</div></div>';
@@ -1340,21 +1486,75 @@ function renderMemory(m) {
     html += '<div class="stat-card"><div class="label">模型</div><div class="value" style="font-size:13px">' + (m.embedding.model||'-') + '</div></div>';
     html += '<div class="stat-card"><div class="label">维度</div><div class="value">' + (m.embedding.dimension||0) + '</div></div></div></div>';
   }
-  // All memories table
-  if (m.memories && m.memories.length > 0) {
-    html += '<div class="section"><h3>&#x1F4DD; 记忆列表 (' + m.memories.length + ')</h3><div style="overflow-x:auto"><table><thead><tr><th>类型</th><th>重要性</th><th>内容</th><th>时间</th></tr></thead><tbody>';
-    for (const mem of m.memories) {
-      const typeClass = 'badge-' + (mem.type || 'system');
-      html += '<tr><td><span class="badge ' + typeClass + '">' + (mem.type||'?') + '</span></td>';
-      html += '<td>' + (mem.importance||0) + '</td>';
-      html += '<td class="content-cell">' + escapeHtml(mem.content) + '</td>';
-      html += '<td style="font-size:11px;color:#888">' + (mem.created_at||'').slice(0,19) + '</td></tr>';
-    }
-    html += '</tbody></table></div></div>';
-  } else {
-    html += '<div class="empty">暂无记忆数据</div>';
-  }
+  // Memories table (paginated via api)
+  html += '<div class="section"><h3>&#x1F4DD; 记忆列表</h3><div id="mem-table-container"><div class="empty">加载中...</div></div></div>';
   document.getElementById('panel-memory').innerHTML = html;
+  loadMemoriesPage(1);
+}
+
+async function loadMemoriesPage(page) {
+  memPage = page;
+  const container = document.getElementById('mem-table-container');
+  if (!container) return;
+  try {
+    const r = await fetch('/api/debug/memories?page=' + page + '&per_page=' + MEM_PER_PAGE);
+    const d = await r.json();
+    if (d.error) { container.innerHTML = '<div class="error">' + d.error + '</div>'; return; }
+    const total = d.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / MEM_PER_PAGE));
+    let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    html += '<span style="font-size:13px;color:#666">共 ' + total + ' 条，第 ' + page + '/' + totalPages + ' 页</span>';
+    html += '<div class="pagination">';
+    html += '<button onclick="loadMemoriesPage(' + (page-1) + ')" ' + (page<=1?'disabled':'') + ' style="padding:4px 10px;margin:0 4px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer">&#x25C0; 上一页</button>';
+    html += '<button onclick="loadMemoriesPage(' + (page+1) + ')" ' + (page>=totalPages?'disabled':'') + ' style="padding:4px 10px;margin:0 4px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer">下一页 &#x25B6;</button>';
+    html += '</div></div>';
+
+    if (d.memories && d.memories.length > 0) {
+      html += '<div style="overflow-x:auto"><table><thead><tr><th>类型</th><th>重要性</th><th>内容</th><th>时间</th><th></th></tr></thead><tbody>';
+      for (const mem of d.memories) {
+        const typeClass = 'badge-' + (mem.type || 'system');
+        const short = escapeHtml(mem.content).substring(0, 100);
+        html += '<tr><td><span class="badge ' + typeClass + '">' + (mem.type||'?') + '</span></td>';
+        html += '<td>' + (mem.importance||0) + '</td>';
+        html += '<td class="content-cell">' + short + (mem.content.length > 100 ? '...' : '') + '</td>';
+        html += '<td style="font-size:11px;color:#888;white-space:nowrap">' + (mem.created_at||'').slice(0,16) + '</td>';
+        html += '<td><a onclick="showMemDetail(\'' + mem.id + '\')" style="cursor:pointer;color:#1a73e8;font-size:12px">详情</a></td></tr>';
+      }
+      html += '</tbody></table></div>';
+    } else {
+      html += '<div class="empty">暂无记忆数据</div>';
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+  }
+}
+
+// Memory detail modal
+let detailData = null;
+async function showMemDetail(id) {
+  if (!detailData) {
+    const r = await fetch('/api/debug/memories?page=1&per_page=9999');
+    detailData = await r.json();
+  }
+  const mem = (detailData.memories || []).find(m => m.id === id);
+  if (!mem) { alert('未找到该记忆'); return; }
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:1000;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+  box.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:16px">' +
+    '<h3 style="margin:0;font-size:16px">记忆详情</h3>' +
+    '<a onclick="this.closest(\'div[style]\\').parentElement.remove()" style="cursor:pointer;font-size:20px;color:#999">&times;</a></div>' +
+    '<table style="width:100%;font-size:13px"><tr><td style="padding:6px 8px;color:#666;width:80px"><b>ID</b></td><td style="padding:6px 8px;word-break:break-all">' + escapeHtml(mem.id) + '</td></tr>' +
+    '<tr><td style="padding:6px 8px;color:#666"><b>类型</b></td><td style="padding:6px 8px"><span class="badge badge-' + (mem.type||'system') + '">' + (mem.type||'?') + '</span></td></tr>' +
+    '<tr><td style="padding:6px 8px;color:#666"><b>重要性</b></td><td style="padding:6px 8px">' + (mem.importance||0) + '</td></tr>' +
+    '<tr><td style="padding:6px 8px;color:#666"><b>时间</b></td><td style="padding:6px 8px">' + (mem.created_at||'') + '</td></tr>' +
+    '<tr><td style="padding:6px 8px;color:#666"><b>标签</b></td><td style="padding:6px 8px">' + (mem.tags||[]).join(', ') || '-' + '</td></tr>' +
+    '<tr><td style="padding:6px 8px;color:#666;vertical-align:top"><b>内容</b></td><td style="padding:6px 8px;white-space:pre-wrap;word-break:break-word;background:#f8f9fa;border-radius:6px;padding:12px;font-size:12px;line-height:1.6">' + escapeHtml(mem.content) + '</td></tr></table>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 function renderBrain(b) {
@@ -1380,19 +1580,70 @@ function renderBrain(b) {
     }
     html += '</tbody></table></div>';
   }
-  // Interaction history
-  if (b.interaction_history && b.interaction_history.length > 0) {
-    html += '<div class="section"><h3>&#x1F4AC; 最近 LLM 交互 (' + b.interaction_history.length + ')</h3>';
-    for (const h of b.interaction_history) {
-      html += '<div class="llm-entry"><div class="meta">[' + (h.time||'').slice(0,19) + '] ' + (h.type||'?') + ' | ' + (h.duration||0) + 's</div>';
-      html += '<div class="content"><span class="label">&#x25B6; 输入:</span> ' + escapeHtml(h.input||'') + '<br>';
-      html += '<span class="label">&#x25C0; 输出:</span> ' + escapeHtml(h.output||'') + '</div></div>';
-    }
-    html += '</div>';
-  } else {
-    html += '<div class="empty">暂无 LLM 交互记录</div>';
-  }
+  // Interaction history (paginated)
+  const totalInt = b.health?.brain_engine?.interaction_history_count || 0;
+  html += '<div class="section"><h3>&#x1F4AC; 最近 LLM 交互</h3><div id="int-table-container"><div class="empty">加载中...</div></div></div>';
   document.getElementById('panel-brain').innerHTML = html;
+  loadInteractionsPage(1);
+}
+
+async function loadInteractionsPage(page) {
+  intPage = page;
+  const container = document.getElementById('int-table-container');
+  if (!container) return;
+  try {
+    const r = await fetch('/api/debug/interactions?page=' + page + '&per_page=' + INT_PER_PAGE);
+    const d = await r.json();
+    if (d.error) { container.innerHTML = '<div class="error">' + d.error + '</div>'; return; }
+    const total = d.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / INT_PER_PAGE));
+    let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    html += '<span style="font-size:13px;color:#666">共 ' + total + ' 条，第 ' + page + '/' + totalPages + ' 页</span>';
+    html += '<div class="pagination">';
+    html += '<button onclick="loadInteractionsPage(' + (page-1) + ')" ' + (page<=1?'disabled':'') + ' style="padding:4px 10px;margin:0 4px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer">&#x25C0; 上一页</button>';
+    html += '<button onclick="loadInteractionsPage(' + (page+1) + ')" ' + (page>=totalPages?'disabled':'') + ' style="padding:4px 10px;margin:0 4px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer">下一页 &#x25B6;</button>';
+    html += '</div></div>';
+
+    if (d.interactions && d.interactions.length > 0) {
+      for (const h of d.interactions) {
+        const inputShort = escapeHtml(h.input||'').substring(0, 120);
+        const outputShort = escapeHtml(h.output||'').substring(0, 120);
+        html += '<div class="llm-entry" style="cursor:pointer" onclick="showIntDetail(this)">';
+        html += '<div class="meta">[' + (h.time||'').slice(0,19) + '] ' + (h.type||'?') + ' | ' + (h.duration||0) + 's</div>';
+        html += '<div class="content"><span class="label">&#x25B6; 输入:</span> ' + inputShort + (h.input && h.input.length > 120 ? ' <span style="color:#1a73e8;font-size:11px">展开</span>' : '') + '<br>';
+        html += '<span class="label">&#x25C0; 输出:</span> ' + outputShort + (h.output && h.output.length > 120 ? ' <span style="color:#1a73e8;font-size:11px">展开</span>' : '');
+        // Store full data
+        html += '<div style="display:none" class="int-full-input">' + escapeHtml(h.input||'') + '</div>';
+        html += '<div style="display:none" class="int-full-output">' + escapeHtml(h.output||'') + '</div>';
+        html += '</div></div>';
+      }
+    } else {
+      html += '<div class="empty">暂无 LLM 交互记录</div>';
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+  }
+}
+function showIntDetail(el) {
+  const inputFull = el.querySelector('.int-full-input')?.textContent || '';
+  const outputFull = el.querySelector('.int-full-output')?.textContent || '';
+  const meta = el.querySelector('.meta')?.textContent || '';
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:1000;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+  box.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:12px">' +
+    '<h3 style="margin:0;font-size:15px;color:#333">LLM 交互详情</h3>' +
+    '<a onclick="this.closest(\'div[style]\\').parentElement.remove()" style="cursor:pointer;font-size:20px;color:#999">&times;</a></div>' +
+    '<div style="font-size:11px;color:#888;margin-bottom:12px">' + meta + '</div>' +
+    '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:#1a73e8;margin-bottom:4px">&#x25B6; 输入</div>' +
+    '<div style="background:#f0f7ff;border-radius:8px;padding:12px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word">' + (inputFull || '-') + '</div></div>' +
+    '<div><div style="font-size:12px;font-weight:600;color:#34a853;margin-bottom:4px">&#x25C0; 输出</div>' +
+    '<div style="background:#f0faf0;border-radius:8px;padding:12px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word">' + (outputFull || '-') + '</div></div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 function renderPlanning(p) {
@@ -1461,6 +1712,119 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ─── 归档功能 ─────────────────────────────────────
+
+async function loadArchives() {
+  const panel = document.getElementById('panel-archive');
+  if (!panel) return;
+  let html = '<div class="section"><h3>&#x1F4E6; 记忆归档</h3>';
+
+  // Create archive button
+  html += '<div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">';
+  html += '<input id="archive-label" placeholder="归档标签（可选）..." style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px">';
+  html += '<button onclick="createArchive()" style="padding:8px 20px;background:#1a73e8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">&#x1F4E5; 创建归档</button>';
+  html += '<button onclick="resetMemory()" style="padding:8px 20px;background:#d93025;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">&#x1F5D1; 清空记忆</button>';
+  html += '</div>';
+
+  // Archive list
+  html += '<div id="archive-list"><div class="empty">加载中...</div></div></div>';
+  panel.innerHTML = html;
+
+  // Fetch archives
+  try {
+    const r = await fetch('/api/debug/archives');
+    const d = await r.json();
+    if (d.error) { document.getElementById('archive-list').innerHTML = '<div class="error">' + d.error + '</div>'; return; }
+    let listHtml = '';
+    const arcs = d.archives || [];
+    if (arcs.length === 0) {
+      listHtml = '<div class="empty">暂无归档</div>';
+    } else {
+      listHtml += '<div style="overflow-x:auto"><table><thead><tr><th>版本</th><th>时间</th><th>标签</th><th>条数</th><th>校验</th><th></th></tr></thead><tbody>';
+      for (const a of arcs) {
+        const verifiedIcon = a.verified ? '&#x2705;' : '&#x274C;';
+        const verifiedColor = a.verified ? '#2e7d32' : '#d93025';
+        listHtml += '<tr><td style="font-size:11px;font-family:monospace">' + escapeHtml(a.archive_id).substring(0, 30) + '...</td>';
+        listHtml += '<td style="font-size:11px;white-space:nowrap">' + (a.created_at||'').slice(0,19) + '</td>';
+        listHtml += '<td>' + escapeHtml(a.label||'') + '</td>';
+        listHtml += '<td>' + (a.memory_count||0) + '</td>';
+        listHtml += '<td style="color:' + verifiedColor + ';font-size:13px">' + verifiedIcon + '</td>';
+        listHtml += '<td><button onclick="restoreArchive(\'' + a.archive_id + '\')" style="padding:4px 12px;background:#34a853;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">恢复</button></td></tr>';
+      }
+      listHtml += '</tbody></table></div>';
+    }
+    document.getElementById('archive-list').innerHTML = listHtml;
+  } catch(e) {
+    document.getElementById('archive-list').innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+  }
+}
+
+async function createArchive() {
+  const label = document.getElementById('archive-label')?.value || '';
+  const btn = document.querySelector('[onclick="createArchive()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '归档中...'; }
+  try {
+    const r = await fetch('/api/debug/archive', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({label: label})
+    });
+    const d = await r.json();
+    if (d.success) {
+      alert('&#x2705; 归档成功！\n' + d.archive.archive_id + '\n' + d.archive.memory_count + ' 条记忆');
+      loadArchives(); // refresh
+    } else {
+      alert('&#x274C; 归档失败: ' + (d.error||'unknown'));
+    }
+  } catch(e) {
+    alert('&#x274C; 归档失败: ' + e.message);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '&#x1F4E5; 创建归档'; }
+}
+
+async function restoreArchive(archiveId) {
+  if (!confirm('确定要恢复归档 ' + archiveId.substring(0,30) + ' 吗？\\n当前记忆将被替换！')) return;
+  if (!confirm('再次确认：当前所有记忆将被删除，替换为归档版本。')) return;
+  const btn = document.querySelector('[onclick="restoreArchive(\\'' + archiveId + '\\')"]');
+  if (btn) { btn.disabled = true; btn.textContent = '恢复中...'; }
+  try {
+    const r = await fetch('/api/debug/archive/restore', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({archive_id: archiveId})
+    });
+    const d = await r.json();
+    if (d.success) {
+      alert('&#x2705; 恢复成功！\\n' + d.result.restored_count + ' 条记忆已恢复');
+      loadData(); // refresh all data
+      loadArchives(); // refresh archive list
+    } else {
+      alert('&#x274C; 恢复失败: ' + (d.error||'unknown'));
+    }
+  } catch(e) {
+    alert('&#x274C; 恢复失败: ' + e.message);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '恢复'; }
+}
+
+async function resetMemory() {
+  if (!confirm('确定要清空所有记忆吗？\\n\\n建议先创建归档再清空。')) return;
+  if (!confirm('再次确认：所有记忆、嵌入向量和图索引将被永久删除！')) return;
+  try {
+    const r = await fetch('/api/debug/memory/reset', {method: 'POST'});
+    const d = await r.json();
+    if (d.success) {
+      alert('&#x2705; 已清空 ' + d.cleared_count + ' 条记忆');
+      loadData();
+      loadArchives();
+    } else {
+      alert('&#x274C; 清空失败: ' + (d.error||'unknown'));
+    }
+  } catch(e) {
+    alert('&#x274C; 清空失败: ' + e.message);
+  }
 }
 
 loadData();

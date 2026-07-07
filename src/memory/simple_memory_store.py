@@ -8,6 +8,10 @@ import json
 import os
 import uuid
 import time
+import io
+import re
+import base64
+import hashlib
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
@@ -602,6 +606,219 @@ class SimpleMemoryStore:
         self._save_to_disk()
         self.logger.warning("已重置所有记忆")
         return True
+
+    # ─── 记忆归档（打包/恢复/防篡改） ─────────────────────────
+
+    def _archive_dir(self) -> str:
+        """归档文件存储目录"""
+        d = os.path.join(self.persist_directory, "archives")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def create_archive(self, label: str = "") -> dict:
+        """
+        将当前所有记忆打包归档（含校验和，检测篡改）。
+
+        Args:
+            label: 可选标签，如 "before_python_test"
+
+        Returns:
+            归档信息 dict
+        """
+        import hashlib
+        import base64
+
+        # 序列化记忆数据
+        memories_data = []
+        for m in self._memories:
+            memories_data.append({
+                "id": m.get("id"),
+                "content": m.get("content"),
+                "metadata": m.get("metadata"),
+                "memory_type": m.get("memory_type", "conversation"),
+                "importance": m.get("importance", 0.5),
+            })
+
+        # 序列化 embedding（numpy → base64）
+        embeddings_b64 = ""
+        if self._embeddings is not None:
+            buf = io.BytesIO()
+            np.save(buf, self._embeddings)
+            embeddings_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        # 图边数据
+        graph_data = {}
+        if self.graph_index:
+            graph_data = self.graph_index._edges
+
+        # 构建数据包
+        data_payload = {
+            "memories": memories_data,
+            "embeddings": embeddings_b64,
+            "graph_edges": graph_data,
+        }
+
+        # 计算校验和（SHA-256）— 用于防篡改检测
+        payload_str = json.dumps(data_payload, ensure_ascii=False, sort_keys=True)
+        checksum = hashlib.sha256(payload_str.encode()).hexdigest()
+
+        timestamp = datetime.now()
+        ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
+        safe_label = re.sub(r'[^a-zA-Z0-9_\-一-鿿]', '_', label)[:40] if label else ""
+        archive_id = f"archive_{ts_str}{'_' + safe_label if safe_label else ''}"
+
+        archive = {
+            "archive_id": archive_id,
+            "created_at": timestamp.isoformat(),
+            "label": label or "",
+            "memory_count": len(memories_data),
+            "checksum": checksum,
+            "checksum_algorithm": "sha256",
+            "jarvis_version": "3.0",
+            "data": data_payload,
+        }
+
+        # 写盘
+        filepath = os.path.join(self._archive_dir(), f"{archive_id}.json")
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(archive, f, indent=2, ensure_ascii=False)
+
+        self.logger.info(f"记忆归档创建成功: {archive_id} ({len(memories_data)} 条记忆)")
+        return {
+            "archive_id": archive_id,
+            "created_at": archive["created_at"],
+            "label": label,
+            "memory_count": len(memories_data),
+            "checksum": checksum,
+            "filepath": filepath,
+        }
+
+    def list_archives(self) -> list:
+        """
+        列出所有可用归档。
+
+        Returns:
+            归档信息列表，每项含 archive_id, created_at, label, memory_count, checksum, verified
+        """
+        import hashlib
+
+        archive_dir = self._archive_dir()
+        if not os.path.exists(archive_dir):
+            return []
+
+        archives = []
+        for fname in sorted(os.listdir(archive_dir), reverse=True):
+            if not fname.startswith("archive_") or not fname.endswith(".json"):
+                continue
+            fpath = os.path.join(archive_dir, fname)
+            try:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    archive = json.load(f)
+
+                # 校验检查
+                stored_checksum = archive.get("checksum", "")
+                data_payload = archive.get("data", {})
+                payload_str = json.dumps(data_payload, ensure_ascii=False, sort_keys=True)
+                computed = hashlib.sha256(payload_str.encode()).hexdigest()
+                verified = computed == stored_checksum
+
+                archives.append({
+                    "archive_id": archive.get("archive_id", fname.replace(".json", "")),
+                    "created_at": archive.get("created_at", ""),
+                    "label": archive.get("label", ""),
+                    "memory_count": archive.get("memory_count", 0),
+                    "checksum": stored_checksum[:16] + "...",
+                    "verified": verified,
+                    "filepath": fpath,
+                })
+            except (json.JSONDecodeError, KeyError, IOError) as e:
+                archives.append({
+                    "archive_id": fname.replace(".json", ""),
+                    "created_at": "",
+                    "label": f"⚠️ 读取失败: {e}",
+                    "memory_count": 0,
+                    "checksum": "",
+                    "verified": False,
+                    "filepath": fpath,
+                })
+
+        return archives
+
+    def restore_archive(self, archive_id: str) -> dict:
+        """
+        从归档恢复记忆。
+
+        Args:
+            archive_id: 归档 ID
+
+        Returns:
+            恢复结果 dict
+
+        Raises:
+            ValueError: 归档不存在或校验失败
+        """
+        import hashlib
+        import base64
+
+        # 查找归档文件
+        archive_dir = self._archive_dir()
+        fpath = os.path.join(archive_dir, f"{archive_id}.json")
+        if not os.path.exists(fpath):
+            # 尝试模糊匹配
+            for fname in os.listdir(archive_dir):
+                if archive_id in fname and fname.endswith(".json"):
+                    fpath = os.path.join(archive_dir, fname)
+                    break
+            else:
+                raise ValueError(f"归档 '{archive_id}' 不存在")
+
+        with open(fpath, 'r', encoding='utf-8') as f:
+            archive = json.load(f)
+
+        # 校验完整性
+        stored_checksum = archive.get("checksum", "")
+        data_payload = archive.get("data", {})
+        if not data_payload:
+            raise ValueError("归档数据损坏：缺少 data 字段")
+
+        payload_str = json.dumps(data_payload, ensure_ascii=False, sort_keys=True)
+        computed = hashlib.sha256(payload_str.encode()).hexdigest()
+        if computed != stored_checksum:
+            raise ValueError(
+                f"归档校验失败！文件可能已被篡改。\n"
+                f"  期望: {stored_checksum[:16]}...\n"
+                f"  实际: {computed[:16]}..."
+            )
+
+        # 恢复记忆数据
+        old_count = len(self._memories)
+        self._memories = data_payload.get("memories", [])
+
+        # 恢复 embedding
+        emb_b64 = data_payload.get("embeddings", "")
+        if emb_b64:
+            buf = io.BytesIO(base64.b64decode(emb_b64))
+            self._embeddings = np.load(buf)
+        else:
+            self._embeddings = None
+
+        # 恢复图边
+        graph_data = data_payload.get("graph_edges", {})
+        if self.graph_index:
+            self.graph_index._edges = graph_data
+            self.graph_index._save()
+
+        # 写盘
+        self._save_to_disk()
+
+        new_count = len(self._memories)
+        self.logger.info(f"记忆归档恢复完成: {archive_id} ({old_count} → {new_count} 条)")
+        return {
+            "archive_id": archive_id,
+            "previous_count": old_count,
+            "restored_count": new_count,
+            "verified": True,
+        }
 
     def is_available(self) -> bool:
         """检查存储是否可用"""
