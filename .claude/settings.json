@@ -59,7 +59,16 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://127.0.0.1:8011/)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('Memory:', d.get\\('memory',{}\\).get\\('stats',{}\\)\\); print\\('Brain:', 'available' if d.get\\('brain',{}\\).get\\('available'\\) else 'N/A'\\)\")",
       "Bash(awk '{print $2}')",
-      "Bash(xargs -I{} echo \"JARVIS PID: {}\")"
+      "Bash(xargs -I{} echo \"JARVIS PID: {}\")",
+      "Bash(curl -s http://localhost:11434/api/embed -d '{\"model\": \"qwen2.5:1.5b\", \"input\": \"用户是iOS开发工程师\"}')",
+      "Bash(curl -s http://localhost:11434/api/embed -d '{\"model\": \"qwen2.5:1.5b\", \"input\": [\"用户是iOS开发工程师\", \"用户喜欢用SwiftUI写界面\", \"用户手机号是13800138000\", \"用户是Android工程师\"]}')",
+      "Bash(curl -s -o /dev/null -w \"Ollama API: %{http_code}\" http://localhost:11434/api/pull -d '{\"model\": \"nomic-embed-text\"}' --max-time 5)",
+      "Bash(curl -s -o /dev/null -w \"Baidu: %{http_code}\" http://www.baidu.com --max-time 5)",
+      "Bash(curl -s http://localhost:11434/api/embed -d '{\"model\": \"deepseek-r1:7b\", \"input\": \"test\"}' --max-time 30)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('deepseek embed:', 'ok' if 'embeddings' in d else d\\)\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"iOS开发\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"手机号\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"SwiftUI\"}')"
     ],
     "additionalDirectories": [
       "/private/tmp",

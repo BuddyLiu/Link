@@ -44,9 +44,13 @@ class SimpleMemoryStore:
         # 设置日志
         self.logger = logger.getChild("simple_memory")
 
-        # 创建嵌入服务
+        # 创建嵌入服务（默认使用 Ollama + bge-m3）
         if embedding_service is None:
-            self.embedding_service = EmbeddingService()
+            self.embedding_service = EmbeddingService(
+                model_name="bge-m3",
+                backend="ollama",
+                ollama_base_url="http://localhost:11434"
+            )
         else:
             self.embedding_service = embedding_service
 
@@ -177,7 +181,7 @@ class SimpleMemoryStore:
 
         try:
             texts = [m.get("content", "") for m in self._memories]
-            embeddings = self.embedding_service.embed(texts)
+            embeddings = self.embedding_service.embed_batch(texts)
             self._embeddings = np.array(embeddings, dtype=np.float32)
             self._save_to_disk()
             self.logger.info(f"重建完成: {len(texts)} 条嵌入")

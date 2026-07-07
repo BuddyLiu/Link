@@ -92,29 +92,44 @@ class MemoryManager:
 def create_memory_manager(config=None) -> MemoryManager:
     """创建记忆管理器实例"""
     # 允许直接传入配置对象或字典
+    # 默认使用 Ollama + bge-m3
     if config is None:
         persist_dir = "./data/memory/json"
-        embed_model = "all-MiniLM-L6-v2"
+        embed_model = "bge-m3"
         sim_threshold = 0.7
         max_memories = 5
+        embed_backend = "ollama"
     elif hasattr(config, 'memory'):
         persist_dir = config.memory.chroma_persist_directory
-        embed_model = config.memory.embedding_model
+        embed_model = getattr(config.memory, 'embedding_model', "bge-m3")
         sim_threshold = config.memory.similarity_threshold
         max_memories = config.memory.max_memories_per_query
+        embed_backend = getattr(config.memory, 'embedding_provider', "ollama")
     elif isinstance(config, dict):
         persist_dir = config.get("persist_directory", "./data/memory/json")
-        embed_model = config.get("embedding_model", "all-MiniLM-L6-v2")
+        embed_model = config.get("embedding_model", "bge-m3")
         sim_threshold = config.get("similarity_threshold", 0.7)
         max_memories = config.get("max_memories_per_query", 5)
+        embed_backend = config.get("embedding_provider", "ollama")
     else:
         persist_dir = "./data/memory/json"
-        embed_model = "all-MiniLM-L6-v2"
+        embed_model = "bge-m3"
         sim_threshold = 0.7
         max_memories = 5
+        embed_backend = "ollama"
 
     # 创建嵌入服务
-    embedding_service = EmbeddingService(model_name=embed_model)
+    if embed_backend == "ollama":
+        embedding_service = EmbeddingService(
+            model_name=embed_model,
+            backend="ollama",
+            ollama_base_url="http://localhost:11434"
+        )
+    else:
+        embedding_service = EmbeddingService(
+            model_name=embed_model,
+            backend="sentence_transformers"
+        )
 
     # 创建记忆存储 (使用轻量级实现)
     memory_store = MemoryStore(

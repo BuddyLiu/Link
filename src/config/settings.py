@@ -33,8 +33,9 @@ class ModelSettings(BaseSettings):
 class MemorySettings(BaseSettings):
     """记忆存储配置"""
     vector_store_type: str = Field(default="chroma", description="向量存储类型：chroma, faiss")
-    chroma_persist_directory: str = Field(default="./data/memory/chroma", description="Chroma持久化目录")
-    embedding_model: str = Field(default="all-MiniLM-L6-v2", description="嵌入模型名称")
+    chroma_persist_directory: str = Field(default="./data/memory/json", description="持久化目录")
+    embedding_model: str = Field(default="bge-m3", description="嵌入模型名称")
+    embedding_provider: str = Field(default="ollama", description="嵌入后端：ollama, sentence_transformers")
     similarity_threshold: float = Field(default=0.7, description="相似度阈值")
     max_memories_per_query: int = Field(default=5, description="每次查询最大记忆数量")
     memory_retention_days: int = Field(default=365, description="记忆保留天数")

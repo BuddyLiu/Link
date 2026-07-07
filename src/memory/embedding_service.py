@@ -24,37 +24,76 @@ except Exception:
 
 class EmbeddingService:
     """嵌入服务类
-    
+
     提供文本向量化功能，支持多种嵌入模型和缓存机制。
     """
-    
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_size: int = 1000):
+
+    def __init__(self, model_name: str = "bge-m3", cache_size: int = 1000,
+                 backend: str = "ollama", ollama_base_url: str = "http://localhost:11434"):
         """
         初始化嵌入服务
-        
+
         Args:
-            model_name: 嵌入模型名称
-                - "all-MiniLM-L6-v2": 小型高效模型 (384维)
-                - "all-mpnet-base-v2": 高质量模型 (768维)
-                - "text-embedding-ada-002": OpenAI模型 (需要API)
-                - 或其他Sentence Transformers模型
+            model_name: 模型名称
+                - backend="sentence_transformers": HuggingFace模型名（默认已废弃）
+                - backend="ollama": Ollama中的模型名，如 "bge-m3", "nomic-embed-text"
             cache_size: 缓存大小，LRU缓存最近计算的嵌入
+            backend: 后端类型，"ollama" 或 "sentence_transformers"
+            ollama_base_url: Ollama 服务地址
         """
         self.model_name = model_name
         self.cache_size = cache_size
+        self.backend = backend
+        self.ollama_base_url = ollama_base_url.rstrip("/")
         self.model = None
         self.dimension = None
+        self._initialized = False
         self._initialize_model()
-        
+
         # 创建带缓存的嵌入函数
         self._embed_cached = lru_cache(maxsize=cache_size)(self._embed_uncached)
     
     def _initialize_model(self):
-        """初始化嵌入模型（先尝试本地缓存，避免网络阻塞）"""
+        """初始化嵌入模型"""
+        if self.backend == "ollama":
+            self._init_ollama_backend()
+        else:
+            self._init_sentence_transformers_backend()
+
+    def _init_ollama_backend(self):
+        """初始化 Ollama 嵌入后端"""
+        # 先设置已知模型的维度（避免首次 embed 时额外调用）
+        model_lower = self.model_name.lower()
+        if "bge-m3" in model_lower:
+            self.dimension = 1024
+        elif "nomic-embed-text" in model_lower or "nomic" in model_lower:
+            self.dimension = 768
+        else:
+            self.dimension = 1024  # 通用默认值
+
+        # 验证 Ollama 服务是否可用
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"{self.ollama_base_url}/api/tags",
+                                         method="GET",
+                                         headers={"Accept": "application/json"})
+            resp = urllib.request.urlopen(req, timeout=5)
+            if resp.status == 200:
+                self._initialized = True
+                print(f"✅ Ollama 嵌入后端就绪，模型: {self.model_name}，维度: {self.dimension}")
+            else:
+                print(f"⚠️ Ollama 服务响应异常 (HTTP {resp.status})，使用随机嵌入后备")
+        except Exception as e:
+            print(f"⚠️ Ollama 服务不可用 ({e})，使用随机嵌入 + 关键词搜索后备")
+            self._initialized = False
+
+    def _init_sentence_transformers_backend(self):
+        """初始化 sentence-transformers 嵌入后端（保留兼容）"""
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             print("⚠️ sentence-transformers 未安装，使用随机嵌入作为后备方案")
             self.model = None
             self.dimension = 384
+            self._initialized = False
             return
 
         import threading
@@ -65,11 +104,9 @@ class EmbeddingService:
 
         def load_model():
             try:
-                # 先尝试本地缓存（不联网）
                 model = SentenceTransformer(self.model_name, device='cpu', local_files_only=True)
                 result[0] = model
             except Exception:
-                # 缓存未命中 - 尝试联网下载（带15秒超时）
                 try:
                     model = SentenceTransformer(self.model_name, device='cpu')
                     result[0] = model
@@ -81,42 +118,104 @@ class EmbeddingService:
         t = threading.Thread(target=load_model, daemon=True)
         t.start()
 
-        # 等待最多 18 秒（本地缓存快速 + 联网重试缓冲）
         if done.wait(timeout=18):
             if exception[0]:
                 print(f"⚠️ 无法加载嵌入模型 '{self.model_name}': {exception[0]}")
-                print("⚠️ 将使用随机嵌入 + 关键词搜索作为后备方案")
                 self.model = None
                 self.dimension = 384
+                self._initialized = False
             else:
                 self.model = result[0]
                 try:
                     test_embedding = self.model.encode(["test"])
                     self.dimension = len(test_embedding[0])
+                    self._initialized = True
                     print(f"✅ 嵌入模型 '{self.model_name}' 初始化成功，维度: {self.dimension}")
                 except Exception as e:
                     print(f"⚠️ 嵌入模型加载不完整: {e}")
                     self.model = None
                     self.dimension = 384
+                    self._initialized = False
         else:
             print(f"⚠️ 加载嵌入模型 '{self.model_name}' 超时（网络不可用）")
-            print("⚠️ 将使用随机嵌入 + 关键词搜索作为后备方案")
             self.model = None
             self.dimension = 384
+            self._initialized = False
     
+    def _normalize_text(self, text: str) -> str:
+        """归一化文本，去除常见前缀结构，让 embedding 聚焦在内容语义"""
+        import re
+        # 去除常见 pattern（按特异性从高到低排列）
+        patterns = [
+            # 用户信息类事实前缀
+            r'^用户(?:手机号|职业|偏好|爱好|名字|姓名|叫|人称)\s*[:：]?\s*',
+            r'^用户(?:是|喜欢|热爱|热衷于|平时|爱)\s*',
+            # 自我介绍前缀
+            r'^(?:我是|我叫|我的名字叫?|名字叫?|我的职业是|我是一个|我是一名?|我的电话|我的手机|手机号)\s*',
+            r'^(?:我喜欢|我平时|我爱|我热衷于|我爱好|我是一名?)\s*',
+            # 其他常见前缀
+            r'^用户要求学习:\s*',
+        ]
+        for p in patterns:
+            text = re.sub(p, '', text, count=1)
+        return text.strip()
+
+    def _ollama_embed(self, text: str) -> list:
+        """通过 Ollama API 获取嵌入向量"""
+        normalized = self._normalize_text(text)
+        import urllib.request
+        import json
+        data = json.dumps({"model": self.model_name, "input": [normalized]}).encode()
+        req = urllib.request.Request(
+            f"{self.ollama_base_url}/api/embed",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"}
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode())
+        return result["embeddings"][0]
+
+    def _ollama_embed_batch(self, texts: list, batch_size: int = 32) -> list:
+        """通过 Ollama API 批量获取嵌入向量"""
+        # 批量归一化
+        normalized_batch = [self._normalize_text(t) for t in texts if t and t.strip()]
+        if not normalized_batch:
+            return []
+        import urllib.request
+        import json
+        data = json.dumps({"model": self.model_name, "input": normalized_batch}).encode()
+        req = urllib.request.Request(
+            f"{self.ollama_base_url}/api/embed",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"}
+        )
+        resp = urllib.request.urlopen(req, timeout=60)
+        result = json.loads(resp.read().decode())
+        return result["embeddings"]
+
     def _embed_uncached(self, text: str) -> List[float]:
         """不带缓存的嵌入计算"""
-        if self.model is not None:
+        if self.backend == "ollama" and self._initialized:
+            try:
+                return self._ollama_embed(text)
+            except Exception as e:
+                print(f"⚠️ Ollama 嵌入失败回退到随机: {e}")
+                return self._random_embed(text)
+        elif self.model is not None:
             # 使用Sentence Transformers
             embedding = self.model.encode([text])[0]
             return embedding.tolist()
         else:
-            # 后备方案：生成确定性随机向量
-            # 使用文本哈希作为随机种子，确保相同文本生成相同向量
-            import hashlib
-            seed = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
-            np.random.seed(seed)
-            return np.random.randn(self.dimension).tolist()
+            return self._random_embed(text)
+
+    def _random_embed(self, text: str) -> List[float]:
+        """确定性随机向量后备方案"""
+        import hashlib
+        seed = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
+        np.random.seed(seed)
+        return np.random.randn(self.dimension).tolist()
     
     def embed(self, text: str) -> List[float]:
         """
@@ -146,42 +245,58 @@ class EmbeddingService:
     def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
         """
         批量嵌入计算
-        
+
         Args:
             texts: 文本列表
-            batch_size: 批处理大小
-            
+            batch_size: 批处理大小（Ollama 后端会一次性发送全部）
+
         Returns:
             向量嵌入列表
         """
         if not texts:
             return []
-        
+
         # 过滤空文本
         valid_texts = [t.strip() for t in texts if t and t.strip()]
         if not valid_texts:
             return [[] for _ in texts]
-        
+
+        # Ollama 后端 — 支持批量
+        if self.backend == "ollama" and self._initialized:
+            try:
+                ollama_embs = self._ollama_embed_batch(valid_texts, batch_size)
+                result = []
+                emb_idx = 0
+                for original_text in texts:
+                    if original_text and original_text.strip():
+                        result.append(ollama_embs[emb_idx])
+                        emb_idx += 1
+                    else:
+                        result.append([0.0] * self.dimension)
+                return result
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"Ollama批量嵌入失败: {str(e)}")
+                # 逐个回退
+                return [self.embed(text) for text in texts]
+
+        # Sentence Transformers 后端
         if self.model is not None:
             try:
-                # 批量计算嵌入
                 embeddings = self.model.encode(valid_texts, batch_size=batch_size)
                 result = []
                 text_idx = 0
-                
                 for original_text in texts:
                     if original_text and original_text.strip():
                         result.append(embeddings[text_idx].tolist())
                         text_idx += 1
                     else:
                         result.append([0.0] * self.dimension)
-                
                 return result
-                
             except Exception as e:
                 if self.logger:
                     self.logger.error(f"批量嵌入计算失败: {str(e)}")
-        
+
         # 后备方案：逐个计算
         return [self.embed(text) for text in texts]
     
@@ -214,6 +329,8 @@ class EmbeddingService:
     
     def is_ready(self) -> bool:
         """检查嵌入服务是否就绪"""
+        if self.backend == "ollama":
+            return self._initialized
         return self.model is not None
 
     def set_logger(self, logger):
