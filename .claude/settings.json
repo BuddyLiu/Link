@@ -92,7 +92,11 @@
       "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"Web框架\"}')",
       "Bash(xargs -I{} echo \"Mentions in log: {}\")",
       "Bash(cd /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS *)",
-      "Bash(awk 'NR>=2036 && NR<=2042 {printf \"%d: %s\\\\n\", NR, $0}' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)"
+      "Bash(awk 'NR>=2036 && NR<=2042 {printf \"%d: %s\\\\n\", NR, $0}' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
+      "Bash(curl -s http://127.0.0.1:8011/settings)",
+      "Bash(curl -s -v http://127.0.0.1:8011/api/settings)",
+      "Bash(curl -s http://127.0.0.1:8011/api/settings)",
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/settings -H 'Content-Type: application/json' -d '{\"mode\":\"online\",\"provider\":\"deepseek\",\"api_base\":\"https://api.deepseek.com\",\"api_key\":\"test-key\",\"model\":\"deepseek-chat\",\"offline_model\":\"qwen2.5:1.5b\",\"temperature\":0.7}')"
     ],
     "additionalDirectories": [
       "/private/tmp",

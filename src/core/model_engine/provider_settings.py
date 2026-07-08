@@ -10,7 +10,7 @@ from typing import Optional
 _SETTINGS_PATH = Path("data/settings/provider.json")
 
 DEFAULT_SETTINGS = {
-    "mode": "offline",
+    "mode": "online",
     "provider": "deepseek",
     "api_base": "https://api.deepseek.com",
     "api_key": "",

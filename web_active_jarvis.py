@@ -2058,9 +2058,10 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
 .field label{display:block;font-size:13px;color:#555;margin-bottom:4px;font-weight:500}
 .field input,.field select{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;transition:border-color .2s}
 .field input:focus,.field select:focus{border-color:#1a73e8}
-.field input[type=radio]{width:auto;margin-right:6px}
-.radio-group{display:flex;gap:20px;margin-bottom:4px}
-.radio-group label{font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#333}
+.field input[type=radio]{width:auto;margin-right:4px}
+.radio-group{display:flex;gap:24px;margin-bottom:4px}
+.radio-group label{font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#333;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px;transition:all .2s}
+.radio-group label:has(input:checked){border-color:#1a73e8;background:#e8f0fe}
 .btn{padding:12px 24px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;transition:all .2s}
 .btn-primary{background:#1a73e8;color:#fff}
 .btn-primary:hover{background:#1557b0}
@@ -2075,21 +2076,21 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
 </style>
 </head>
 <body>
-<h1>⚙️ JARVIS 设置</h1>
+<h1>&#x2699;&#xFE0F; JARVIS 设置</h1>
 <div id="status" class="status"></div>
 
 <div class="card">
-  <h2>🤖 模型提供者</h2>
+  <h2>&#x1F916; 模型提供者</h2>
   <div class="field">
     <div class="radio-group">
-      <label><input type="radio" name="mode" value="offline" onchange="toggleMode()"> 离线模式（本地模型）</label>
-      <label><input type="radio" name="mode" value="online" onchange="toggleMode()"> 在线模式（API）</label>
+      <label><input type="radio" name="mode" value="online" checked onchange="toggleMode()"> &#x1F310; 在线模式（API）</label>
+      <label><input type="radio" name="mode" value="offline" onchange="toggleMode()"> &#x1F4BB; 离线模式（本地模型）</label>
     </div>
   </div>
 </div>
 
-<div id="online-settings" class="card hidden">
-  <h2>🌐 在线 API 配置</h2>
+<div id="online-settings" class="card">
+  <h2>&#x1F310; 在线 API 配置</h2>
   <div class="field">
     <label>服务商</label>
     <select id="provider" onchange="updateBaseUrl()">
@@ -2116,13 +2117,11 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
   </div>
 </div>
 
-<div id="offline-settings" class="card">
-  <h2>💻 本地模型</h2>
+<div id="offline-settings" class="card hidden">
+  <h2>&#x1F4BB; 本地模型</h2>
   <div class="field">
     <label>选择模型</label>
-    <select id="offline-model">
-      <option value="">加载中...</option>
-    </select>
+    <select id="offline-model"></select>
   </div>
   <div class="model-info" id="model-info"></div>
 </div>
@@ -2130,101 +2129,134 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
 <div style="display:flex;gap:10px;margin-top:8px">
   <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
   <button class="btn btn-secondary" onclick="testConnection()">测试连接</button>
+  <a href="/" style="margin-left:auto;color:#888;text-decoration:none;font-size:13px;padding:12px 0">&#x2190; 返回聊天</a>
 </div>
 
 <script>
+// Load available Ollama models
 async function loadModels() {
+  const sel = document.getElementById("offline-model");
+  sel.innerHTML = "<option value="">加载中...</option>";
   try {
-    const r = await fetch('/api/models');
+    const r = await fetch("/api/models");
     const d = await r.json();
-    const sel = document.getElementById(\x27offline-model\x27);
-    sel.innerHTML = d.models.map(m => \x27<option value=\x27\x27 + m + \x27\x27>\x27 + m + \x27</option>\x27).join(\x27\x27);
-    if (d.models.length === 0) {
-      sel.innerHTML = \x27<option value=\x27\x27>未发现本地模型（Ollama 未运行）</option>\x27;
+    if (d.models && d.models.length > 0) {
+      sel.innerHTML = d.models.map(function(m) {
+        return "<option value="" + m + "">" + m + "</option>";
+      }).join("");
+    } else {
+      sel.innerHTML = "<option value="">未发现本地模型（Ollama 未运行）</option>";
     }
   } catch(e) {
-    document.getElementById(\x27offline-model\x27).innerHTML = \x27<option value=\x27\x27>加载失败</option>\x27;
+    sel.innerHTML = "<option value="">加载失败</option>";
   }
 }
 
+// Load current settings
 async function loadSettings() {
   try {
-    const r = await fetch(\x27/api/settings\x27);
+    const r = await fetch("/api/settings");
     const s = await r.json();
-    document.querySelector(\x27[name=mode][value=\x27 + s.mode + \x27]\x27).checked = true;
-    if (s.provider) document.getElementById(\x27provider\x27).value = s.provider;
-    if (s.api_base) document.getElementById(\x27api-base\x27).value = s.api_base;
-    if (s.api_key_display) document.getElementById(\x27api-key\x27).placeholder = s.api_key_display;
-    if (s.model) document.getElementById(\x27model-name\x27).value = s.model;
+    // Select the correct mode radio
+    var radio = document.querySelector("input[name=mode][value="" + s.mode + ""]");
+    if (radio) radio.checked = true;
+    // Fill in fields
+    if (s.provider) document.getElementById("provider").value = s.provider;
+    if (s.api_base) document.getElementById("api-base").value = s.api_base;
+    if (s.api_key_display) document.getElementById("api-key").placeholder = s.api_key_display;
+    if (s.model) document.getElementById("model-name").value = s.model;
+    if (s.temperature) document.getElementById("temperature").value = s.temperature;
+    // Select offline model
     if (s.offline_model) {
-      const sel = document.getElementById(\x27offline-model\x27);
-      for (const opt of sel.options) {
-        if (opt.value === s.offline_model) { opt.selected = true; break; }
+      var sel = document.getElementById("offline-model");
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === s.offline_model) {
+          sel.options[i].selected = true;
+          break;
+        }
       }
     }
-    if (s.temperature) document.getElementById(\x27temperature\x27).value = s.temperature;
     toggleMode();
-  } catch(e) { showStatus(\x27加载设置失败: \x27 + e.message, \x27error\x27); }
+  } catch(e) {
+    showStatus("加载设置失败: " + e.message, "error");
+  }
 }
 
 function toggleMode() {
-  const mode = document.querySelector(\x27[name=mode]:checked\x27).value;
-  document.getElementById(\x27online-settings\x27).classList.toggle(\x27hidden\x27, mode !== \x27online\x27);
-  document.getElementById(\x27offline-settings\x27).classList.toggle(\x27hidden\x27, mode !== \x27offline\x27);
+  var modeEl = document.querySelector("input[name=mode]:checked");
+  if (!modeEl) return;
+  var mode = modeEl.value;
+  document.getElementById("online-settings").classList.toggle("hidden", mode !== "online");
+  document.getElementById("offline-settings").classList.toggle("hidden", mode !== "offline");
 }
 
 function updateBaseUrl() {
-  const p = document.getElementById(\x27provider\x27).value;
-  const urls = { deepseek: \x27https://api.deepseek.com\x27, openai: \x27https://api.openai.com\x27, custom: document.getElementById(\x27api-base\x27).value };
-  if (p !== \x27custom\x27) document.getElementById(\x27api-base\x27).value = urls[p] || \x27\x27;
-  const models = { deepseek: \x27deepseek-chat\x27, openai: \x27gpt-4o\x27 };
-  if (p !== \x27custom\x27) document.getElementById(\x27model-name\x27).value = models[p] || \x27\x27;
+  var p = document.getElementById("provider").value;
+  var urls = { deepseek: "https://api.deepseek.com", openai: "https://api.openai.com" };
+  if (p !== "custom") {
+    document.getElementById("api-base").value = urls[p] || "";
+  }
+  var models = { deepseek: "deepseek-chat", openai: "gpt-4o" };
+  if (p !== "custom") {
+    document.getElementById("model-name").value = models[p] || "";
+  }
 }
 
 async function saveSettings() {
-  const btn = document.querySelector(\x27.btn-primary\x27);
-  btn.disabled = true; btn.textContent = \x27保存中...\x27;
-  const data = {
-    mode: document.querySelector(\x27[name=mode]:checked\x27).value,
-    provider: document.getElementById(\x27provider\x27).value,
-    api_base: document.getElementById(\x27api-base\x27).value,
-    api_key: document.getElementById(\x27api-key\x27).value,
-    model: document.getElementById(\x27model-name\x27).value,
-    offline_model: document.getElementById(\x27offline-model\x27).value,
-    temperature: parseFloat(document.getElementById(\x27temperature\x27).value) || 0.7,
+  var btn = document.querySelector(".btn-primary");
+  btn.disabled = true; btn.textContent = "保存中...";
+  var data = {
+    mode: (document.querySelector("input[name=mode]:checked") || {}).value || "offline",
+    provider: document.getElementById("provider").value,
+    api_base: document.getElementById("api-base").value,
+    api_key: document.getElementById("api-key").value,
+    model: document.getElementById("model-name").value,
+    offline_model: document.getElementById("offline-model").value,
+    temperature: parseFloat(document.getElementById("temperature").value) || 0.7,
   };
   try {
-    const r = await fetch(\x27/api/settings\x27, { method:\x27POST\x27, headers:{\x27Content-Type\x27:\x27application/json\x27}, body:JSON.stringify(data) });
-    const d = await r.json();
-    showStatus(d.message || \x27已保存\x27, d.success ? \x27success\x27 : \x27error\x27);
-  } catch(e) { showStatus(\x27保存失败: \x27 + e.message, \x27error\x27); }
-  btn.disabled = false; btn.textContent = \x27保存设置\x27;
+    var r = await fetch("/api/settings", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(data)
+    });
+    var d = await r.json();
+    showStatus(d.message || "已保存", d.success ? "success" : "error");
+  } catch(e) {
+    showStatus("保存失败: " + e.message, "error");
+  }
+  btn.disabled = false; btn.textContent = "保存设置";
 }
 
 async function testConnection() {
-  const mode = document.querySelector(\x27[name=mode]:checked\x27).value;
-  if (mode === \x27offline\x27) {
+  var modeEl = document.querySelector("input[name=mode]:checked");
+  if (!modeEl) return;
+  if (modeEl.value === "offline") {
     try {
-      const r = await fetch(\x27/api/models\x27);
-      const d = await r.json();
-      showStatus(\x27Ollama 连接正常，发现 \x27 + d.models.length + \x27 个模型\x27, \x27success\x27);
-    } catch(e) { showStatus(\x27Ollama 连接失败\x27, \x27error\x27); }
+      var r = await fetch("/api/models");
+      var d = await r.json();
+      showStatus("Ollama 连接正常，发现 " + d.models.length + " 个模型", "success");
+    } catch(e) {
+      showStatus("Ollama 连接失败", "error");
+    }
     return;
   }
-  showStatus(\x27正在测试连接...\x27, \x27success\x27);
+  showStatus("正在测试连接...", "success");
   try {
-    const r = await fetch(document.getElementById(\x27api-base\x27).value + \x27/models\x27, {
-      headers: { \x27Authorization\x27: \x27Bearer \x27 + document.getElementById(\x27api-key\x27).value }
+    var r = await fetch(document.getElementById("api-base").value + "/models", {
+      headers: {"Authorization": "Bearer " + document.getElementById("api-key").value}
     });
-    if (r.ok) showStatus(\x27API 连接正常\x27, \x27success\x27);
-    else showStatus(\x27API 响应异常: HTTP \x27 + r.status, \x27error\x27);
-  } catch(e) { showStatus(\x27API 连接失败: \x27 + e.message, \x27error\x27); }
+    if (r.ok) showStatus("API 连接正常", "success");
+    else showStatus("API 响应异常: HTTP " + r.status, "error");
+  } catch(e) {
+    showStatus("API 连接失败: " + e.message, "error");
+  }
 }
 
 function showStatus(msg, type) {
-  const el = document.getElementById(\x27status\x27);
+  var el = document.getElementById("status");
   el.textContent = msg;
-  el.className = \x27status \x27 + type;
+  el.className = "status " + type;
 }
 
 loadSettings();
@@ -2232,9 +2264,6 @@ loadModels();
 </script>
 </body>
 </html>"""
-
-
-
 def main():
     """主函数"""
     print("="*60)
