@@ -444,7 +444,7 @@ class JARVIS:
         """从 LLM 的自然语言回应中检测文件操作意图（兜底机制）"""
         import re
         # 策略1: LLM 自己说了已保存/已存入到文件名
-        m = re.search(r'(?:已|经)(?:保存|写入|存储|写入了?|存入)\s*(?:到|至|为)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
+        m = re.search(r'(?:已|经|并)(?:保存|写入|存储|写入了?|存入[了]?)\s*(?:到|至|为)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
         if not m:
             m = re.search(r'(?:创建了?|生成了?)\s*(?:文件)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
         # 策略2: 用户要求保存/存入某文件，响应中有代码块
@@ -463,7 +463,8 @@ class JARVIS:
                 content = re.sub(r'^.*?已(?:保存|写入|存入).*?\.\w+.*?\n', '', response, count=1)
                 content = re.sub(r'^.*?(内容已保存|已写入|已保存).*?$', '', content, count=1, flags=re.MULTILINE)
                 content = content.strip()
-            if content and len(content) > 20:
+            # 内容太短（<80字符）说明模型在糊弄，不写
+            if content and len(content) > 80:
                 try:
                     result = self.tool_manager.execute_tool("write_file", path=filename, content=content)
                     self.logger.info(f"NL意图检测: 写入文件 {filename} ({len(content)} 字符)")

@@ -2141,8 +2141,13 @@ async function loadModels() {
     const r = await fetch("/api/models");
     const d = await r.json();
     if (d.models && d.models.length > 0) {
+      var embedModels = ["bge-m3", "nomic-embed-text", "all-MiniLM"];
       sel.innerHTML = d.models.map(function(m) {
-        return '<option value="' + m + '">' + m + '</option>';
+        var note = "";
+        for (var i = 0; i < embedModels.length; i++) {
+          if (m.indexOf(embedModels[i]) === 0) { note = " (仅嵌入)"; break; }
+        }
+        return '<option value="' + m + '">' + m + note + '</option>';
       }).join("");
     } else {
       sel.innerHTML = '<option value="">未发现本地模型（Ollama 未运行）</option>';
