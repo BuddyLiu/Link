@@ -195,11 +195,14 @@ class JARVIS:
         old_engine = self.brain_engine
         try:
             from src.core.model_engine import create_brain_engine
-            # create_brain_engine 内部已调用 __init__ → _initialize_components
             self.brain_engine = create_brain_engine(new_config)
             self.brain_engine.set_logger(self.logger)
             health = self.brain_engine.health_check()
-            self.logger.info(f"大脑引擎重新配置完成: {health.get('overall_status', '?')}")
+            status = health.get('overall_status', '?')
+            self.logger.info(f"大脑引擎重新配置完成: {status}")
+            if status != 'healthy':
+                self.logger.warning(f"新引擎状态 {status}，回滚旧引擎")
+                self.brain_engine = old_engine
         except Exception as e:
             self.logger.error(f"重新配置大脑引擎失败: {e}")
             self.brain_engine = old_engine
