@@ -479,6 +479,21 @@ class JARVIS:
                     return result + f"\n内容已保存到 {filename}"
                 except Exception as e:
                     self.logger.debug(f"NL写入失败: {e}")
+            return ""
+
+        # 策略3: 检测删除意图（文件名可在删除前或后）
+        dm = re.search(r'(?:已|经)(?:删除|移除|清除)(?:了?)\s*(?:文件)?\s*["\']?([^\s"\'，,。]+\.?\w*)["\']?', response)
+        if not dm:
+            dm = re.search(r'([^\s"\'，,。]+\.?\w*)\s*(?:已|经)(?:删除|移除|清除)(?:了?)?', response)
+        if dm:
+            filename = dm.group(1).strip().strip("'\"")
+            if filename:
+                try:
+                    result = self.tool_manager.execute_tool("delete_file", path=filename)
+                    self.logger.info(f"NL意图检测: 删除文件 {filename}")
+                    return result
+                except Exception as e:
+                    self.logger.debug(f"NL删除失败: {e}")
         return ""
 
     def _extract_facts_from_conversation(self, user_input: str, response: str):

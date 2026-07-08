@@ -124,7 +124,11 @@
       "Bash(awk '/<script>/,/<\\\\/script>/')",
       "Bash(awk 'NR>=2284 && NR<=2288' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
       "Bash(awk 'NR>=2283 && NR<=2288' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
-      "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=200\")"
+      "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=200\")",
+      "Bash(grep -E \"FILE_DELETE\\\\|删除.*文件\\\\|已删除\" /tmp/jarvis_test.log | tail -5 *)",
+      "Bash(grep -E \"FILE_DELETE\\\\|NL意图\\\\|删除.*文件\\\\|已删除\" /tmp/jarvis_test.log | tail -5)",
+      "Bash(grep -E \"处理用户|响应完成\\\\|Delete\\\\|删除\\\\|test_delete\" /tmp/jarvis_test.log | tail -10)",
+      "Bash(grep -c \"响应完成\" /tmp/jarvis_test.log)"
     ],
     "additionalDirectories": [
       "/private/tmp",
