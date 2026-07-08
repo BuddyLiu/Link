@@ -417,6 +417,16 @@ class JARVIS:
             except Exception as e:
                 return f"[[ERROR: 搜索文件失败 {e}]]"
 
+        elif action == "FILE_DELETE":
+            path = params.get("path", "")
+            if not path:
+                return "[[ERROR: 缺少 path 参数]]"
+            try:
+                result = self.tool_manager.execute_tool("delete_file", path=path)
+                return result
+            except Exception as e:
+                return f"[[ERROR: 删除文件失败 {e}]]"
+
         elif action == "FILE_AUTHORIZE":
             path = params.get("path", "")
             mode = params.get("mode", "read")
@@ -1290,6 +1300,7 @@ class JARVIS:
                     "- 写入文件 → [[ACTION:FILE_WRITE|path=文件路径|content=写入的内容]]\n"
                     "- 编辑文件指定行 → [[ACTION:FILE_EDIT|path=路径|operation=replace|line=行号|content=新内容]]\n"
                     "- 搜索文件内容 → [[ACTION:FILE_GREP|pattern=关键词|include=.py]]\n"
+                    "- 删除文件 → [[ACTION:FILE_DELETE|path=文件路径]]\n"
                     "- 授权外部文件访问 → [[ACTION:FILE_AUTHORIZE|path=路径|mode=read|type=temporary]]\n"
                     "- 查看已授权路径 → [[ACTION:FILE_AUTH_LIST]]\n"
                     "\n"

@@ -460,6 +460,33 @@ class GrepFilesTool(SystemTool):
         return output
 
 
+class DeleteFileTool(SystemTool):
+    """删除文件工具"""
+
+    def __init__(self):
+        parameters = {
+            "path": {"type": "string", "description": "要删除的文件路径", "required": True},
+        }
+        super().__init__("delete_file", "删除文件", parameters)
+
+    def execute(self, **kwargs) -> str:
+        import os
+        path = kwargs["path"]
+        p = Path(path).resolve()
+        allowed = Path(os.getcwd()).resolve()
+        try:
+            p.relative_to(allowed)
+        except ValueError:
+            raise PermissionError(f"不允许删除项目目录外的文件: {p}")
+        if not p.exists():
+            raise FileNotFoundError(f"文件不存在: {p}")
+        if not p.is_file():
+            raise ValueError(f"不是文件: {p}")
+        os.remove(p)
+        logger.info(f"删除文件 {p}")
+        return f"已删除 {p.name}"
+
+
 class SearchWebTool(SystemTool):
     """搜索网络工具（基础版本）"""
     
@@ -628,6 +655,7 @@ def initialize_system_tools(tool_manager_instance = None):
         EditFileTool(),
         WriteFileTool(),
         GrepFilesTool(),
+        DeleteFileTool(),
         ExecuteCommandTool(),
         SearchWebTool(),
         CalculateTool(),
@@ -672,6 +700,7 @@ __all__ = [
     'EditFileTool',
     'WriteFileTool',
     'GrepFilesTool',
+    'DeleteFileTool',
     'ExecuteCommandTool',
     'SearchWebTool',
     'CalculateTool',

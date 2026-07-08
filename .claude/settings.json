@@ -113,7 +113,9 @@
       "Bash(awk 'NR>=2143 && NR<=2146' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
       "Bash(curl -s -X POST http://127.0.0.1:8011/api/settings -H 'Content-Type: application/json' -d '{\"mode\":\"online\",\"api_key\":\"sk-6a6b2ef36e5941f1bb3ae8e7aeafe085\"}')",
       "WebFetch(domain:api-docs.deepseek.com)",
-      "Bash(.venv/bin/python3)"
+      "Bash(.venv/bin/python3)",
+      "Bash(grep -E \"处理用户|请求操作|NL意图|写入文件|响应完成|FILE_READ\" /tmp/jarvis_test.log | tail -20)",
+      "Bash(awk 'NR>=418 && NR<=452' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/main.py)"
     ],
     "additionalDirectories": [
       "/private/tmp",
