@@ -101,7 +101,14 @@
       "Bash(curl -s *)",
       "Bash(awk 'NR>=98 && NR<=105 {printf \"%d: %s\\\\n\", NR, $0}')",
       "Bash(awk 'NR>=93 && NR<=106 {printf \"%d: %s\\\\n\", NR, $0}')",
-      "Bash(grep -n 'value=\"\">' /tmp/settings_page.html)"
+      "Bash(grep -n 'value=\"\">' /tmp/settings_page.html)",
+      "Bash(awk 'NR>=114 && NR<=120 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(xxd)",
+      "Bash(xargs -I{} ps -p {} -o pid,command)",
+      "Read(//tmp/**)",
+      "Bash(python run_jarvis.py web --port 8011)",
+      "Bash(curl -s -o /dev/null http://127.0.0.1:8011/)",
+      "Bash(break)"
     ],
     "additionalDirectories": [
       "/private/tmp",

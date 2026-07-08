@@ -2158,7 +2158,7 @@ async function loadSettings() {
     const r = await fetch("/api/settings");
     const s = await r.json();
     // Select the correct mode radio
-    var radio = document.querySelector("input[name=mode][value="" + s.mode + ""]");
+    var radio = document.querySelector("input[name=mode][value=\\"" + s.mode + "\\"]");
     if (radio) radio.checked = true;
     // Fill in fields
     if (s.provider) document.getElementById("provider").value = s.provider;
