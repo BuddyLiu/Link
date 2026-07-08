@@ -239,16 +239,42 @@ class JARVIS:
             if action_result:
                 final_response = action_result
                 if step < max_steps - 1 and "[[ERROR:" not in action_result:
-                    # 读文件后：让 LLM 直接输出简化版本（不要 ACTION，只要内容）
-                    if "FILE_READ" in response:
-                        current_input = (
-                            f"上面是 README.md 的内容。请直接输出简化后的版本（适合非专业人士阅读），"
-                            f"用 ```markdown 代码块包含内容。回复格式：简化后的内容 + 最后一行写：已保存到 README-COMMON.md"
+                    # 如果是 FILE_READ，提取文件名和内容，直接用 LLM 做简化
+                    if "FILE_READ" in response or "FILE_READ" in repr(response):
+                        # 提取源文件名和目标文件名
+                        src_file = "README.md"
+                        tgt_file = "README-COMMON.md"
+                        # 从原始用户请求中提取目标文件名
+                        import re
+                        tm = re.search(r'(?:存入|保存到|存储到|写入)\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)', input_text)
+                        if tm:
+                            tgt_file = tm.group(1)
+                        # 用简化 prompt 调用 LLM
+                        simplify_prompt = (
+                            f"请把以下内容简化，用日常语言描述，去掉技术细节。"
+                            f"只输出简化后的文本，不要解释，不要用markdown代码块。"
+                            f"\n\n{action_result[:2000]}"
                         )
+                        simplified = self.brain_engine.simple_query(
+                            simplify_prompt,
+                            system_prompt="你是一个文本简化助手。输出简洁易懂的简化版本。"
+                        )
+                        if simplified and "查询失败" not in simplified:
+                            simplified = simplified.strip()
+                            try:
+                                result = self.tool_manager.execute_tool(
+                                    "write_file", path=tgt_file, content=simplified
+                                )
+                                final_response = f"已将简化后的内容保存到 {tgt_file}\n\n{simplified[:300]}"
+                                break  # 完成
+                            except Exception as e:
+                                final_response = f"简化完成，但保存失败: {e}"
+                        else:
+                            final_response = action_result
                     else:
                         current_input = f"{input_text}\n\n执行结果：\n{action_result[:500]}\n请继续。"
-                    memory_context = self._retrieve_memory_context(current_input)
-                    continue
+                        memory_context = self._retrieve_memory_context(current_input)
+                        continue
                 break
             else:
                 # 没有操作标记 → 从自然语言中检测文件操作意图
@@ -414,20 +440,32 @@ class JARVIS:
     def _detect_natural_language_action(self, response: str, user_input: str) -> str:
         """从 LLM 的自然语言回应中检测文件操作意图（兜底机制）"""
         import re
-        # 检测写入: "已保存到 file.md" / "已写入 file.py"
+        # 策略1: LLM 自己说了已保存到文件名
         m = re.search(r'(?:已|经)(?:保存|写入|存储|写入了?)\s*(?:到|至|为)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
         if not m:
             m = re.search(r'(?:创建了?|生成了?)\s*(?:文件)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
+        # 策略2: 用户要求保存/存入某文件，响应中有代码块
+        if not m:
+            um = re.search(r'(?:存入|保存到|存储到|写入)\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', user_input)
+            if um and re.search(r'```', response):
+                m = um
         if m:
             filename = m.group(1).strip().strip("'\"")
-            # 找代码块内容
+            # 优先用代码块内容，没有的话用整个回复内容
             cm = re.search(r'```(?:\w+)?\n(.+?)```', response, re.DOTALL)
             if cm:
                 content = cm.group(1).strip()
+            else:
+                # 没有代码块时，用去除已知前缀后的整个回复
+                content = response.strip()
+                # 如果回复以已知前缀开头，去掉前缀行
+                content = re.sub(r'^[：:].*?\n', '', content)
+                content = re.sub(r'^(已读取|读取了|这是).*?\n', '', content)
+            if content and len(content) > 20:
                 try:
                     result = self.tool_manager.execute_tool("write_file", path=filename, content=content)
-                    self.logger.info(f"NL意图检测: 写入文件 {filename}")
-                    return result
+                    self.logger.info(f"NL意图检测: 写入文件 {filename} ({len(content)} 字符)")
+                    return result + f"\n内容已保存到 {filename}"
                 except Exception as e:
                     self.logger.debug(f"NL写入失败: {e}")
         return ""
