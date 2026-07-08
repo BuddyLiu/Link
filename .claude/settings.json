@@ -119,7 +119,11 @@
       "Bash(awk 'NR>=208 && NR<=218 {printf \"%d: %s\\\\n\", NR, $0}')",
       "Bash(awk 'NR>=203 && NR<=215 {printf \"%d: %s\\\\n\", NR, $0}')",
       "Bash(awk 'NR>=205 && NR<=215 {printf \"%d: %s\\\\n\", NR, $0}')",
-      "Bash(awk 'NR>=200 && NR<=216 {printf \"%d: %s\\\\n\", NR, $0}')"
+      "Bash(awk 'NR>=200 && NR<=216 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(awk 'NR>=220 && NR<=230 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(awk '/<script>/,/<\\\\/script>/')",
+      "Bash(awk 'NR>=2284 && NR<=2288' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
+      "Bash(awk 'NR>=2283 && NR<=2288' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)"
     ],
     "additionalDirectories": [
       "/private/tmp",

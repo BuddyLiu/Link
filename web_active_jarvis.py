@@ -2283,7 +2283,7 @@ async function testConnection() {
   } catch(e) {
     showStatus("\u8bf7\u6c42\u5931\u8d25: " + e.message, "error");
   }
-  
+}
 
 function showStatus(msg, type) {
   var el = document.getElementById("status");
