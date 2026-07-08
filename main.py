@@ -349,7 +349,7 @@ class JARVIS:
             elif action == "PLANNING_INFO":
                 return self._get_planning_engine_info()
             elif action.startswith("FILE_"):
-                return self._handle_file_action(action, parse_params(param_str))
+                return self._handle_file_action(action, parse_params(param_str), original_input)
             elif action == "SCAN_PROJECT":
                 self._project_scanned = False
                 return self._get_project_context()
@@ -361,8 +361,12 @@ class JARVIS:
             self.logger.error(f"执行操作 {action} 失败: {e}")
         return ""
 
-    def _handle_file_action(self, action: str, params: dict) -> str:
+    def _handle_file_action(self, action: str, params: dict, original_input: str = "") -> str:
         """处理文件操作 [[ACTION:FILE_xxx]]"""
+        # 如果参数中缺少 path，从用户输入提取
+        if "path" not in params or not params["path"]:
+            params["path"] = self._extract_filename(original_input)
+
         if action == "FILE_READ":
             path = params.get("path", "")
             if not path:
@@ -448,6 +452,12 @@ class JARVIS:
 
         return f"[[ERROR: 未知的文件操作 {action}]]"
 
+    def _extract_filename(self, text: str) -> str:
+        """从文本中提取文件名"""
+        import re
+        m = re.search(r'["\']?([^\s"\'，,。]+\.\w+)["\']?', text)
+        return m.group(1) if m else ""
+
     def _detect_natural_language_action(self, response: str, user_input: str) -> str:
         """从 LLM 的自然语言回应中检测文件操作意图（兜底机制）"""
         import re
@@ -482,9 +492,9 @@ class JARVIS:
             return ""
 
         # 策略3: 检测删除意图（文件名可在删除前或后）
-        dm = re.search(r'(?:已|经)(?:删除|移除|清除)(?:了?)\s*(?:文件)?\s*["\']?([^\s"\'，,。]+\.?\w*)["\']?', response)
+        dm = re.search(r'(?:已|经).*?(?:删除|移除|清除)(?:了?)\s*(?:文件)?\s*["\']?([^\s"\'，,。]+\.?\w*)["\']?', response)
         if not dm:
-            dm = re.search(r'([^\s"\'，,。]+\.?\w*)\s*(?:已|经)(?:删除|移除|清除)(?:了?)?', response)
+            dm = re.search(r'([^\s"\'，,。]+\.?\w*)\s*(?:已|经).*?(?:删除|移除|清除)(?:了?)?', response)
         if dm:
             filename = dm.group(1).strip().strip("'\"")
             if filename:
