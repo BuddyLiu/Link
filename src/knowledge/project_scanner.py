@@ -120,11 +120,14 @@ class ProjectScanner:
             return ""
         lines = ["【项目知识】"]
         for cat, items in self.knowledge.items():
+            if cat == "structure":
+                # 跳过目录结构（容易变旧，以实际文件系统为准）
+                continue
             for item in items:
-                # 去掉图标和前缀格式
                 clean = item.replace("📁 ", "").replace("📄 ", "")
                 lines.append(f"- {clean}")
-        return "\n".join(lines[:15])  # 最多 15 条
+        context = "\n".join(lines[:10])  # 最多 10 条
+        return context
 
     def to_context_string(self) -> str:
         """格式化为 LLM 上下文"""

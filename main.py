@@ -776,7 +776,7 @@ class JARVIS:
         if hasattr(self, '_project_context') and self._project_context:
             extra.append({
                 "role": "system",
-                "content": f"[项目知识]\n{self._project_context}\n（以上是当前项目的准确信息，回答项目问题时必须使用）"
+                "content": f"[项目知识]\n{self._project_context}\n（文件信息可能过期，文件内容以实际读取为准。用户问文件时用 FILE_READ 读取最新内容）"
             })
         # 如果有早期对话摘要，以 system 消息形式放在最前面
         if self._history_summary:
