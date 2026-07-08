@@ -90,11 +90,14 @@
       "Bash(curl -s \"http://127.0.0.1:8011/api/debug/memories?page=1&per_page=100\")",
       "Bash(grep -i \"project_scanner\\\\|知识\\\\|scan\" /tmp/jarvis_test.log 2>/dev/null | tail -5)",
       "Bash(curl -s -X POST http://127.0.0.1:8011/api/debug/search -H 'Content-Type: application/json' -d '{\"query\": \"Web框架\"}')",
-      "Bash(xargs -I{} echo \"Mentions in log: {}\")"
+      "Bash(xargs -I{} echo \"Mentions in log: {}\")",
+      "Bash(cd /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS *)",
+      "Bash(awk 'NR>=2036 && NR<=2042 {printf \"%d: %s\\\\n\", NR, $0}' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)"
     ],
     "additionalDirectories": [
       "/private/tmp",
-      "/Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/data/memory/json"
+      "/Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/data/memory/json",
+      "/tmp"
     ]
   }
 }

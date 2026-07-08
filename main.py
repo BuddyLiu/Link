@@ -147,30 +147,25 @@ class JARVIS:
     def _initialize_brain_engine(self):
         """初始化大脑引擎"""
         try:
-            # 强制使用Ollama本地配置，忽略settings中的默认配置
-            config = {
-                "model_provider": "ollama",
-                "model_name": "qwen2.5:1.5b",
-                "base_url": "http://localhost:11434",
-                "timeout": 60,
-                "enable_intent_analysis": True,
-                "enable_task_planning": True,
-                "enable_response_generation": True,
-                "default_temperature": 0.7,
-                "default_max_tokens": 1024,
-                "response_style": "professional",
-                "log_interactions": True,
-            }
-            
-            # 完全忽略settings.py中的默认配置，只使用环境变量覆盖
-            # 检查环境变量是否设置了Ollama配置
+            # 从持久化设置中读取配置（在线/离线）
+            from src.core.model_engine.provider_settings import get_brain_config
+            config = get_brain_config()
+            config["enable_intent_analysis"] = True
+            config["enable_task_planning"] = True
+            config["enable_response_generation"] = True
+            config["response_style"] = "professional"
+            config["log_interactions"] = True
+
+            # 环境变量可以覆盖
             import os
-            if os.getenv("MODEL_PROVIDER") and os.getenv("MODEL_PROVIDER") == "ollama":
-                config["model_provider"] = "ollama"
+            if os.getenv("MODEL_PROVIDER"):
+                config["model_provider"] = os.getenv("MODEL_PROVIDER")
             if os.getenv("MODEL_NAME"):
                 config["model_name"] = os.getenv("MODEL_NAME")
             if os.getenv("OLLAMA_BASE_URL"):
                 config["base_url"] = os.getenv("OLLAMA_BASE_URL")
+            if os.getenv("OPENAI_API_KEY"):
+                config["api_key"] = os.getenv("OPENAI_API_KEY")
             
             self.logger.info(f"初始化大脑引擎，配置: provider={config['model_provider']}, model={config['model_name']}")
             self.brain_engine = create_brain_engine(config)
@@ -193,7 +188,24 @@ class JARVIS:
             self.logger.warning("智能对话功能将不可用")
             # 设置大脑引擎为None以避免后续错误
             self.brain_engine = None
-    
+
+    def _reconfigure_brain(self, new_config: dict):
+        """运行时切换模型提供者"""
+        self.logger.info(f"重新配置大脑引擎: provider={new_config.get('model_provider')}")
+        old_engine = self.brain_engine
+        try:
+            from src.core.model_engine import create_brain_engine
+            self.brain_engine = create_brain_engine(new_config)
+            self.brain_engine.set_logger(self.logger)
+            # 保留原有组件但重新初始化
+            if hasattr(self.brain_engine, '_initialize_components'):
+                self.brain_engine._initialize_components()
+            health = self.brain_engine.health_check()
+            self.logger.info(f"大脑引擎重新配置完成: {health.get('overall_status', '?')}")
+        except Exception as e:
+            self.logger.error(f"重新配置大脑引擎失败: {e}")
+            self.brain_engine = old_engine  # 回滚
+
     def process_input(self, input_text: str) -> str:
         """
         处理用户输入
@@ -217,13 +229,43 @@ class JARVIS:
         if cmd.startswith("任务列表") or cmd == "我的任务":
             return self._list_tasks()
 
-        # 将用户输入交给 LLM，LLM 可在回答中加 [[ACTION:xxx]] 标记触发操作
-        response = self._simple_response(input_text, memory_context)
+        # LLM 生成响应 + 支持多步操作循环
+        max_steps = 3
+        current_input = input_text
+        final_response = ""
+        for step in range(max_steps):
+            response = self._simple_response(current_input, memory_context)
 
-        # 检查 LLM 是否请求了系统操作
-        action_result = self._execute_llm_action(response, input_text)
-        if action_result:
-            response = action_result
+            # 检查 LLM 是否请求了系统操作
+            action_result = self._execute_llm_action(response, current_input)
+            if action_result:
+                final_response = action_result
+                if step < max_steps - 1 and "[[ERROR:" not in action_result:
+                    # 读文件后：让 LLM 直接输出简化版本（不要 ACTION，只要内容）
+                    if "FILE_READ" in response:
+                        current_input = (
+                            f"上面是 README.md 的内容。请直接输出简化后的版本（适合非专业人士阅读），"
+                            f"用 ```markdown 代码块包含内容。回复格式：简化后的内容 + 最后一行写：已保存到 README-COMMON.md"
+                        )
+                    else:
+                        current_input = f"{input_text}\n\n执行结果：\n{action_result[:500]}\n请继续。"
+                    memory_context = self._retrieve_memory_context(current_input)
+                    continue
+                break
+            else:
+                # 没有操作标记 → 从自然语言中检测文件操作意图
+                nl_action = self._detect_natural_language_action(response, input_text)
+                if nl_action:
+                    final_response = nl_action
+                    if step < max_steps - 1:
+                        current_input = f"执行结果：{nl_action[:200]}\n请继续。"
+                        memory_context = self._retrieve_memory_context(current_input)
+                        continue
+                    break
+                final_response = response
+                break
+
+        response = final_response
 
         # 存储到对话历史（给下一轮 LLM 调用做上下文）
         self._conversation_history.append({"role": "user", "content": input_text})
@@ -241,10 +283,11 @@ class JARVIS:
     
     def _execute_llm_action(self, response: str, original_input: str) -> str:
         """解析 LLM 响应中的 [[ACTION:xxx]] 标记并执行系统操作"""
-        if "[[ACTION:" not in response:
-            return ""
         import re
         m = re.search(r'\[\[ACTION:(\w+)(?:\|(.+?))?\]\]', response)
+        if not m:
+            # 容错：也匹配 "ACTION: FILE_READ path=xxx" 等自然语言格式
+            m = re.search(r'(?:^|\n)?\s*(?:\[\[)?ACTION:\s*(\w+)(?:\s*\||\s+)(.+?)(?:\]\]|(?:\n|$))', response, re.IGNORECASE)
         if not m:
             return ""
         action = m.group(1)
@@ -252,9 +295,17 @@ class JARVIS:
         self.logger.info(f"LLM 请求操作: {action} | {param_str[:80]}")
 
         def parse_params(s: str) -> dict:
-            """解析 key=value|key=value 格式的参数"""
+            """解析 key=value|key=value 或 key=value key=value 格式的参数"""
             params = {}
-            for pair in s.split("|"):
+            # 先用 | 分割，如果只有一段再按空格分割
+            pairs = s.split("|")
+            if len(pairs) == 1:
+                # 按空格分割 key=value 对
+                pairs = re.findall(r'(\w+)=(\S+)', pairs[0])
+                for k, v in pairs:
+                    params[k] = v
+                return params
+            for pair in pairs:
                 pair = pair.strip()
                 if "=" in pair:
                     k, v = pair.split("=", 1)
@@ -361,6 +412,27 @@ class JARVIS:
             return "\n".join(lines)
 
         return f"[[ERROR: 未知的文件操作 {action}]]"
+
+    def _detect_natural_language_action(self, response: str, user_input: str) -> str:
+        """从 LLM 的自然语言回应中检测文件操作意图（兜底机制）"""
+        import re
+        # 检测写入: "已保存到 file.md" / "已写入 file.py"
+        m = re.search(r'(?:已|经)(?:保存|写入|存储|写入了?)\s*(?:到|至|为)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
+        if not m:
+            m = re.search(r'(?:创建了?|生成了?)\s*(?:文件)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
+        if m:
+            filename = m.group(1).strip().strip("'\"")
+            # 找代码块内容
+            cm = re.search(r'```(?:\w+)?\n(.+?)```', response, re.DOTALL)
+            if cm:
+                content = cm.group(1).strip()
+                try:
+                    result = self.tool_manager.execute_tool("write_file", path=filename, content=content)
+                    self.logger.info(f"NL意图检测: 写入文件 {filename}")
+                    return result
+                except Exception as e:
+                    self.logger.debug(f"NL写入失败: {e}")
+        return ""
 
     def _extract_facts_from_conversation(self, user_input: str, response: str):
         """从对话中提取关于用户的关键事实并存入记忆"""
@@ -1176,15 +1248,17 @@ class JARVIS:
                     "\n"
                     "## 文件操作（仅在你确实需要读写文件时使用）\n"
                     "- 读取文件 → [[ACTION:FILE_READ|path=文件路径]]\n"
-                    "- 写入文件 → [[ACTION:FILE_WRITE|path=文件路径|content=内容]]\n"
+                    "- 写入文件 → [[ACTION:FILE_WRITE|path=文件路径|content=写入的内容]]\n"
                     "- 编辑文件指定行 → [[ACTION:FILE_EDIT|path=路径|operation=replace|line=行号|content=新内容]]\n"
                     "- 搜索文件内容 → [[ACTION:FILE_GREP|pattern=关键词|include=.py]]\n"
                     "- 授权外部文件访问 → [[ACTION:FILE_AUTHORIZE|path=路径|mode=read|type=temporary]]\n"
                     "- 查看已授权路径 → [[ACTION:FILE_AUTH_LIST]]\n"
                     "\n"
-                    "文件操作默认只能在当前项目目录内。如果需要访问项目外的文件，\n"
-                    "必须先通过 FILE_AUTHORIZE 授权。授权分临时（temporary）和持久（permanent）。\n"
-                    "如果用户要求你访问某个外部文件，但授权被拒，可以提醒用户授权。\n"
+                    "写入文件时：把完整内容放在 content= 中，回复只需写操作标记和简短确认，\n"
+                    "不需要在回复中重复文件内容。\n"
+                    "\n"
+                    "文件操作默认只能在当前项目目录内。如需访问外部文件，\n"
+                    "必须先通过 FILE_AUTHORIZE 授权。\n"
                     "\n"
                     "## 项目知识库\n"
                     "- 用户要求了解/扫描当前项目 → [[ACTION:SCAN_PROJECT]]\n"

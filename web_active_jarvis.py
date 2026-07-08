@@ -542,7 +542,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <body>
 <div class="header">
 <h1>JARVIS</h1>
-<a href="/debug">&#x2699; 调试</a>
+<div>
+<a href="/settings">&#x2699; 设置</a>
+<a href="/debug">&#x1F50D; 调试</a>
+</div>
 </div>
 <div id="chat-box"></div>
 <div class="input-area">
@@ -908,6 +911,39 @@ function escapeHtml(s) {
         @self.app.get("/api/chat/history")
         async def get_chat_history(page: int = 1, per_page: int = 10):
             return await self._get_chat_history(page, per_page)
+
+        # ── Provider 设置 ──
+
+        @self.app.get("/settings", response_class=HTMLResponse)
+        async def get_settings_page():
+            return SETTINGS_HTML
+
+        @self.app.get("/api/settings")
+        async def get_settings():
+            from src.core.model_engine.provider_settings import (
+                load_settings, mask_api_key
+            )
+            s = load_settings()
+            # 返回前脱敏 key
+            if s.get("api_key"):
+                s["api_key_display"] = mask_api_key(s["api_key"])
+                s["api_key"] = ""
+            return s
+
+        @self.app.post("/api/settings")
+        async def post_settings(data: dict):
+            from src.core.model_engine.provider_settings import save_settings, get_brain_config
+            s = save_settings(data)
+            # 切换到新配置
+            if self.brain_jarvis:
+                self.brain_jarvis._reconfigure_brain(get_brain_config())
+            return {"success": True, "message": "设置已保存"}
+
+        @self.app.get("/api/models")
+        async def get_models():
+            from src.core.model_engine.provider_settings import get_ollama_models
+            models = get_ollama_models()
+            return {"models": models}
 
 
     async def _get_debug_data(self) -> dict:
@@ -2002,6 +2038,201 @@ setInterval(refreshCurrentTab, 10000);
 </script>
 </body>
 </html>"""
+
+
+# ── Provider 设置页面 ──
+
+SETTINGS_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS 设置</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;padding:20px;max-width:700px;margin:0 auto}
+h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
+.card{background:#fff;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.card h2{font-size:15px;margin-bottom:12px;color:#1a73e8}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:13px;color:#555;margin-bottom:4px;font-weight:500}
+.field input,.field select{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;transition:border-color .2s}
+.field input:focus,.field select:focus{border-color:#1a73e8}
+.field input[type=radio]{width:auto;margin-right:6px}
+.radio-group{display:flex;gap:20px;margin-bottom:4px}
+.radio-group label{font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#333}
+.btn{padding:12px 24px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;transition:all .2s}
+.btn-primary{background:#1a73e8;color:#fff}
+.btn-primary:hover{background:#1557b0}
+.btn-primary:disabled{background:#ccc;cursor:not-allowed}
+.btn-secondary{background:#e8eaed;color:#333}
+.btn-secondary:hover{background:#d2d5d9}
+.status{display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px}
+.status.success{display:block;background:#e8f5e9;color:#2e7d32;border:1px solid #c8e6c9}
+.status.error{display:block;background:#fce8e8;color:#d93025;border:1px solid #f5c6cb}
+.hidden{display:none}
+.model-info{font-size:12px;color:#888;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>⚙️ JARVIS 设置</h1>
+<div id="status" class="status"></div>
+
+<div class="card">
+  <h2>🤖 模型提供者</h2>
+  <div class="field">
+    <div class="radio-group">
+      <label><input type="radio" name="mode" value="offline" onchange="toggleMode()"> 离线模式（本地模型）</label>
+      <label><input type="radio" name="mode" value="online" onchange="toggleMode()"> 在线模式（API）</label>
+    </div>
+  </div>
+</div>
+
+<div id="online-settings" class="card hidden">
+  <h2>🌐 在线 API 配置</h2>
+  <div class="field">
+    <label>服务商</label>
+    <select id="provider" onchange="updateBaseUrl()">
+      <option value="deepseek">DeepSeek</option>
+      <option value="openai">OpenAI</option>
+      <option value="custom">自定义（OpenAI 兼容）</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>API 地址</label>
+    <input id="api-base" placeholder="https://api.deepseek.com">
+  </div>
+  <div class="field">
+    <label>API Key</label>
+    <input id="api-key" type="password" placeholder="sk-...">
+  </div>
+  <div class="field">
+    <label>模型</label>
+    <input id="model-name" placeholder="deepseek-chat">
+  </div>
+  <div class="field">
+    <label>Temperature</label>
+    <input id="temperature" type="number" step="0.1" min="0" max="2" value="0.7">
+  </div>
+</div>
+
+<div id="offline-settings" class="card">
+  <h2>💻 本地模型</h2>
+  <div class="field">
+    <label>选择模型</label>
+    <select id="offline-model">
+      <option value="">加载中...</option>
+    </select>
+  </div>
+  <div class="model-info" id="model-info"></div>
+</div>
+
+<div style="display:flex;gap:10px;margin-top:8px">
+  <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+  <button class="btn btn-secondary" onclick="testConnection()">测试连接</button>
+</div>
+
+<script>
+async function loadModels() {
+  try {
+    const r = await fetch('/api/models');
+    const d = await r.json();
+    const sel = document.getElementById(\x27offline-model\x27);
+    sel.innerHTML = d.models.map(m => \x27<option value=\x27\x27 + m + \x27\x27>\x27 + m + \x27</option>\x27).join(\x27\x27);
+    if (d.models.length === 0) {
+      sel.innerHTML = \x27<option value=\x27\x27>未发现本地模型（Ollama 未运行）</option>\x27;
+    }
+  } catch(e) {
+    document.getElementById(\x27offline-model\x27).innerHTML = \x27<option value=\x27\x27>加载失败</option>\x27;
+  }
+}
+
+async function loadSettings() {
+  try {
+    const r = await fetch(\x27/api/settings\x27);
+    const s = await r.json();
+    document.querySelector(\x27[name=mode][value=\x27 + s.mode + \x27]\x27).checked = true;
+    if (s.provider) document.getElementById(\x27provider\x27).value = s.provider;
+    if (s.api_base) document.getElementById(\x27api-base\x27).value = s.api_base;
+    if (s.api_key_display) document.getElementById(\x27api-key\x27).placeholder = s.api_key_display;
+    if (s.model) document.getElementById(\x27model-name\x27).value = s.model;
+    if (s.offline_model) {
+      const sel = document.getElementById(\x27offline-model\x27);
+      for (const opt of sel.options) {
+        if (opt.value === s.offline_model) { opt.selected = true; break; }
+      }
+    }
+    if (s.temperature) document.getElementById(\x27temperature\x27).value = s.temperature;
+    toggleMode();
+  } catch(e) { showStatus(\x27加载设置失败: \x27 + e.message, \x27error\x27); }
+}
+
+function toggleMode() {
+  const mode = document.querySelector(\x27[name=mode]:checked\x27).value;
+  document.getElementById(\x27online-settings\x27).classList.toggle(\x27hidden\x27, mode !== \x27online\x27);
+  document.getElementById(\x27offline-settings\x27).classList.toggle(\x27hidden\x27, mode !== \x27offline\x27);
+}
+
+function updateBaseUrl() {
+  const p = document.getElementById(\x27provider\x27).value;
+  const urls = { deepseek: \x27https://api.deepseek.com\x27, openai: \x27https://api.openai.com\x27, custom: document.getElementById(\x27api-base\x27).value };
+  if (p !== \x27custom\x27) document.getElementById(\x27api-base\x27).value = urls[p] || \x27\x27;
+  const models = { deepseek: \x27deepseek-chat\x27, openai: \x27gpt-4o\x27 };
+  if (p !== \x27custom\x27) document.getElementById(\x27model-name\x27).value = models[p] || \x27\x27;
+}
+
+async function saveSettings() {
+  const btn = document.querySelector(\x27.btn-primary\x27);
+  btn.disabled = true; btn.textContent = \x27保存中...\x27;
+  const data = {
+    mode: document.querySelector(\x27[name=mode]:checked\x27).value,
+    provider: document.getElementById(\x27provider\x27).value,
+    api_base: document.getElementById(\x27api-base\x27).value,
+    api_key: document.getElementById(\x27api-key\x27).value,
+    model: document.getElementById(\x27model-name\x27).value,
+    offline_model: document.getElementById(\x27offline-model\x27).value,
+    temperature: parseFloat(document.getElementById(\x27temperature\x27).value) || 0.7,
+  };
+  try {
+    const r = await fetch(\x27/api/settings\x27, { method:\x27POST\x27, headers:{\x27Content-Type\x27:\x27application/json\x27}, body:JSON.stringify(data) });
+    const d = await r.json();
+    showStatus(d.message || \x27已保存\x27, d.success ? \x27success\x27 : \x27error\x27);
+  } catch(e) { showStatus(\x27保存失败: \x27 + e.message, \x27error\x27); }
+  btn.disabled = false; btn.textContent = \x27保存设置\x27;
+}
+
+async function testConnection() {
+  const mode = document.querySelector(\x27[name=mode]:checked\x27).value;
+  if (mode === \x27offline\x27) {
+    try {
+      const r = await fetch(\x27/api/models\x27);
+      const d = await r.json();
+      showStatus(\x27Ollama 连接正常，发现 \x27 + d.models.length + \x27 个模型\x27, \x27success\x27);
+    } catch(e) { showStatus(\x27Ollama 连接失败\x27, \x27error\x27); }
+    return;
+  }
+  showStatus(\x27正在测试连接...\x27, \x27success\x27);
+  try {
+    const r = await fetch(document.getElementById(\x27api-base\x27).value + \x27/models\x27, {
+      headers: { \x27Authorization\x27: \x27Bearer \x27 + document.getElementById(\x27api-key\x27).value }
+    });
+    if (r.ok) showStatus(\x27API 连接正常\x27, \x27success\x27);
+    else showStatus(\x27API 响应异常: HTTP \x27 + r.status, \x27error\x27);
+  } catch(e) { showStatus(\x27API 连接失败: \x27 + e.message, \x27error\x27); }
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById(\x27status\x27);
+  el.textContent = msg;
+  el.className = \x27status \x27 + type;
+}
+
+loadSettings();
+loadModels();
+</script>
+</body>
+</html>"""
+
 
 
 def main():

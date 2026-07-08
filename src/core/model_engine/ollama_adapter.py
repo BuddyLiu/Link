@@ -85,7 +85,7 @@ class OllamaAdapter(ModelAdapter):
     def chat_completion(self,
                         messages: List[Dict[str, str]],
                         temperature: float = 0.7,
-                        max_tokens: int = 1024,
+                        max_tokens: int = 4096,
                         **kwargs) -> ModelResponse:
         """
         使用Ollama API进行聊天完成
@@ -205,7 +205,7 @@ class OllamaAdapter(ModelAdapter):
     def generate_completion(self,
                            prompt: str,
                            temperature: float = 0.7,
-                           max_tokens: int = 1024,
+                           max_tokens: int = 4096,
                            **kwargs) -> ModelResponse:
         """
         使用Ollama生成API（非聊天模式）
