@@ -934,10 +934,39 @@ function escapeHtml(s) {
         async def post_settings(data: dict):
             from src.core.model_engine.provider_settings import save_settings, get_brain_config
             s = save_settings(data)
-            # 切换到新配置
             if self.brain_jarvis:
                 self.brain_jarvis._reconfigure_brain(get_brain_config())
             return {"success": True, "message": "设置已保存"}
+
+        @self.app.post("/api/settings/test")
+        async def post_settings_test(data: dict = None):
+            """测试 API 连接（服务器端执行，不暴露 Key）"""
+            import urllib.request, json as pyjson
+            from src.core.model_engine.provider_settings import load_settings, mask_api_key
+            s = load_settings()
+            if s["mode"] != "online":
+                return {"success": False, "message": "当前为离线模式"}
+            key = s.get("api_key", "")
+            if not key:
+                return {"success": False, "message": "API Key 未配置"}
+            base = s.get("api_base", "https://api.deepseek.com").rstrip("/")
+            try:
+                for path in ["/v1/models", "/models"]:
+                    req = urllib.request.Request(
+                        base + path,
+                        headers={"Authorization": f"Bearer {key}"},
+                        method="GET",
+                    )
+                    resp = urllib.request.urlopen(req, timeout=10)
+                    if resp.status == 200:
+                        return {"success": True, "message": "API 连接正常"}
+                return {"success": False, "message": "无法连接 API"}
+            except urllib.request.HTTPError as e:
+                if e.code == 401:
+                    return {"success": False, "message": f"API Key 无效 ({mask_api_key(key)})"}
+                return {"success": False, "message": f"HTTP {e.code}: {e.reason}"}
+            except Exception as e:
+                return {"success": False, "message": f"连接失败: {e}"}
 
         @self.app.get("/api/models")
         async def get_models():
@@ -2248,21 +2277,11 @@ async function testConnection() {
   }
   showStatus("\u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5...", "success");
   try {
-    var baseUrl = document.getElementById("api-base").value.replace(/\/+$/, "");
-    var apiKey = document.getElementById("api-key").value;
-    var r = await fetch(baseUrl + "/v1/models", {
-      headers: {"Authorization": "Bearer " + apiKey}
-    });
-    if (!r.ok && r.status === 404) {
-      r = await fetch(baseUrl + "/models", {
-        headers: {"Authorization": "Bearer " + apiKey}
-      });
-    }
-    if (r.ok) showStatus("API \u8fde\u63a5\u6b63\u5e38", "success");
-    else if (r.status === 401) showStatus("API Key \u65e0\u6548\uff0c\u8bf7\u68c0\u67e5", "error");
-    else showStatus("API \u54cd\u5e94\u5f02\u5e38: HTTP " + r.status, "error");
+    var r = await fetch("/api/settings/test", {method:"POST"});
+    var d = await r.json();
+    showStatus(d.message, d.success ? "success" : "error");
   } catch(e) {
-    showStatus("API \u8fde\u63a5\u5931\u8d25: " + e.message, "error");
+    showStatus("\u8bf7\u6c42\u5931\u8d25: " + e.message, "error");
   } {
     showStatus("API 连接失败: " + e.message, "error");
   }

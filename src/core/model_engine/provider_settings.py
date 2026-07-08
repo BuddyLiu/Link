@@ -69,7 +69,7 @@ def get_brain_config() -> dict:
         return {
             "model_provider": provider,
             "model_name": s.get("model", "deepseek-chat"),
-            "base_url": api_base,
+            "api_base": api_base,
             "api_key": s.get("api_key", ""),
             "timeout": 60,
             "default_temperature": s.get("temperature", 0.7),

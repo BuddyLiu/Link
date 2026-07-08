@@ -59,9 +59,12 @@ class BrainEngine:
                 "model_name": self.config.get("model_name", "deepseek-r1:7b"),
             }
             
-            # 复制其他相关配置
-            if self.config.get("base_url"):
-                model_config["base_url"] = self.config["base_url"]
+            # 复制其他相关配置（兼容 base_url 和 api_base 两种 key）
+            url = self.config.get("api_base") or self.config.get("base_url")
+            if url:
+                # OpenAI 适配器用 api_base，Ollama 用 base_url
+                model_config["api_base"] = url
+                model_config["base_url"] = url
             if self.config.get("api_key"):
                 model_config["api_key"] = self.config["api_key"]
             if self.config.get("timeout"):
