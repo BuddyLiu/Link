@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict, Optional
-from ..utils.logger import logger
+from utils.logger import logger
 
 
 # 全局单例

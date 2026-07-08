@@ -8,12 +8,8 @@ from abc import ABC, abstractmethod
 import json
 
 # 修复导入路径问题
-try:
-    from config.settings import settings
-    from utils.logger import logger, LoggerMixin
-except ImportError:
-    from ..config.settings import settings
-    from ..utils.logger import logger, LoggerMixin
+from config.settings import settings
+from utils.logger import logger, LoggerMixin
 
 
 class Tool(ABC):

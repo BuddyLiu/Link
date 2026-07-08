@@ -13,14 +13,9 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 # 修复导入路径问题
-try:
-    from . import Tool, SystemTool, tool_manager
-    from utils.logger import logger
-    from .file_permissions import get_permission_manager
-except ImportError:
-    from . import Tool, SystemTool, tool_manager
-    from ..utils.logger import logger
-    from ..tools.file_permissions import get_permission_manager
+from tools import Tool, SystemTool, tool_manager
+from utils.logger import logger
+from tools.file_permissions import get_permission_manager
 
 
 class GetTimeTool(SystemTool):
