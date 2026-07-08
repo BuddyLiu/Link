@@ -440,8 +440,8 @@ class JARVIS:
     def _detect_natural_language_action(self, response: str, user_input: str) -> str:
         """从 LLM 的自然语言回应中检测文件操作意图（兜底机制）"""
         import re
-        # 策略1: LLM 自己说了已保存到文件名
-        m = re.search(r'(?:已|经)(?:保存|写入|存储|写入了?)\s*(?:到|至|为)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
+        # 策略1: LLM 自己说了已保存/已存入到文件名
+        m = re.search(r'(?:已|经)(?:保存|写入|存储|写入了?|存入)\s*(?:到|至|为)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
         if not m:
             m = re.search(r'(?:创建了?|生成了?)\s*(?:文件)?\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)["\']?', response)
         # 策略2: 用户要求保存/存入某文件，响应中有代码块
@@ -451,16 +451,15 @@ class JARVIS:
                 m = um
         if m:
             filename = m.group(1).strip().strip("'\"")
-            # 优先用代码块内容，没有的话用整个回复内容
+            # 提取要写入的正文内容
             cm = re.search(r'```(?:\w+)?\n(.+?)```', response, re.DOTALL)
             if cm:
                 content = cm.group(1).strip()
             else:
-                # 没有代码块时，用去除已知前缀后的整个回复
-                content = response.strip()
-                # 如果回复以已知前缀开头，去掉前缀行
-                content = re.sub(r'^[：:].*?\n', '', content)
-                content = re.sub(r'^(已读取|读取了|这是).*?\n', '', content)
+                # 没有代码块：去掉"已保存到 xxx"行，用剩余内容
+                content = re.sub(r'^.*?已(?:保存|写入|存入).*?\.\w+.*?\n', '', response, count=1)
+                content = re.sub(r'^.*?(内容已保存|已写入|已保存).*?$', '', content, count=1, flags=re.MULTILINE)
+                content = content.strip()
             if content and len(content) > 20:
                 try:
                     result = self.tool_manager.execute_tool("write_file", path=filename, content=content)

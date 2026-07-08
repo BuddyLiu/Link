@@ -1,28 +1,33 @@
-### JARVIS智能体基座
+- 语音识别集成
+- 记忆模块设计
+- 反思模块设计
 
-JARVIS（Just A Rather Very Intelligent System）是一个模块化、可扩展的智能体基座系统，旨在构建类似《钢铁侠》中贾维斯的AI助手。项目遵循Order.txt中定义的三个阶段路线图，现已完成第三阶段功能开发。
+#### 第三阶段：智能控制 ✅
+- 自主任务规划
+- 负责主动提醒
+- 实现无缝操控
 
-## 项目状态
+## 🔥 项目状态
 
 - **当前阶段**：第三阶段（复杂任务规划、反思和主动提醒）
 - **版本**：3.0
 - **架构**：模块化分层设计
 - **目标**：构建具备全局记忆、主动预判、无缝操控能力的数字管家
 
-## 统一启动入口
+## 📁 统一启动入口
 
 项目提供了一个统一的启动入口，支持多种运行模式：
 
 ### 启动方式
 
 ```bash
-# 启动主动运行模式（默认，事件驱动，类似iOS RunLoop）
+# 主动运行模式（默认，事件驱动，类似iOS RunLoop）
 python main/run_jarvis.py
 
-# 启动传统CLI模式（响应式，无主动监控）
+# 传统命令行模式（响应式，无主动监控）
 python main/run_jarvis.py cli
 
-# 启动Web服务模式
+# Web服务模式
 python main/run_jarvis.py web --host 0.0.0.0 --port 8030
 
 # 运行测试套件
@@ -31,7 +36,7 @@ python main/run_jarvis.py test
 # 运行自动执行演示
 python main/run_jarvis.py demo
 
-# 启动简单Web界面
+# 运行简单Web界面
 python main/run_jarvis.py simple-web
 ```
 
@@ -57,7 +62,7 @@ python main/run_jarvis.py simple-web
   --help              显示帮助信息
 ```
 
-## 项目架构
+## 🏗️ 项目架构
 
 ### 核心模块
 
@@ -90,7 +95,11 @@ JARVIS/
 - 基础工具调用（时间、文件、系统命令等）
 - 统一配置管理系统
 - 模块化架构设计
-- 命令行交互界面
 
 #### 第二阶段：赋予记忆 ✅
 - 向量数据库集成（Chroma）
+
+#### 第三阶段：智能控制 ✅
+- 自主任务规划
+- 负责主动提醒
+- 实现无缝操控
