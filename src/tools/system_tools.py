@@ -469,15 +469,17 @@ class DeleteFileTool(SystemTool):
         }
         super().__init__("delete_file", "删除文件", parameters)
 
+    def _safe_path(self, path: str, mode: str = "write") -> Path:
+        p = Path(path).resolve()
+        allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
+        if not allowed:
+            raise PermissionError(reason)
+        return p
+
     def execute(self, **kwargs) -> str:
         import os
         path = kwargs["path"]
-        p = Path(path).resolve()
-        allowed = Path(os.getcwd()).resolve()
-        try:
-            p.relative_to(allowed)
-        except ValueError:
-            raise PermissionError(f"不允许删除项目目录外的文件: {p}")
+        p = self._safe_path(path)
         if not p.exists():
             raise FileNotFoundError(f"文件不存在: {p}")
         if not p.is_file():

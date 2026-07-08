@@ -369,8 +369,6 @@ class JARVIS:
                 return "[[ERROR: 缺少 path 参数]]"
             try:
                 result = self.tool_manager.execute_tool("read_file", path=path)
-                # 自动学习：从读取的文件中提取知识
-                self._learn_from_file(path)
                 return f"文件 {path} 的内容：\n\n```\n{result}\n```"
             except Exception as e:
                 return f"[[ERROR: 读取文件失败 {e}]]"
