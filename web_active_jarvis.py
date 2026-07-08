@@ -2136,7 +2136,7 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
 // Load available Ollama models
 async function loadModels() {
   const sel = document.getElementById("offline-model");
-  sel.innerHTML = "<option value="">加载中...</option>";
+  sel.innerHTML = "<option value='>加载中...</option>";
   try {
     const r = await fetch("/api/models");
     const d = await r.json();
@@ -2145,10 +2145,10 @@ async function loadModels() {
         return "<option value="" + m + "">" + m + "</option>";
       }).join("");
     } else {
-      sel.innerHTML = "<option value="">未发现本地模型（Ollama 未运行）</option>";
+      sel.innerHTML = "<option value='>未发现本地模型（Ollama 未运行）</option>";
     }
   } catch(e) {
-    sel.innerHTML = "<option value="">加载失败</option>";
+    sel.innerHTML = "<option value='>加载失败</option>";
   }
 }
 
@@ -2235,7 +2235,7 @@ async function testConnection() {
     try {
       var r = await fetch("/api/models");
       var d = await r.json();
-      showStatus("Ollama 连接正常，发现 " + d.models.length + " 个模型", "success");
+      showStatus("Ollama 连接正常，发现 " + d.models.length + ' 个模型', "success");
     } catch(e) {
       showStatus("Ollama 连接失败", "error");
     }

@@ -96,7 +96,9 @@
       "Bash(curl -s http://127.0.0.1:8011/settings)",
       "Bash(curl -s -v http://127.0.0.1:8011/api/settings)",
       "Bash(curl -s http://127.0.0.1:8011/api/settings)",
-      "Bash(curl -s -X POST http://127.0.0.1:8011/api/settings -H 'Content-Type: application/json' -d '{\"mode\":\"online\",\"provider\":\"deepseek\",\"api_base\":\"https://api.deepseek.com\",\"api_key\":\"test-key\",\"model\":\"deepseek-chat\",\"offline_model\":\"qwen2.5:1.5b\",\"temperature\":0.7}')"
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/settings -H 'Content-Type: application/json' -d '{\"mode\":\"online\",\"provider\":\"deepseek\",\"api_base\":\"https://api.deepseek.com\",\"api_key\":\"test-key\",\"model\":\"deepseek-chat\",\"offline_model\":\"qwen2.5:1.5b\",\"temperature\":0.7}')",
+      "Bash(awk 'NR>=90 && NR<=100 {printf \"%d: %s\\\\n\", NR, $0}')",
+      "Bash(curl -s *)"
     ],
     "additionalDirectories": [
       "/private/tmp",
