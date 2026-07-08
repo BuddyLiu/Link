@@ -38,15 +38,17 @@ def load_settings() -> dict:
 def save_settings(settings: dict) -> dict:
     """保存 provider 设置"""
     current = load_settings()
-    current.update(settings)
-    # 不保存空 api_key（如果传了空字符串也不覆盖已有值）
-    if not settings.get("api_key") and current.get("api_key"):
-        pass  # 保留旧值
+    # 如果传入了新的 api_key 则更新，否则保留旧值
+    new_key = settings.get("api_key", "")
+    if new_key:
+        current["api_key"] = new_key
+    # 其他字段直接更新
+    for k in ["mode", "provider", "api_base", "model", "offline_model", "temperature"]:
+        if k in settings:
+            current[k] = settings[k]
     _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # 写盘时脱敏 key
+    # 写盘
     serializable = current.copy()
-    if serializable.get("api_key"):
-        serializable["api_key"] = serializable["api_key"]
     _SETTINGS_PATH.write_text(
         json.dumps(serializable, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -57,8 +59,12 @@ def get_brain_config() -> dict:
     """根据设置生成 BrainEngine 配置"""
     s = load_settings()
     if s["mode"] == "online":
+        provider = s.get("provider", "openai")
+        # DeepSeek 使用 OpenAI 兼容 API
+        if provider == "deepseek":
+            provider = "openai"
         return {
-            "model_provider": s.get("provider", "openai"),
+            "model_provider": provider,
             "model_name": s.get("model", "deepseek-chat"),
             "base_url": s.get("api_base", "https://api.deepseek.com"),
             "api_key": s.get("api_key", ""),
