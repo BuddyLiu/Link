@@ -111,7 +111,8 @@
       "Bash(break)",
       "Bash(awk '/SETTINGS_HTML = \\\\\"\"\"/, /\"\"\"/' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
       "Bash(awk 'NR>=2143 && NR<=2146' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)",
-      "Bash(curl -s -X POST http://127.0.0.1:8011/api/settings -H 'Content-Type: application/json' -d '{\"mode\":\"online\",\"api_key\":\"sk-6a6b2ef36e5941f1bb3ae8e7aeafe085\"}')"
+      "Bash(curl -s -X POST http://127.0.0.1:8011/api/settings -H 'Content-Type: application/json' -d '{\"mode\":\"online\",\"api_key\":\"sk-6a6b2ef36e5941f1bb3ae8e7aeafe085\"}')",
+      "WebFetch(domain:api-docs.deepseek.com)"
     ],
     "additionalDirectories": [
       "/private/tmp",

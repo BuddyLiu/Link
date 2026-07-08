@@ -2240,20 +2240,30 @@ async function testConnection() {
     try {
       var r = await fetch("/api/models");
       var d = await r.json();
-      showStatus("Ollama 连接正常，发现 " + d.models.length + ' 个模型', "success");
+      showStatus("Ollama \u8fde\u63a5\u6b63\u5e38\uff0c\u53d1\u73b0 " + d.models.length + " \u4e2a\u6a21\u578b", "success");
     } catch(e) {
-      showStatus("Ollama 连接失败", "error");
+      showStatus("Ollama \u8fde\u63a5\u5931\u8d25", "error");
     }
     return;
   }
-  showStatus("正在测试连接...", "success");
+  showStatus("\u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5...", "success");
   try {
-    var r = await fetch(document.getElementById("api-base").value + "/models", {
-      headers: {"Authorization": "Bearer " + document.getElementById("api-key").value}
+    var baseUrl = document.getElementById("api-base").value.replace(/\/+$/, "");
+    var apiKey = document.getElementById("api-key").value;
+    var r = await fetch(baseUrl + "/v1/models", {
+      headers: {"Authorization": "Bearer " + apiKey}
     });
-    if (r.ok) showStatus("API 连接正常", "success");
-    else showStatus("API 响应异常: HTTP " + r.status, "error");
+    if (!r.ok && r.status === 404) {
+      r = await fetch(baseUrl + "/models", {
+        headers: {"Authorization": "Bearer " + apiKey}
+      });
+    }
+    if (r.ok) showStatus("API \u8fde\u63a5\u6b63\u5e38", "success");
+    else if (r.status === 401) showStatus("API Key \u65e0\u6548\uff0c\u8bf7\u68c0\u67e5", "error");
+    else showStatus("API \u54cd\u5e94\u5f02\u5e38: HTTP " + r.status, "error");
   } catch(e) {
+    showStatus("API \u8fde\u63a5\u5931\u8d25: " + e.message, "error");
+  } {
     showStatus("API 连接失败: " + e.message, "error");
   }
 }

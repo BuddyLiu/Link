@@ -12,7 +12,7 @@ _SETTINGS_PATH = Path("data/settings/provider.json")
 DEFAULT_SETTINGS = {
     "mode": "online",
     "provider": "deepseek",
-    "api_base": "https://api.deepseek.com",
+    "api_base": "https://api.deepseek.com",  # 不含 /v1，代码会自动添加
     "api_key": "",
     "model": "deepseek-chat",
     "offline_model": "qwen2.5:1.5b",
@@ -60,13 +60,16 @@ def get_brain_config() -> dict:
     s = load_settings()
     if s["mode"] == "online":
         provider = s.get("provider", "openai")
-        # DeepSeek 使用 OpenAI 兼容 API
         if provider == "deepseek":
             provider = "openai"
+        # DeepSeek 使用 OpenAI 兼容 API，需 /v1 路径
+        api_base = s.get("api_base", "https://api.deepseek.com").rstrip("/")
+        if not api_base.endswith("/v1"):
+            api_base += "/v1"
         return {
             "model_provider": provider,
             "model_name": s.get("model", "deepseek-chat"),
-            "base_url": s.get("api_base", "https://api.deepseek.com"),
+            "base_url": api_base,
             "api_key": s.get("api_key", ""),
             "timeout": 60,
             "default_temperature": s.get("temperature", 0.7),
