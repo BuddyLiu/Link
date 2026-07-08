@@ -271,35 +271,26 @@ class ExecuteCommandTool(SystemTool):
 
 
 class EditFileTool(SystemTool):
-    """编辑文件工具——替换/插入/删除文件的指定行"""
+    """编辑文件工具——用字符串匹配替换内容（类似 Claude Code Edit）"""
 
     def __init__(self):
         parameters = {
             "path": {"type": "string", "description": "文件路径", "required": True},
-            "operation": {
+            "old": {
                 "type": "string",
-                "description": "操作类型: replace(替换行), insert(插入行), delete(删除行)",
-                "enum": ["replace", "insert", "delete"],
+                "description": "要被替换的原内容（必须唯一存在于文件中）",
                 "required": True,
             },
-            "line": {"type": "integer", "description": "行号（从1开始）", "required": True},
-            "content": {
+            "new": {
                 "type": "string",
-                "description": "新内容（replace/insert 时需要）。insert 时插入到此行之前",
+                "description": "替换后的内容",
                 "required": False,
                 "default": "",
             },
-            "count": {
-                "type": "integer",
-                "description": "从 line 开始替换/删除的行数，默认 1",
-                "required": False,
-                "default": 1,
-            },
         }
-        super().__init__("edit_file", "编辑文件指定行（替换/插入/删除）", parameters)
+        super().__init__("edit_file", "编辑文件：用字符串匹配替换内容", parameters)
 
     def _safe_path(self, path: str, mode: str = "write") -> Path:
-        """检查路径访问权限"""
         p = Path(path).resolve()
         allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
         if not allowed:
@@ -308,61 +299,30 @@ class EditFileTool(SystemTool):
 
     def execute(self, **kwargs) -> str:
         path = self._safe_path(kwargs["path"])
-        operation = kwargs["operation"]
-        line = int(kwargs["line"])
-        content = kwargs.get("content", "")
-        count = int(kwargs.get("count", 1))
+        old = kwargs["old"]
+        new = kwargs.get("new", "")
 
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {path}")
         if not path.is_file():
             raise ValueError(f"不是文件: {path}")
-        if line < 1:
-            raise ValueError("行号必须 >= 1")
 
-        with open(path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+        content = path.read_text(encoding="utf-8")
+        if old not in content:
+            raise ValueError(
+                f"文件中未找到指定内容:\n  {old[:80]}...\n"
+                f"请先用 read_file 读取文件，确认内容后再编辑"
+            )
 
-        total = len(lines)
+        count = content.count(old)
+        if count > 1:
+            raise ValueError(f"内容重复出现 {count} 次，请提供更多上下文，使 old 参数唯一匹配")
 
-        if operation == "replace":
-            if line > total:
-                raise ValueError(f"行号 {line} 超出文件范围（共 {total} 行）")
-            end = min(line + count - 1, total)
-            old_text = "".join(lines[line - 1:end])
-            lines[line - 1:end] = [(content if content else "") + "\n"]
-            if not content.endswith("\n"):
-                lines[line - 1] = lines[line - 1].rstrip("\n") + "\n"
-            new_text = lines[line - 1]
-            logger.info(f"编辑文件 {path}: 替换第 {line}-{end} 行")
-            result = f"已替换第 {line} 行（原: {old_text[:60].strip()}）"
+        new_content = content.replace(old, new, 1)
+        path.write_text(new_content, encoding="utf-8")
 
-        elif operation == "insert":
-            if line > total + 1:
-                raise ValueError(f"行号 {line} 超出范围（共 {total} 行，可插入到第 {total+1} 行）")
-            insert_text = (content if content else "") + "\n"
-            if not content.endswith("\n"):
-                insert_text = content + "\n"
-            lines.insert(line - 1, insert_text)
-            logger.info(f"编辑文件 {path}: 在第 {line} 行前插入")
-            result = f"已在第 {line} 行前插入"
-
-        elif operation == "delete":
-            if line > total:
-                raise ValueError(f"行号 {line} 超出文件范围（共 {total} 行）")
-            end = min(line + count - 1, total)
-            deleted = "".join(lines[line - 1:end])
-            del lines[line - 1:end]
-            logger.info(f"编辑文件 {path}: 删除第 {line}-{end} 行")
-            result = f"已删除第 {line}-{end} 行（共 {count} 行）"
-
-        else:
-            raise ValueError(f"不支持的操作: {operation}")
-
-        with open(path, 'w', encoding='utf-8') as f:
-            f.writelines(lines)
-
-        return result
+        logger.info(f"编辑文件 {path}: 替换 {len(old)} 字符 → {len(new)} 字符")
+        return f"已替换文件 {path.name} 中的内容"
 
 
 class WriteFileTool(SystemTool):
@@ -458,6 +418,53 @@ class GrepFilesTool(SystemTool):
         if len(results) >= max_results:
             output += f"\n...（仅显示前 {max_results} 条）"
         return output
+
+
+class GlobFilesTool(SystemTool):
+    """搜索文件路径工具——按模式匹配文件名"""
+
+    def __init__(self):
+        parameters = {
+            "pattern": {"type": "string", "description": "文件模式，如 '**/*.py', 'src/**/*.ts'", "required": True},
+            "path": {"type": "string", "description": "搜索根目录（默认当前目录）", "required": False, "default": "."},
+            "max_results": {"type": "integer", "description": "最大结果数", "required": False, "default": 30},
+        }
+        super().__init__("glob_files", "按模式匹配文件名，如 **/*.py", parameters)
+
+    def execute(self, **kwargs) -> str:
+        import glob
+        pattern = kwargs["pattern"]
+        root = kwargs.get("path", ".")
+        max_results = int(kwargs.get("max_results", 30))
+
+        search_path = Path(root).resolve()
+        allowed = Path(os.getcwd()).resolve()
+        try:
+            search_path.relative_to(allowed)
+        except ValueError:
+            raise PermissionError(f"不允许访问项目目录外: {search_path}")
+
+        full_pattern = str(search_path / pattern)
+        matches = sorted(glob.glob(full_pattern, recursive=True))[:max_results]
+
+        if not matches:
+            return f"未匹配到文件: {pattern}"
+
+        lines = [f"找到 {len(matches)} 个文件:" if len(matches) < max_results
+                 else f"找到 {len(matches)} 个文件（仅显示前 {max_results} 条）:"]
+        for m in matches:
+            p = Path(m)
+            try:
+                rel = p.relative_to(allowed)
+            except ValueError:
+                rel = m
+            if p.is_dir():
+                lines.append(f"  📁 {rel}/")
+            else:
+                size = p.stat().st_size
+                size_str = f"{size}B" if size < 1024 else f"{size//1024}KB"
+                lines.append(f"  📄 {rel} ({size_str})")
+        return "\n".join(lines)
 
 
 class DeleteFileTool(SystemTool):
@@ -657,6 +664,7 @@ def initialize_system_tools(tool_manager_instance = None):
         EditFileTool(),
         WriteFileTool(),
         GrepFilesTool(),
+        GlobFilesTool(),
         DeleteFileTool(),
         ExecuteCommandTool(),
         SearchWebTool(),
@@ -702,6 +710,7 @@ __all__ = [
     'EditFileTool',
     'WriteFileTool',
     'GrepFilesTool',
+    'GlobFilesTool',
     'DeleteFileTool',
     'ExecuteCommandTool',
     'SearchWebTool',
