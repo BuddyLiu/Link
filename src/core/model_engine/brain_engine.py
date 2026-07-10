@@ -505,7 +505,7 @@ class BrainEngine:
                 resp = self.model_adapter.chat_completion(
                     messages, temperature=0.7,
                     max_tokens=self.config.get("default_max_tokens", 4096),
-                    tools=tools if round_num == 0 else None,
+                    tools=tools,  # 每轮都传，否则 DeepSeek 会退化为文本生成
                 )
 
                 text = resp.text or ""
