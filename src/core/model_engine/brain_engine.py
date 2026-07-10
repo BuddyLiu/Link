@@ -481,7 +481,7 @@ class BrainEngine:
 
     def chat_with_tools(self, messages: list, tools: list,
                         tool_executor: callable = None,
-                        max_rounds: int = 10) -> dict:
+                        max_rounds: int = 50) -> dict:
         """
         带工具调用的对话接口（支持 Function Calling 循环）。
 
@@ -522,6 +522,17 @@ class BrainEngine:
                     "content": text if text else None,
                     "tool_calls": tool_calls,
                 })
+
+                # 检测重复工具调用（相同工具+相同参数 -> 强制退出）
+                call_signatures = [
+                    f"{tc['function']['name']}({tc['function']['arguments'][:50]})"
+                    for tc in tool_calls
+                ]
+                if len(call_signatures) >= 4:
+                    last_four = call_signatures[-4:]
+                    if len(set(last_four)) == 1:  # 连续 4 次完全相同的调用
+                        self._log("warning", "检测到工具调用循环，强制退出")
+                        return {"text": "已完成。", "reasoning": ""}
 
                 for tc in tool_calls:
                     func_name = tc["function"]["name"]
