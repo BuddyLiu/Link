@@ -490,6 +490,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .header div{display:flex;gap:8px}
 /* Chat box */
 #chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 410px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
+#chat-box.instant-scroll{scroll-behavior:auto}
 #chat-box::-webkit-scrollbar{width:4px}
 #chat-box::-webkit-scrollbar-track{background:transparent}
 #chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
@@ -663,8 +664,8 @@ async function loadHistory(page) {
     }
     historyPage = page;
 
-    // 加载完成后滚到底部
-    chatBox.scrollTop = chatBox.scrollHeight;
+    // 首次加载滚到底部；翻页不滚动
+    if (page === 1) chatBox.scrollTop = chatBox.scrollHeight;
   } catch(e) { console.error('History load failed:', e); }
   historyLoading = false;
 }
@@ -765,6 +766,19 @@ function renderMarkdown(text) {
     .replace(/(<li>.*?<\\/li>(?:\\n?<li>.*?<\\/li>)*)/g, '<ol>$1</ol>')
     // Blockquote
     .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+    // Table
+    .replace(/^\\|(.+)\\|\\n\\|[-\\s:|]+\\|(\\n\\|.*\\|)*/gm, function(m) {
+      var rows = m.split('\\n').filter(function(r){ return r.trim().startsWith('|'); });
+      var html = '<table><thead>';
+      rows[0].split('|').filter(function(c){ return c.trim(); }).forEach(function(c){ html += '<th>' + c.trim() + '</th>'; });
+      html += '</thead><tbody>';
+      for (var i = 2; i < rows.length; i++) {
+        html += '<tr>';
+        rows[i].split('|').filter(function(c){ return c.trim(); }).forEach(function(c){ html += '<td>' + c.trim() + '</td>'; });
+        html += '</tr>';
+      }
+      return html + '</tbody></table>';
+    })
     // Horizontal rule
     .replace(/^(---|\\*\\*\\*)$/gm, '<hr>')
     // Paragraphs (double newline)
