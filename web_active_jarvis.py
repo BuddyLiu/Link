@@ -558,6 +558,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.thinking summary{font-size:11px;color:#6366f1;padding:6px 10px;cursor:pointer;user-select:none}
 .msg.thinking summary:hover{background:rgba(99,102,241,.05)}
 .msg.thinking .think-content{font-size:11px;color:#6b7280;line-height:1.6;padding:4px 10px 8px;white-space:pre-wrap}
+/* Status bar */
+#status-bar{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:0 max(20px, calc(50% - 410px));font-size:11px}
+#status-bar details{max-width:820px;margin:0 auto}
+#status-bar summary{cursor:pointer;color:#6366f1;padding:6px 0;user-select:none;font-size:11px}
+#status-bar summary:hover{opacity:.8}
+#status-content{display:flex;gap:16px;padding:4px 0 8px;color:#6b7280;flex-wrap:wrap}
+#status-content span{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -567,6 +574,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <a href="/settings">&#x2699; 设置</a>
 <a href="/debug">&#x1F50D; 调试</a>
 </div>
+</div>
+<div id="status-bar">
+<details id="status-details">
+<summary id="status-summary">&#x25B6; 系统状态</summary>
+<div id="status-content">
+<div id="status-model">模型: 加载中...</div>
+<div id="status-memory">记忆: 加载中...</div>
+<div id="status-session">会话: 加载中...</div>
+</div>
+</details>
 </div>
 <div id="chat-box"></div>
 <div class="input-area">
@@ -584,8 +601,30 @@ const sendBtn = document.getElementById('send-btn');
 const TYPE_SPEED = 30; // ms per character
 var historyPage = 1, historyLoading = false, historyEnd = false;
 
-ws.onopen = () => { addMessage('system', '已连接到 JARVIS'); loadHistory(); };
+ws.onopen = () => { addMessage('system', '已连接到 JARVIS'); loadHistory(); updateStatus(); };
 ws.onclose = () => addMessage('system', '连接已断开');
+
+async function updateStatus() {
+  try {
+    var r = await fetch('/api/debug');
+    var d = await r.json();
+    var b = d.brain || {};
+    var m = d.memory || {};
+    var config = b.config || {};
+    var provider = config.model_provider || '?';
+    var model = config.model_name || '?';
+    var health = (b.health || {}).overall_status || '?';
+    var memStats = (m.stats || {});
+    var totalMem = memStats.total_memories || 0;
+    if (m.stats && m.stats.graph) totalMem += ' (' + m.stats.graph.nodes + '图)';
+    var uptime = d.web ? d.web.uptime + 's' : '?';
+    document.getElementById('status-model').innerHTML =
+      '<span style="color:#6366f1">' + provider + '</span> / ' + model + ' [' + health + ']';
+    document.getElementById('status-memory').innerHTML = totalMem + ' 条记忆';
+    document.getElementById('status-session').innerHTML = '运行 ' + uptime;
+  } catch(e) { /* ignore */ }
+}
+setInterval(updateStatus, 10000);
 ws.onmessage = e => {
   const d = JSON.parse(e.data);
   if (d.type === 'event' && d.data.event_type === 'ASSISTANT') {
@@ -766,20 +805,20 @@ function renderMarkdown(text) {
     .replace(/(<li>.*?<\\/li>(?:\\n?<li>.*?<\\/li>)*)/g, '<ol>$1</ol>')
     // Blockquote
     .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-    // Table
-    .replace(/^\\|(.+)\\|\\n\\|[-\\s:|]+\\|(\\n\\|.*\\|)*/gm, function(m) {
-      var rows = m.split('\\n').filter(function(r){ return r.trim().startsWith('|'); });
-      var html = '<table><thead>';
-      rows[0].split('|').filter(function(c){ return c.trim(); }).forEach(function(c){ html += '<th>' + c.trim() + '</th>'; });
-      html += '</thead><tbody>';
-      for (var i = 2; i < rows.length; i++) {
-        html += '<tr>';
-        rows[i].split('|').filter(function(c){ return c.trim(); }).forEach(function(c){ html += '<td>' + c.trim() + '</td>'; });
-        html += '</tr>';
-      }
-      return html + '</tbody></table>';
+        // Table
+    .replace(/^(\|.+\|)\n\|[-:\s|]+\|\n((?:\|.+\|\n?)*)/gm, function(m, hdr, bdy) {
+      function cl(r){ var a=[]; r.split('|').forEach(function(x,i){ if((i%2==1||i>0)&&x.trim()){a.push(x.trim());} }); return a; }
+      var h = '<table><thead><tr>';
+      cl(hdr).forEach(function(c){ h += '<th>' + c + '</th>'; });
+      h += '</tr></thead><tbody>';
+      bdy.trim().split('\n').forEach(function(r){
+        h += '<tr>';
+        cl(r).forEach(function(c){ h += '<td>' + c + '</td>'; });
+        h += '</tr>';
+      });
+      return h + '</tbody></table>';
     })
-    // Horizontal rule
+// Horizontal rule
     .replace(/^(---|\\*\\*\\*)$/gm, '<hr>')
     // Paragraphs (double newline)
     .replace(/\\n\\n/g, '</p><p>')

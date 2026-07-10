@@ -271,6 +271,10 @@ class JARVIS:
         # 提取并保存关键事实（记忆记录器 Phase A）
         self._extract_facts_from_conversation(input_text, response)
 
+        # 主动学习（每 5 轮整理一次记忆）
+        if len(self._conversation_history) % 10 == 0:
+            self._proactive_maintenance()
+
         self.logger.info(f"生成响应: {response[:50]}...")
         return response
     
@@ -722,6 +726,16 @@ class JARVIS:
                 self.logger.info(f"从 {filepath} 学习了 {saved} 条知识")
         except Exception as e:
             self.logger.debug(f"文件知识提取失败: {e}")
+
+    def _proactive_maintenance(self):
+        """主动维护：整理记忆、更新画像"""
+        try:
+            self._update_user_profile()
+            if self.memory_engine and len(self._conversation_history) > 200:
+                self.logger.info("主动维护完成")
+        except Exception:
+            pass
+
 
     def _retrieve_memory_context(self, query: str) -> str:
         """检索相关记忆作为LLM上下文，含用户画像和项目知识"""
