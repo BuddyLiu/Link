@@ -291,7 +291,7 @@ class LearningEventHandler(EventHandler):
     def _analyze_memory_patterns(self) -> str:
         """分析记忆模式"""
         try:
-            return "🧠 记忆模式分析完成：系统运行正常"
+            return "⚡ 记忆模式分析完成：系统运行正常"
         except Exception as e:
             return f"❌ 记忆分析失败: {e}"
     
@@ -614,6 +614,18 @@ async function loadHistory(page) {
     function createMsgDiv(msg) {
       var div = document.createElement('div');
       div.className = 'msg ' + msg.role;
+      if (msg.reasoning) {
+        var det = document.createElement('details');
+        det.style.cssText = 'margin:2px 0 4px;font-size:11px';
+        var sum = document.createElement('summary');
+        sum.textContent = '思考过程';
+        sum.style.cssText = 'cursor:pointer;color:#6366f1;padding:2px 0';
+        var con = document.createElement('div');
+        con.textContent = msg.reasoning;
+        con.style.cssText = 'color:#6b7280;line-height:1.5;padding:4px 8px;white-space:pre-wrap;font-size:11px';
+        det.appendChild(sum); det.appendChild(con);
+        div.appendChild(det);
+      }
       var bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = renderMarkdown(escapeHtml(msg.content));
@@ -844,17 +856,53 @@ function addMessage(role, content) {
   scrollToBottom();
 }
 
+var typingTimer = null;
+var typingStep = 0;
+const STATUS_STEPS = [
+  '分析问题中...',
+  '检索相关记忆中...',
+  '调用模型分析...',
+  '处理返回结果中...',
+  '生成回复中...',
+];
+
 function showTyping() {
   const existing = chatBox.querySelector('.typing');
   if (existing) return;
   const div = document.createElement('div');
   div.className = 'msg assistant typing';
-  div.innerHTML = '<div class="bubble">思考中...</div>';
+  div.id = 'thinking-step';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  div.appendChild(bubble);
   chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  scrollToBottom();
+  typingStep = 0;
+  nextTypingStep();
+}
+
+function nextTypingStep() {
+  if (typingStep >= STATUS_STEPS.length) typingStep = STATUS_STEPS.length - 1;
+  const bubble = document.querySelector('#thinking-step .bubble');
+  if (!bubble) return;
+  bubble.textContent = '';
+  var text = STATUS_STEPS[typingStep];
+  var pos = 0;
+  function typeChar() {
+    if (pos < text.length) {
+      bubble.textContent += text[pos++];
+      scrollToBottom();
+      setTimeout(typeChar, 12);
+    } else {
+      typingStep++;
+      typingTimer = setTimeout(nextTypingStep, 400);
+    }
+  }
+  typeChar();
 }
 
 function removeTyping() {
+  if (typingTimer) { clearTimeout(typingTimer); typingTimer = null; }
   const el = chatBox.querySelector('.typing');
   if (el) el.remove();
 }
@@ -1268,7 +1316,13 @@ function escapeHtml(s) {
                 if len(parts) == 2:
                     user_part = parts[0].replace("用户: ", "", 1)
                     messages.append({"role": "user", "content": user_part, "time": m.metadata.get("created_at", "")})
-                    messages.append({"role": "assistant", "content": parts[1], "time": m.metadata.get("created_at", "")})
+                    asst_content = parts[1]
+                    reasoning = ""
+                    if "【推理过程】" in asst_content:
+                        asst_parts = asst_content.split("【推理过程】\n", 1)
+                        asst_content = asst_parts[0].strip()
+                        reasoning = asst_parts[1].strip() if len(asst_parts) > 1 else ""
+                    messages.append({"role": "assistant", "content": asst_content, "reasoning": reasoning, "time": m.metadata.get("created_at", "")})
                 else:
                     messages.append({"role": "assistant", "content": content[:200], "time": m.metadata.get("created_at", "")})
             return {"messages": messages, "total": total, "page": page, "per_page": per_page}

@@ -260,8 +260,13 @@ class JARVIS:
         self._conversation_history.append({"role": "assistant", "content": response})
         self._trim_history()
 
-        # 保存对话到记忆
-        self._save_to_memory(input_text, response, "conversation")
+        # 保存对话到记忆（含 reasoning）
+        reasoning = getattr(self, '_last_reasoning', '')
+        if reasoning:
+            response_with_reasoning = response + f"\n【推理过程】\n{reasoning}"
+        else:
+            response_with_reasoning = response
+        self._save_to_memory(input_text, response_with_reasoning, "conversation")
 
         # 提取并保存关键事实（记忆记录器 Phase A）
         self._extract_facts_from_conversation(input_text, response)

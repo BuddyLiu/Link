@@ -138,7 +138,8 @@
       "Bash(curl -s \"https://html.duckduckgo.com/html/?q=test\" --max-time 10 -H \"User-Agent: Mozilla/5.0\")",
       "Bash(grep -i \"save_user\\\\|王五\\\\|个人\" /tmp/jarvis_test.log | tail -5)",
       "Bash(grep -E \"请求操作|tool_calls|生成响应|save_user_fact|search_web\" /tmp/jarvis_test.log | grep -v \"初始化\\\\|注册\\\\|开始\\\\|准备\" | tail -10)",
-      "Bash(grep -E \"save_user|search_web|工具|tool\" /tmp/jarvis_test.log | grep -v \"初始化\\\\|注册\\\\|开始\" | tail -5)"
+      "Bash(grep -E \"save_user|search_web|工具|tool\" /tmp/jarvis_test.log | grep -v \"初始化\\\\|注册\\\\|开始\" | tail -5)",
+      "Bash(awk 'NR>=614 && NR<=622' /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS/web_active_jarvis.py)"
     ],
     "additionalDirectories": [
       "/private/tmp",
