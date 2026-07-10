@@ -481,62 +481,82 @@ class WebActiveJARVIS:
 <title>JARVIS</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-direction:column}
-.header{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
-.header h1{font-size:18px;font-weight:600}
-.header a{color:rgba(255,255,255,.6);text-decoration:none;font-size:12px;padding:4px 10px;border:1px solid rgba(255,255,255,.2);border-radius:4px;transition:all .2s}
-.header a:hover{color:#fff;border-color:rgba(255,255,255,.5)}
-#chat-box{flex:1;overflow-y:auto;padding:20px;background:#fff}
-.msg{margin-bottom:16px;display:flex;flex-direction:column}
-.msg.user{align-items:flex-end}
-.msg.assistant{align-items:flex-start}
-.msg .bubble{max-width:80%;padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;word-break:break-word}
-.msg.user .bubble{background:#1a73e8;color:#fff;border-bottom-right-radius:4px}
-.msg.assistant .bubble{background:#f0f2f5;color:#333;border-bottom-left-radius:4px}
-.msg .time{font-size:11px;color:#999;margin-top:4px;padding:0 4px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0f;height:100vh;display:flex;flex-direction:column;color:#e0e0e0}
+/* Header */
+.header{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.header h1{font-size:16px;font-weight:500;letter-spacing:2px;background:linear-gradient(90deg,#6366f1,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header a{color:#6366f1;text-decoration:none;font-size:11px;padding:4px 10px;border:1px solid #1a1a2e;border-radius:4px;transition:all .2s}
+.header a:hover{border-color:#6366f1;background:rgba(99,102,241,.1)}
+.header div{display:flex;gap:8px}
+/* Chat box */
+#chat-box{flex:1;overflow-y:auto;padding:24px 20px;background:#0a0a0f;scroll-behavior:smooth}
+#chat-box::-webkit-scrollbar{width:4px}
+#chat-box::-webkit-scrollbar-track{background:transparent}
+#chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+.msg{margin-bottom:20px;display:flex;flex-direction:column;max-width:85%}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.assistant{align-self:flex-start;align-items:flex-start}
+.msg .bubble{width:100%;padding:14px 18px;border-radius:12px;font-size:14px;line-height:1.7;word-break:break-word;position:relative}
+.msg.user .bubble{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-bottom-right-radius:4px}
+.msg.assistant .bubble{background:#13131f;color:#d4d4e6;border:1px solid #1a1a2e;border-bottom-left-radius:4px}
+.msg .time{font-size:10px;color:#6366f1;opacity:.5;margin-top:4px;padding:0 4px;letter-spacing:.5px}
 .msg.user .time{text-align:right}
-.input-area{flex-shrink:0;padding:16px 20px;background:#fff;border-top:1px solid #e0e0e0;display:flex;gap:10px}
-.input-area input{flex:1;padding:12px 16px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;transition:border-color .2s}
-.input-area input:focus{border-color:#1a73e8}
-.input-area button{padding:12px 24px;background:#1a73e8;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;transition:background .2s}
-.input-area button:hover{background:#1557b0}
-.input-area button:disabled{background:#ccc;cursor:not-allowed}
-.typing .bubble{color:#999;font-style:italic}
-.msg.system{align-items:center}
-.msg.system .bubble{background:transparent;color:#999;font-size:12px;max-width:100%;text-align:center}
-.copy-btn{font-size:11px;cursor:pointer;opacity:0;transition:opacity .2s;border:none;background:transparent;padding:2px 6px;border-radius:4px;color:#888}
-.copy-btn:hover{background:#e0e0e0;color:#333}
+/* Input area */
+.input-area{flex-shrink:0;padding:12px 16px;background:#0d0d14;border-top:1px solid #1a1a2e;display:flex;gap:8px;align-items:center}
+.input-area input{flex:1;padding:10px 14px;background:#13131f;border:1px solid #1a1a2e;border-radius:8px;font-size:13px;outline:none;color:#e0e0e0;transition:border-color .2s}
+.input-area input::placeholder{color:#4a4a6a}
+.input-area input:focus{border-color:#6366f1}
+.input-area button{padding:10px 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
+.input-area button:hover{background:#4f46e5}
+.input-area button:disabled{background:#1a1a2e;color:#4a4a6a;cursor:not-allowed}
+/* Typing */
+.typing .bubble{color:#6366f1;opacity:.6;font-style:italic;font-size:13px}
+/* System messages */
+.msg.system{align-self:center;align-items:center;max-width:100%}
+.msg.system .bubble{background:transparent;color:#4a4a6a;font-size:11px;text-align:center;border:none;padding:4px}
+/* Copy buttons */
+.copy-btn{font-size:10px;cursor:pointer;opacity:0;transition:opacity .2s;border:1px solid transparent;background:transparent;padding:2px 8px;border-radius:4px;color:#6366f1;margin-top:6px;align-self:flex-end}
+.copy-btn:hover{border-color:#6366f1}
 .copy-btn.visible{opacity:1}
-.msg:hover .copy-btn{opacity:0.6}
-.code-wrap{position:relative;margin:6px 0}
-.code-copy{position:absolute;top:6px;right:6px;padding:2px 8px;font-size:11px;background:rgba(255,255,255,.15);color:#cdd6f4;border:1px solid rgba(255,255,255,.2);border-radius:4px;cursor:pointer;opacity:0;transition:opacity .2s}
+.msg:hover .copy-btn{opacity:0.8}
+/* Code blocks */
+.code-wrap{position:relative;margin:8px 0;border-radius:8px;overflow:hidden;border:1px solid #1a1a2e}
+.code-copy{position:absolute;top:4px;right:4px;padding:2px 8px;font-size:10px;background:rgba(99,102,241,.15);color:#6366f1;border:1px solid rgba(99,102,241,.2);border-radius:4px;cursor:pointer;opacity:0;transition:opacity .2s;z-index:1}
 .code-wrap:hover .code-copy{opacity:1}
-.code-copy:hover{background:rgba(255,255,255,.3)}
-/* Markdown Styles */
-.msg .bubble pre{background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:8px;overflow-x:auto;font-size:13px;margin:6px 0;font-family:'SF Mono','Fira Code','Consolas',monospace}
-.msg .bubble code{background:#e8eaed;color:#d63384;padding:2px 6px;border-radius:4px;font-size:13px;font-family:'SF Mono','Fira Code',monospace}
+.code-copy:hover{background:rgba(99,102,241,.3)}
+/* pre/code */
+.msg .bubble pre{background:#0d0d14;color:#cdd6f4;padding:14px;overflow-x:auto;font-size:12px;margin:0;font-family:'SF Mono','Fira Code','Consolas',monospace}
+.msg .bubble code{background:rgba(99,102,241,.15);color:#a5b4fc;padding:1px 5px;border-radius:3px;font-size:12px;font-family:'SF Mono','Fira Code',monospace}
 .msg .bubble pre code{background:transparent;color:inherit;padding:0;border-radius:0}
+.msg.user .bubble code{background:rgba(255,255,255,.15);color:#e0e0e0}
+.msg.user .bubble pre{background:rgba(0,0,0,.2)}
+/* Markdown content */
 .msg .bubble p{margin:6px 0}
 .msg .bubble p:first-child{margin-top:0}
 .msg .bubble p:last-child{margin-bottom:0}
 .msg .bubble ul,.msg .bubble ol{margin:6px 0;padding-left:20px}
 .msg .bubble li{margin:3px 0}
-.msg .bubble h1,.msg .bubble h2,.msg .bubble h3,.msg .bubble h4{margin:10px 0 6px;font-weight:600}
-.msg .bubble h1{font-size:16px;border-bottom:1px solid #e0e0e0;padding-bottom:4px}
-.msg .bubble h2{font-size:15px}
-.msg .bubble h3{font-size:14px}
-.msg .bubble blockquote{border-left:3px solid #1a73e8;padding:4px 12px;margin:6px 0;color:#666;background:#f8f9fa;border-radius:0 6px 6px 0}
-.msg .bubble table{border-collapse:collapse;margin:6px 0;font-size:13px;width:100%}
-.msg .bubble th,.msg .bubble td{border:1px solid #ddd;padding:6px 10px;text-align:left}
-.msg .bubble th{background:#f5f5f5;font-weight:600}
-.msg .bubble a{color:#1a73e8;text-decoration:none}
-.msg .bubble a:hover{text-decoration:underline}
-.msg .bubble hr{border:none;border-top:1px solid #e0e0e0;margin:10px 0}
-.msg.user .bubble code{background:rgba(255,255,255,.2);color:#fff}
-.msg.user .bubble a{color:#fff;text-decoration:underline}
-.msg.user .bubble pre{background:rgba(0,0,0,.2)}
-.cursor{display:inline-block;width:2px;height:16px;background:#666;margin-left:2px;animation:blink .8s step-end infinite;vertical-align:text-bottom}
+.msg .bubble h1,.msg .bubble h2,.msg .bubble h3,.msg .bubble h4{margin:10px 0 6px;font-weight:500;color:#a5b4fc}
+.msg .bubble h1{font-size:15px;letter-spacing:.5px}
+.msg .bubble h2{font-size:14px}
+.msg .bubble h3{font-size:13px}
+.msg .bubble blockquote{border-left:2px solid #6366f1;padding:4px 12px;margin:8px 0;color:#8888aa;background:#0d0d14;border-radius:0 6px 6px 0}
+.msg .bubble table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%;border:1px solid #1a1a2e}
+.msg .bubble th,.msg .bubble td{border:1px solid #1a1a2e;padding:6px 10px;text-align:left}
+.msg .bubble th{background:#0d0d14;color:#a5b4fc;font-weight:500}
+.msg .bubble a{color:#6366f1;text-decoration:none}
+.msg .bubble a:hover{text-decoration:underline;color:#8b5cf6}
+.msg .bubble hr{border:none;border-top:1px solid #1a1a2e;margin:12px 0}
+.msg.user .bubble a{color:#c4b5fd;text-decoration:underline}
+/* Cursor blink */
+.cursor{display:inline-block;width:2px;height:15px;background:#6366f1;margin-left:2px;animation:blink .8s step-end infinite;vertical-align:text-bottom}
 @keyframes blink{50%{opacity:0}}
+/* Thinking section */
+.msg.thinking{max-width:100%;align-self:flex-start;margin-bottom:4px}
+.msg.thinking details{background:#0d0d14;border:1px solid #1a1a2e;border-radius:8px;overflow:hidden}
+.msg.thinking summary{font-size:11px;color:#6366f1;padding:6px 10px;cursor:pointer;user-select:none}
+.msg.thinking summary:hover{background:rgba(99,102,241,.05)}
+.msg.thinking .think-content{font-size:11px;color:#6b7280;line-height:1.6;padding:4px 10px 8px;white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -652,13 +672,11 @@ function addThinking(reasoning, callback) {
   const div = document.createElement('div');
   div.className = 'msg thinking';
   const details = document.createElement('details');
-  details.style.cssText = 'margin:4px 0;font-size:12px;color:#888';
   details.open = true;
   const summary = document.createElement('summary');
   summary.textContent = '思考过程';
-  summary.style.cssText = 'cursor:pointer;padding:4px 8px;background:#f8f9fa;border-radius:6px;user-select:none';
   const content = document.createElement('div');
-  content.style.cssText = 'padding:8px 12px;line-height:1.6;white-space:pre-wrap;background:#f0f2f5;border-radius:0 0 6px 6px;color:#666;font-size:12px';
+  content.className = 'think-content';
   details.appendChild(summary);
   details.appendChild(content);
   div.appendChild(details);

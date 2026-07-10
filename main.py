@@ -1526,7 +1526,7 @@ class JARVIS:
             result = self.brain_engine.chat_with_tools(
                 messages, self.TOOL_DEFS,
                 tool_executor=self._execute_tool_call,
-                max_rounds=50
+                max_rounds=5000
             )
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""
