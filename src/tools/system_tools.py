@@ -497,69 +497,104 @@ class DeleteFileTool(SystemTool):
 
 
 class SearchWebTool(SystemTool):
-    """搜索网络工具 — 通过 Bing 搜索（无需 Key，国内可访问）"""
+    """搜索网络工具 — 多后端搜索"""
 
     def __init__(self):
         parameters = {
             "query": {"type": "string", "description": "搜索关键词", "required": True},
             "max_results": {"type": "integer", "description": "最大结果数量", "required": False, "default": 5},
+            "source": {"type": "string", "description": "搜索源: bing / web", "required": False, "default": "web"},
         }
-        super().__init__("search_web", "搜索网络信息（Bing）", parameters)
+        super().__init__("search_web", "搜索网络信息", parameters)
 
     def execute(self, **kwargs) -> str:
-        import urllib.request, urllib.parse, re
+        import urllib.request, urllib.parse, re, time
         query = kwargs["query"]
         max_results = int(kwargs.get("max_results", 5))
+        source = kwargs.get("source", "web")
 
         logger.info(f"搜索网络: {query}")
 
-        try:
-            # 使用 Bing 搜索（自动处理重定向到 cn.bing.com）
-            url = "https://www.bing.com/search?" + urllib.parse.urlencode({"q": query})
-            req = urllib.request.Request(url,
-                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
-            resp = urllib.request.urlopen(req, timeout=15)
-            html = resp.read().decode("utf-8", errors="ignore")
+        # 统一结果提取
+        def clean_html(html_text: str) -> str:
+            return re.sub(r'<[^>]+>', '', html_text).strip()
 
-            # 从 HTML 提取搜索结果（标题 + 链接 + 摘要）
+        def extract_results(html, pattern, url_group, title_group, snippet_group=None):
             results = []
-            seen_urls = set()
+            seen = set()
+            for m in re.finditer(pattern, html, re.DOTALL):
+                url = m.group(url_group)
+                title = clean_html(m.group(title_group))
+                snippet = clean_html(m.group(snippet_group))[:180] if snippet_group else ""
+                if url not in seen and title and len(title) > 2:
+                    skip_domains = ["bing.com", "microsoft.com", "live.com"]
+                    if not any(d in url for d in skip_domains):
+                        seen.add(url)
+                        results.append({"url": url, "title": title, "snippet": snippet})
+            return results
 
-            # Bing 搜索结果在 <li class="b_algo"> 中
-            for m in re.finditer(
+        backends = []
+
+        if source in ("web", "bing"):
+            backends.append(("Bing", "https://www.bing.com/search?q=", [
                 r'<h2><a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a></h2>.*?<p>(.*?)</p>',
-                html, re.DOTALL
-            ):
-                url = m.group(1)
-                title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
-                snippet = re.sub(r'<[^>]+>', '', m.group(3)).strip()[:150]
+            ]))
 
-                if url not in seen_urls and title and len(title) > 2:
-                    seen_urls.add(url)
-                    results.append(f"- {title}\n  {url}\n  {snippet}")
+        results = []
+        used_source = ""
+        for name, base_url, patterns in backends:
+            try:
+                url = base_url + urllib.parse.quote(query)
+                req = urllib.request.Request(url,
+                    headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+                    timeout=15)
+                resp = urllib.request.urlopen(req, timeout=15)
+                html = resp.read().decode("utf-8", errors="ignore")
 
-            if not results:
-                # 兜底：提取所有链接
-                for m in re.finditer(
-                    r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>',
-                    html
-                ):
+                for pattern in patterns:
+                    extracted = extract_results(html, pattern, 1, 2, 3)
+                    if extracted:
+                        results = extracted
+                        used_source = name
+                        break
+                if results:
+                    break
+            except Exception as e:
+                logger.debug(f"{name} 搜索失败: {e}")
+                continue
+
+        # 兜底
+        if not results:
+            try:
+                url = "https://www.bing.com/search?q=" + urllib.parse.quote(query)
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = urllib.request.urlopen(req, timeout=10)
+                html = resp.read().decode("utf-8", errors="ignore")
+                for m in re.finditer(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', html):
                     url = m.group(1)
-                    title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
-                    if (url not in seen_urls and title and len(title) > 5
-                        and "bing.com" not in url and "microsoft.com" not in url):
-                        seen_urls.add(url)
-                        results.append(f"- {title}\n  {url}")
+                    title = clean_html(m.group(2))
+                    if title and len(title) > 5 and not any(d in url for d in ["bing.com", "microsoft.com"]):
+                        results.append({"url": url, "title": title, "snippet": ""})
+                        if len(results) >= max_results:
+                            break
+                if results:
+                    used_source = "Bing"
+            except Exception as e:
+                logger.debug(f"兜底搜索失败: {e}")
 
-            if not results:
-                return f"搜索 '{query}' 未找到结果"
+        if not results:
+            return f"搜索 '{query}' 未找到结果"
 
-            output = "\n\n".join(results[:max_results])
-            return f"搜索结果 ({len(results[:max_results])} 条):\n\n{output}"
+        # 格式化输出
+        lines = [f"搜索结果 ({len(results[:max_results])} 条) 来源: {used_source}\n"]
+        for i, r in enumerate(results[:max_results], 1):
+            lines.append(f"{i}. {r['title']}")
+            lines.append(f"   {r['url']}")
+            if r['snippet']:
+                lines.append(f"   {r['snippet']}")
+            lines.append("")
 
-        except Exception as e:
-            logger.error(f"网络搜索失败: {e}")
-            return f"搜索失败: {e}"
+        return "\n".join(lines).strip()
 
 
 class CalculateTool(SystemTool):
