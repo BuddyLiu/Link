@@ -489,7 +489,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .header a:hover{border-color:#6366f1;background:rgba(99,102,241,.1)}
 .header div{display:flex;gap:8px}
 /* Chat box */
-#chat-box{flex:1;overflow-y:auto;padding:24px calc(max(20px, 50% - 420px));background:#0a0a0f;scroll-behavior:smooth}
+#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 410px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
 #chat-box::-webkit-scrollbar{width:4px}
 #chat-box::-webkit-scrollbar-track{background:transparent}
 #chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
