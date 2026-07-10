@@ -128,7 +128,14 @@
       "Bash(grep -E \"FILE_DELETE\\\\|删除.*文件\\\\|已删除\" /tmp/jarvis_test.log | tail -5 *)",
       "Bash(grep -E \"FILE_DELETE\\\\|NL意图\\\\|删除.*文件\\\\|已删除\" /tmp/jarvis_test.log | tail -5)",
       "Bash(grep -E \"处理用户|响应完成\\\\|Delete\\\\|删除\\\\|test_delete\" /tmp/jarvis_test.log | tail -10)",
-      "Bash(grep -c \"响应完成\" /tmp/jarvis_test.log)"
+      "Bash(grep -c \"响应完成\" /tmp/jarvis_test.log)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://lite.duckduckgo.com/lite/\" --data \"q=test\" --max-time 10)",
+      "Bash(curl -s \"https://html.duckduckgo.com/html/?q=2026+AI\" --max-time 10)",
+      "Bash(curl -s \"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=python&format=json&srlimit=3\" --max-time 10)",
+      "Bash(curl -s -o /dev/null -w \"baidu: %{http_code}\" \"https://www.baidu.com\" --max-time 5)",
+      "Bash(curl -s -o /dev/null -w \"bing: %{http_code}\" \"https://www.bing.com\" --max-time 5)",
+      "Bash(curl -s \"https://www.bing.com/search?q=Python+programming\" --max-time 10 -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(curl -s \"https://html.duckduckgo.com/html/?q=test\" --max-time 10 -H \"User-Agent: Mozilla/5.0\")"
     ],
     "additionalDirectories": [
       "/private/tmp",

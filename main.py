@@ -350,6 +350,15 @@ class JARVIS:
                 return self._get_planning_engine_info()
             elif action.startswith("FILE_"):
                 return self._handle_file_action(action, parse_params(param_str), original_input)
+            elif action == "SEARCH_WEB":
+                params = parse_params(param_str)
+                query = params.get("query", original_input)
+                try:
+                    result = self.tool_manager.execute_tool("search_web", query=query)
+                    return result
+                except Exception as e:
+                    return f"搜索失败: {e}"
+
             elif action == "SCAN_PROJECT":
                 self._project_scanned = False
                 return self._get_project_context()
@@ -1344,6 +1353,10 @@ class JARVIS:
                     "## 项目知识库\n"
                     "- 用户要求了解/扫描当前项目 → [[ACTION:SCAN_PROJECT]]\n"
                     "- 用户问项目的技术栈/结构 → [[ACTION:PROJECT_INFO]]\n"
+                    "\n"
+                    "## 网络搜索\n"
+                    "- 用户要求搜索/查询/查找网络信息 → [[ACTION:SEARCH_WEB|query=搜索关键词]]\n"
+                    "如果用户问新闻、实时信息、你不知道的内容，用 SEARCH_WEB 搜索。\n"
                     "如果不需要执行操作，不要加任何标记。操作标记放在回答末尾。"
                 )
 

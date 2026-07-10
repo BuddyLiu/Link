@@ -497,44 +497,69 @@ class DeleteFileTool(SystemTool):
 
 
 class SearchWebTool(SystemTool):
-    """搜索网络工具（基础版本）"""
-    
+    """搜索网络工具 — 通过 Bing 搜索（无需 Key，国内可访问）"""
+
     def __init__(self):
         parameters = {
-            "query": {
-                "type": "string",
-                "description": "搜索关键词",
-                "required": True
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "最大结果数量",
-                "required": False,
-                "default": 5
-            }
+            "query": {"type": "string", "description": "搜索关键词", "required": True},
+            "max_results": {"type": "integer", "description": "最大结果数量", "required": False, "default": 5},
         }
-        super().__init__("search_web", "搜索网络信息", parameters)
-    
+        super().__init__("search_web", "搜索网络信息（Bing）", parameters)
+
     def execute(self, **kwargs) -> str:
+        import urllib.request, urllib.parse, re
         query = kwargs["query"]
-        max_results = kwargs.get("max_results", 5)
-        
-        # 第一阶段：返回模拟结果
-        # 第二阶段将集成真实搜索API
-        
+        max_results = int(kwargs.get("max_results", 5))
+
         logger.info(f"搜索网络: {query}")
-        
-        # 模拟搜索结果
-        mock_results = [
-            f"关于 '{query}' 的搜索结果1: 这是模拟的结果，真实搜索功能将在后续版本中实现。",
-            f"关于 '{query}' 的搜索结果2: JARVIS第一阶段主要关注本地功能。",
-            f"关于 '{query}' 的搜索结果3: 第二阶段将添加天气、新闻等API集成。",
-            f"关于 '{query}' 的搜索结果4: 当前版本支持基础系统工具和简单对话。",
-            f"关于 '{query}' 的搜索结果5: 请期待后续版本的功能增强。",
-        ]
-        
-        results = mock_results[:max_results]
-        return "\n\n".join(results)
+
+        try:
+            # 使用 Bing 搜索（自动处理重定向到 cn.bing.com）
+            url = "https://www.bing.com/search?" + urllib.parse.urlencode({"q": query})
+            req = urllib.request.Request(url,
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
+            resp = urllib.request.urlopen(req, timeout=15)
+            html = resp.read().decode("utf-8", errors="ignore")
+
+            # 从 HTML 提取搜索结果（标题 + 链接 + 摘要）
+            results = []
+            seen_urls = set()
+
+            # Bing 搜索结果在 <li class="b_algo"> 中
+            for m in re.finditer(
+                r'<h2><a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a></h2>.*?<p>(.*?)</p>',
+                html, re.DOTALL
+            ):
+                url = m.group(1)
+                title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+                snippet = re.sub(r'<[^>]+>', '', m.group(3)).strip()[:150]
+
+                if url not in seen_urls and title and len(title) > 2:
+                    seen_urls.add(url)
+                    results.append(f"- {title}\n  {url}\n  {snippet}")
+
+            if not results:
+                # 兜底：提取所有链接
+                for m in re.finditer(
+                    r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>',
+                    html
+                ):
+                    url = m.group(1)
+                    title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+                    if (url not in seen_urls and title and len(title) > 5
+                        and "bing.com" not in url and "microsoft.com" not in url):
+                        seen_urls.add(url)
+                        results.append(f"- {title}\n  {url}")
+
+            if not results:
+                return f"搜索 '{query}' 未找到结果"
+
+            output = "\n\n".join(results[:max_results])
+            return f"搜索结果 ({len(results[:max_results])} 条):\n\n{output}"
+
+        except Exception as e:
+            logger.error(f"网络搜索失败: {e}")
+            return f"搜索失败: {e}"
 
 
 class CalculateTool(SystemTool):
