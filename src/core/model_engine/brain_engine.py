@@ -474,11 +474,77 @@ class BrainEngine:
             )
 
             return response
-            
+
         except Exception as e:
             self._log("error", f"简单查询失败: {str(e)}")
             return f"查询失败: {str(e)}"
-    
+
+    def chat_with_tools(self, messages: list, tools: list,
+                        tool_executor: callable = None,
+                        max_rounds: int = 10) -> str:
+        """
+        带工具调用的对话接口（支持 Function Calling 循环）。
+
+        流程：发送消息+工具定义 → DeepSeek 可能返回 tool_calls →
+        执行工具 → 结果发回 → DeepSeek 继续 → 直到返回纯文本。
+
+        Args:
+            messages: 消息列表
+            tools: 工具定义列表（OpenAI Function Calling 格式）
+            tool_executor: 工具执行回调，接收 (tool_name, args_dict) 返回结果字符串
+            max_rounds: 最大工具调用轮数
+
+        Returns:
+            最终回复文本
+        """
+        if not self.model_adapter:
+            return "模型适配器未初始化"
+
+        for round_num in range(max_rounds):
+            try:
+                resp = self.model_adapter.chat_completion(
+                    messages, temperature=0.7,
+                    max_tokens=self.config.get("default_max_tokens", 4096),
+                    tools=tools if round_num == 0 else None,
+                )
+
+                text = resp.text or ""
+                tool_calls = resp.metadata.get("tool_calls", [])
+                is_tool_call = resp.finish_reason == "tool_calls" or bool(tool_calls)
+
+                if not is_tool_call:
+                    return text  # 纯文本回复，完成
+
+                # 有工具调用 → 执行并追加结果
+                messages.append({
+                    "role": "assistant",
+                    "content": text if text else None,
+                    "tool_calls": tool_calls,
+                })
+
+                for tc in tool_calls:
+                    func_name = tc["function"]["name"]
+                    try:
+                        args = json.loads(tc["function"]["arguments"])
+                        if tool_executor:
+                            result = tool_executor(func_name, args)
+                        else:
+                            result = f"未知工具: {func_name}"
+                    except Exception as e:
+                        result = f"执行出错: {e}"
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": str(result),
+                    })
+
+            except Exception as e:
+                self._log("error", f"工具对话失败: {e}")
+                return f"查询失败: {e}"
+
+        return "已达最大工具调用轮数"
+
     def health_check(self) -> Dict[str, Any]:
         """
         健康检查

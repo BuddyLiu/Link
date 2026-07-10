@@ -87,6 +87,9 @@ class OpenAIAdapter(ModelAdapter):
         }
         
         # 添加其他参数
+        if kwargs.get("tools"):
+            request_data["tools"] = kwargs["tools"]
+            request_data["tool_choice"] = kwargs.get("tool_choice", "auto")
         if kwargs.get("top_p"):
             request_data["top_p"] = kwargs["top_p"]
         if kwargs.get("frequency_penalty"):
@@ -112,9 +115,23 @@ class OpenAIAdapter(ModelAdapter):
             
             # 解析响应
             choice = response.choices[0]
-            response_text = choice.message.content
-            
+            response_text = choice.message.content or ""
+            tool_calls = []
+            if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
+                for tc in choice.message.tool_calls:
+                    tool_calls.append({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        }
+                    })
+
             # 构建响应对象
+            extra_meta = {}
+            if tool_calls:
+                extra_meta["tool_calls"] = tool_calls
             result = ModelResponse(
                 text=response_text,
                 model=self.model_name,
@@ -122,6 +139,7 @@ class OpenAIAdapter(ModelAdapter):
                 finish_reason=choice.finish_reason or "stop",
                 metadata={
                     "response_time": time.time() - start_time,
+                    **extra_meta,
                     "raw_response": response.to_dict() if hasattr(response, 'to_dict') else str(response)
                 }
             )

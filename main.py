@@ -230,69 +230,27 @@ class JARVIS:
         if cmd.startswith("任务列表") or cmd == "我的任务":
             return self._list_tasks()
 
-        # LLM 生成响应 + 支持多步操作循环
-        max_steps = 3
-        current_input = input_text
-        final_response = ""
-        for step in range(max_steps):
-            response = self._simple_response(current_input, memory_context)
+        # LLM 生成响应（在线模式用 Function Calling，离线模式用 [[ACTION:xxx]]）
+        is_online = False
+        if self.brain_engine and self.brain_engine.model_adapter:
+            try:
+                prov = getattr(self.brain_engine.model_adapter, 'api_base', '')
+                is_online = 'deepseek' in prov or 'api.openai.com' in prov
+            except:
+                pass
 
-            # 检查 LLM 是否请求了系统操作
-            action_result = self._execute_llm_action(response, current_input)
+        if is_online:
+            response = self._tool_response(input_text, memory_context)
+        else:
+            response = self._simple_response(input_text, memory_context)
+            action_result = self._execute_llm_action(response, input_text)
             if action_result:
-                final_response = action_result
-                if step < max_steps - 1 and "[[ERROR:" not in action_result:
-                    # 如果是 FILE_READ，提取文件名和内容，直接用 LLM 做简化
-                    if "FILE_READ" in response or "FILE_READ" in repr(response):
-                        # 提取源文件名和目标文件名
-                        src_file = "README.md"
-                        tgt_file = "README-COMMON.md"
-                        # 从原始用户请求中提取目标文件名
-                        import re
-                        tm = re.search(r'(?:存入|保存到|存储到|写入)\s*[:：]?\s*["\']?([^\s"\'，,。]+\.\w+)', input_text)
-                        if tm:
-                            tgt_file = tm.group(1)
-                        # 用简化 prompt 调用 LLM
-                        simplify_prompt = (
-                            f"请把以下内容简化，用日常语言描述，去掉技术细节。"
-                            f"只输出简化后的文本，不要解释，不要用markdown代码块。"
-                            f"\n\n{action_result[:2000]}"
-                        )
-                        simplified = self.brain_engine.simple_query(
-                            simplify_prompt,
-                            system_prompt="你是一个文本简化助手。输出简洁易懂的简化版本。"
-                        )
-                        if simplified and "查询失败" not in simplified:
-                            simplified = simplified.strip()
-                            try:
-                                result = self.tool_manager.execute_tool(
-                                    "write_file", path=tgt_file, content=simplified
-                                )
-                                final_response = f"已将简化后的内容保存到 {tgt_file}\n\n{simplified[:300]}"
-                                break  # 完成
-                            except Exception as e:
-                                final_response = f"简化完成，但保存失败: {e}"
-                        else:
-                            final_response = action_result
-                    else:
-                        current_input = f"{input_text}\n\n执行结果：\n{action_result[:500]}\n请继续。"
-                        memory_context = self._retrieve_memory_context(current_input)
-                        continue
-                break
+                response = action_result
             else:
-                # 没有操作标记 → 从自然语言中检测文件操作意图
                 nl_action = self._detect_natural_language_action(response, input_text)
                 if nl_action:
-                    final_response = nl_action
-                    if step < max_steps - 1:
-                        current_input = f"执行结果：{nl_action[:200]}\n请继续。"
-                        memory_context = self._retrieve_memory_context(current_input)
-                        continue
-                    break
-                final_response = response
-                break
+                    response = nl_action
 
-        response = final_response
 
         # 存储到对话历史（给下一轮 LLM 调用做上下文）
         self._conversation_history.append({"role": "user", "content": input_text})
@@ -1378,7 +1336,202 @@ class JARVIS:
 
         # 兜底
         return f"我已经收到你的消息：'{input_text}'。\n\n" + self._get_suggestions()
-    
+
+    # ── Tool Calling 响应（用于 DeepSeek Function Calling） ──
+
+    TOOL_DEFS = [
+        {
+            "type": "function",
+            "function": {
+                "name": "save_user_fact",
+                "description": "保存用户提到的个人信息到记忆",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "category": {"type": "string", "enum": ["姓名", "职业", "手机号", "偏好", "其他"]},
+                        "value": {"type": "string"},
+                    },
+                    "required": ["category", "value"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "读取文件内容",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "文件路径"}
+                    },
+                    "required": ["path"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": "创建或覆盖写入文件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"}
+                    },
+                    "required": ["path", "content"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "edit_file",
+                "description": "编辑文件：字符串匹配替换",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old": {"type": "string", "description": "被替换的原内容"},
+                        "new": {"type": "string", "description": "替换后的内容"}
+                    },
+                    "required": ["path", "old", "new"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_file",
+                "description": "删除文件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    },
+                    "required": ["path"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_web",
+                "description": "搜索互联网信息",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "glob_files",
+                "description": "按模式匹配文件名（如 **/*.py）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"}
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_project_info",
+                "description": "获取当前项目的技术栈和架构信息",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        },
+    ]
+
+    def _execute_tool_call(self, tool_name: str, args: dict) -> str:
+        """执行 Tool Calling 返回的工具调用"""
+        name_map = {
+            "read_file": ("read_file", {"path": "path"}),
+            "write_file": ("write_file", {"path": "path", "content": "content"}),
+            "edit_file": ("edit_file", {"path": "path", "old": "old", "new": "new"}),
+            "delete_file": ("delete_file", {"path": "path"}),
+            "search_web": ("search_web", {"query": "query"}),
+            "glob_files": ("glob_files", {"pattern": "pattern"}),
+        }
+
+        if tool_name == "save_user_fact":
+            cat = args.get("category", "其他")
+            val = args.get("value", "")
+            if val and self.memory_engine:
+                self.memory_engine.add_fact_memory(f"用户{cat}: {val}", importance=0.85)
+                self._update_user_profile()
+                return f"已保存: {cat}={val}"
+            return "保存失败"
+
+        if tool_name == "get_project_info":
+            if self._project_context:
+                return self._project_context
+            return "暂无项目信息"
+
+        if tool_name in name_map:
+            tool_id, param_map = name_map[tool_name]
+            kwargs = {k: args.get(v, "") for k, v in param_map.items()}
+            try:
+                result = self.tool_manager.execute_tool(tool_id, **kwargs)
+                return str(result)
+            except Exception as e:
+                return f"执行失败: {e}"
+
+        return f"未知工具: {tool_name}"
+
+    def _tool_response(self, input_text: str, memory_context: str = "") -> str:
+        """使用 Function Calling 的响应（DeepSeek 在线模式）"""
+        if not self.brain_engine or not self.brain_engine.model_adapter:
+            return self._simple_response(input_text, memory_context)
+
+        # 构建系统提示
+        system_prompt = (
+            "你是一个AI助手JARVIS，用中文回答。\n\n"
+            "## 工具使用规则\n"
+            "- 用户提到个人信息（姓名/职业/手机号/偏好）→ 调用 save_user_fact\n"
+            "- 用户要求搜索/查新闻/查天气/你不知道的信息 → 调用 search_web\n"
+            "- 文件操作优先用文件工具（read_file / write_file / edit_file / delete_file）\n"
+        )
+        if memory_context:
+            system_prompt += (
+                "## 用户信息\n"
+                f"{memory_context}\n\n"
+            )
+
+        # 构建消息列表
+        messages = [{"role": "system", "content": system_prompt}]
+        history_msgs = self._build_history_messages()
+        # 过滤项目知识注入（已在 system prompt 中处理）
+        history_msgs = [m for m in history_msgs if m.get("content", "").startswith("[项目知识]") == False]
+        messages.extend(history_msgs)
+        messages.append({"role": "user", "content": input_text})
+
+        # 调用 DeepSeek Function Calling
+        try:
+            response = self.brain_engine.chat_with_tools(
+                messages, self.TOOL_DEFS,
+                tool_executor=self._execute_tool_call,
+                max_rounds=10
+            )
+            if response and "查询失败" not in response:
+                return response.strip()
+            return self._simple_response(input_text, memory_context)
+        except Exception as e:
+            self.logger.error(f"工具对话失败: {e}")
+            return self._simple_response(input_text, memory_context)
+
     def _handle_learning_request(self, input_text: str) -> str:
         """处理主动学习请求 — 让LLM学习主题并存入记忆"""
         if not self.brain_engine:

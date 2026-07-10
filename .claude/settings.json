@@ -135,7 +135,8 @@
       "Bash(curl -s -o /dev/null -w \"baidu: %{http_code}\" \"https://www.baidu.com\" --max-time 5)",
       "Bash(curl -s -o /dev/null -w \"bing: %{http_code}\" \"https://www.bing.com\" --max-time 5)",
       "Bash(curl -s \"https://www.bing.com/search?q=Python+programming\" --max-time 10 -H \"User-Agent: Mozilla/5.0\")",
-      "Bash(curl -s \"https://html.duckduckgo.com/html/?q=test\" --max-time 10 -H \"User-Agent: Mozilla/5.0\")"
+      "Bash(curl -s \"https://html.duckduckgo.com/html/?q=test\" --max-time 10 -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(grep -i \"save_user\\\\|王五\\\\|个人\" /tmp/jarvis_test.log | tail -5)"
     ],
     "additionalDirectories": [
       "/private/tmp",
