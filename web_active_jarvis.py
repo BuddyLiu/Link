@@ -569,9 +569,12 @@ ws.onmessage = e => {
     removeTyping();
     var reasoning = d.data.reasoning || '';
     if (reasoning) {
-      addThinking(reasoning);
+      addThinking(reasoning, function() {
+        typewriteMessage('assistant', d.data.result || '');
+      });
+    } else {
+      typewriteMessage('assistant', d.data.result || '');
     }
-    typewriteMessage('assistant', d.data.result || '');
   }
 };
 
@@ -645,16 +648,16 @@ function send() {
 input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
 
 // ----- Helper: smart auto-scroll & copy -----
-function addThinking(reasoning) {
+function addThinking(reasoning, callback) {
   const div = document.createElement('div');
   div.className = 'msg thinking';
   const details = document.createElement('details');
   details.style.cssText = 'margin:4px 0;font-size:12px;color:#888';
+  details.open = true;
   const summary = document.createElement('summary');
-  summary.textContent = '🧠 思考过程';
+  summary.textContent = '思考过程';
   summary.style.cssText = 'cursor:pointer;padding:4px 8px;background:#f8f9fa;border-radius:6px;user-select:none';
   const content = document.createElement('div');
-  content.textContent = reasoning;
   content.style.cssText = 'padding:8px 12px;line-height:1.6;white-space:pre-wrap;background:#f0f2f5;border-radius:0 0 6px 6px;color:#666;font-size:12px';
   details.appendChild(summary);
   details.appendChild(content);
@@ -663,6 +666,20 @@ function addThinking(reasoning) {
   if (typing) chatBox.insertBefore(div, typing);
   else chatBox.appendChild(div);
   scrollToBottom();
+
+  var pos = 0;
+  var THINK_SPEED = 10;
+  function typeThink() {
+    if (pos < reasoning.length) {
+      content.textContent += reasoning[pos];
+      pos++;
+      scrollToBottom();
+      setTimeout(typeThink, THINK_SPEED);
+    } else {
+      if (callback) callback();
+    }
+  }
+  typeThink();
 }
 
 function isNearBottom() {
