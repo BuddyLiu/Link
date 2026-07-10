@@ -128,8 +128,15 @@ class OpenAIAdapter(ModelAdapter):
                         }
                     })
 
+            # 提取思考内容（DeepSeek reasoning_content）
+            reasoning = ""
+            if hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
+                reasoning = choice.message.reasoning_content
+
             # 构建响应对象
             extra_meta = {}
+            if reasoning:
+                extra_meta["reasoning"] = reasoning
             if tool_calls:
                 extra_meta["tool_calls"] = tool_calls
             result = ModelResponse(

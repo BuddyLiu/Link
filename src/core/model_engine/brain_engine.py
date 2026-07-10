@@ -481,7 +481,7 @@ class BrainEngine:
 
     def chat_with_tools(self, messages: list, tools: list,
                         tool_executor: callable = None,
-                        max_rounds: int = 10) -> str:
+                        max_rounds: int = 10) -> dict:
         """
         带工具调用的对话接口（支持 Function Calling 循环）。
 
@@ -509,11 +509,12 @@ class BrainEngine:
                 )
 
                 text = resp.text or ""
+                reasoning = resp.metadata.get("reasoning", "")
                 tool_calls = resp.metadata.get("tool_calls", [])
                 is_tool_call = resp.finish_reason == "tool_calls" or bool(tool_calls)
 
                 if not is_tool_call:
-                    return text  # 纯文本回复，完成
+                    return {"text": text, "reasoning": reasoning}  # 纯文本回复，完成
 
                 # 有工具调用 → 执行并追加结果
                 messages.append({
@@ -541,9 +542,9 @@ class BrainEngine:
 
             except Exception as e:
                 self._log("error", f"工具对话失败: {e}")
-                return f"查询失败: {e}"
+                return {"text": f"查询失败: {e}", "reasoning": ""}
 
-        return "已达最大工具调用轮数"
+        return {"text": "已达最大工具调用轮数", "reasoning": ""}
 
     def health_check(self) -> Dict[str, Any]:
         """

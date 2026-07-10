@@ -567,6 +567,10 @@ ws.onmessage = e => {
   const d = JSON.parse(e.data);
   if (d.type === 'event' && d.data.event_type === 'ASSISTANT') {
     removeTyping();
+    var reasoning = d.data.reasoning || '';
+    if (reasoning) {
+      addThinking(reasoning);
+    }
     typewriteMessage('assistant', d.data.result || '');
   }
 };
@@ -641,6 +645,26 @@ function send() {
 input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
 
 // ----- Helper: smart auto-scroll & copy -----
+function addThinking(reasoning) {
+  const div = document.createElement('div');
+  div.className = 'msg thinking';
+  const details = document.createElement('details');
+  details.style.cssText = 'margin:4px 0;font-size:12px;color:#888';
+  const summary = document.createElement('summary');
+  summary.textContent = '🧠 思考过程';
+  summary.style.cssText = 'cursor:pointer;padding:4px 8px;background:#f8f9fa;border-radius:6px;user-select:none';
+  const content = document.createElement('div');
+  content.textContent = reasoning;
+  content.style.cssText = 'padding:8px 12px;line-height:1.6;white-space:pre-wrap;background:#f0f2f5;border-radius:0 0 6px 6px;color:#666;font-size:12px';
+  details.appendChild(summary);
+  details.appendChild(content);
+  div.appendChild(details);
+  const typing = chatBox.querySelector('.typing');
+  if (typing) chatBox.insertBefore(div, typing);
+  else chatBox.appendChild(div);
+  scrollToBottom();
+}
+
 function isNearBottom() {
   return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 120;
 }
@@ -851,12 +875,12 @@ function escapeHtml(s) {
                             })
 
                             # 直接在 WebSocket 处理器中调用大脑引擎
-                            # （避免事件循环 thread 的 asyncio.run() 无法发送 WebSocket 消息）
-                            brain_response = self._process_input_direct(text)
-                            if brain_response:
+                            brain_resp = self._process_input_direct(text)
+                            if brain_resp and brain_resp.get("result"):
                                 await self._broadcast_event({
                                     "event_type": "ASSISTANT",
-                                    "result": brain_response,
+                                    "result": brain_resp["result"],
+                                    "reasoning": brain_resp.get("reasoning", ""),
                                     "source": "jarvis_brain",
                                     "timestamp": time.time()
                                 })
@@ -1491,21 +1515,22 @@ function escapeHtml(s) {
         if isinstance(result, str):
             print(f"[{timestamp}] {event_type} ({source}): {result}")
     
-    def _process_input_direct(self, text: str) -> str:
-        """直接在调用线程中处理用户输入（避免事件循环的 asyncio.run 问题）"""
+    def _process_input_direct(self, text: str) -> dict:
+        """处理用户输入，返回 {result, reasoning}"""
         if not self.brain_jarvis:
-            return "⚠️ 大脑引擎未就绪"
+            return {"result": "⚠️ 大脑引擎未就绪", "reasoning": ""}
         try:
             start = time.time()
-            response = self.brain_jarvis.process_input(text)
+            result = self.brain_jarvis.process_input(text)
+            reasoning = getattr(self.brain_jarvis, '_last_reasoning', '')
             elapsed = time.time() - start
             import logging
             logging.getLogger("jarvis").info(f"LLM 响应完成 ({elapsed:.1f}s)")
-            return response
+            return {"result": result, "reasoning": reasoning}
         except Exception as e:
             import logging
             logging.getLogger("jarvis").error(f"处理输入出错: {e}")
-            return f"❌ 处理出错: {e}"
+            return {"result": f"❌ 处理出错: {e}", "reasoning": ""}
 
     def add_user_input(self, text: str, user_id: str = "default"):
         """添加用户输入（外部调用）"""

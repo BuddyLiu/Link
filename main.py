@@ -57,6 +57,9 @@ class JARVIS:
         # 项目知识库
         self._project_context = ""
         self._project_scanned = False
+
+        # 最近一次推理的思考过程（DeepSeek reasoning）
+        self._last_reasoning = ""
         
         # 初始化组件
         self._initialize_components()
@@ -1520,13 +1523,16 @@ class JARVIS:
 
         # 调用 DeepSeek Function Calling
         try:
-            response = self.brain_engine.chat_with_tools(
+            result = self.brain_engine.chat_with_tools(
                 messages, self.TOOL_DEFS,
                 tool_executor=self._execute_tool_call,
                 max_rounds=10
             )
-            if response and "查询失败" not in response:
-                return response.strip()
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""
+            self._last_reasoning = reasoning if len(reasoning) > 20 else ""
+            if text and "查询失败" not in text:
+                return text.strip()
             return self._simple_response(input_text, memory_context)
         except Exception as e:
             self.logger.error(f"工具对话失败: {e}")
