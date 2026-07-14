@@ -264,6 +264,7 @@ class JARVIS:
                     if "用户" in line and ":" in line:
                         name = line.split(":")[-1].strip()[:10]
                         break
+            self.logger.info(f"[debug] greeting name='{name}' | memory_context[:300]={memory_context[:300]!r}")
             greet = f"{period}好"
             if name:
                 return f"{greet} {name}！我是 JARVIS，有什么需要帮忙的吗？"
