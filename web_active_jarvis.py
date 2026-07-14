@@ -1537,13 +1537,16 @@ function escapeHtml(s) {
             return {"error": f"恢复失败: {e}"}
 
     async def _reset_debug_memory(self) -> dict:
-        """清空所有记忆"""
+        """清空所有记忆（含缓存画像）"""
         if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
             return {"error": "memory not available"}
         try:
             store = self.brain_jarvis.memory_engine.store
             count = store.get_stats().get("total_memories", 0)
             store.reset_memory()
+            # 同时清空缓存的用户画像（否则_retrieve_memory_context仍会返回旧数据）
+            self.brain_jarvis._user_profile = ""
+            self.brain_jarvis._history_summary = ""
             return {"success": True, "cleared_count": count}
         except Exception as e:
             return {"error": str(e)}
