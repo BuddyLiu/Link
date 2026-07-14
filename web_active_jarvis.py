@@ -502,7 +502,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg{margin-bottom:20px;display:flex;flex-direction:column;max-width:85%}
 .msg.user{align-self:flex-end;align-items:flex-end}
 .msg.assistant{align-self:flex-start;align-items:flex-start}
-.msg .bubble{width:100%;padding:14px 18px;border-radius:12px;font-size:14px;line-height:1.7;word-break:break-word;position:relative}
+.msg .bubble{width:100%;padding:10px 16px;border-radius:12px;font-size:14px;line-height:1.5;word-break:break-word;position:relative}
 .msg.user .bubble{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-bottom-right-radius:4px}
 .msg.assistant .bubble{background:#13131f;color:#d4d4e6;border:1px solid #1a1a2e;border-bottom-left-radius:4px}
 .msg .time{font-size:10px;color:#6366f1;opacity:.5;margin-top:4px;padding:0 4px;letter-spacing:.5px}
@@ -525,6 +525,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .copy-btn:hover{border-color:#6366f1}
 .copy-btn.visible{opacity:1}
 .msg:hover .copy-btn{opacity:0.8}
+/* Feedback buttons */
+.feedback-btns{display:flex;gap:6px;margin-top:6px;align-self:flex-end}
+.feedback-btn{width:28px;height:28px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25);background:transparent;color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;padding:0;line-height:1}
+.feedback-btn:hover{transform:scale(1.15);border-color:rgba(255,255,255,.5);color:#fff;background:rgba(255,255,255,.08)}
+.feedback-btn:disabled{opacity:.4;cursor:default;transform:none}
+.feedback-btn.active.up{background:rgba(34,197,94,.2);border-color:#22c55e;color:#22c55e}
+.feedback-btn.active.down{background:rgba(239,68,68,.2);border-color:#ef4444;color:#ef4444}
 /* Code blocks */
 .code-wrap{position:relative;margin:8px 0;border-radius:8px;overflow:hidden;border:1px solid #1a1a2e}
 .code-copy{position:absolute;top:4px;right:4px;padding:2px 8px;font-size:10px;background:rgba(99,102,241,.15);color:#6366f1;border:1px solid rgba(99,102,241,.2);border-radius:4px;cursor:pointer;opacity:0;transition:opacity .2s;z-index:1}
@@ -746,8 +753,10 @@ async function loadHistory(page) {
     function createMsgDiv(msg) {
       var div = document.createElement('div');
       div.className = 'msg ' + msg.role;
+      var fullContent = msg.content;
       if (msg.reasoning) {
         var det = document.createElement('details');
+        det.open = true;
         det.style.cssText = 'margin:2px 0 4px;font-size:11px';
         var sum = document.createElement('summary');
         sum.textContent = '思考过程';
@@ -757,11 +766,34 @@ async function loadHistory(page) {
         con.style.cssText = 'color:#6b7280;line-height:1.5;padding:4px 8px;white-space:pre-wrap;font-size:11px';
         det.appendChild(sum); det.appendChild(con);
         div.appendChild(det);
+        fullContent = msg.reasoning + '\\n\\n' + msg.content;
       }
       var bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.innerHTML = renderMarkdown(escapeHtml(msg.content));
       div.appendChild(bubble);
+      var cb = document.createElement('button');
+      cb.className = 'copy-btn visible';
+      cb.textContent = '复制';
+      cb.onclick = function(){ copyText(fullContent, cb); };
+      div.appendChild(cb);
+      if (msg.role === 'assistant') {
+        var fbDiv = document.createElement('div');
+        fbDiv.className = 'feedback-btns';
+        var fId = 'fb_' + Math.random().toString(36).substr(2,12);
+        var up = document.createElement('button');
+        up.className = 'feedback-btn up';
+        up.dataset.msgId = fId; up.dataset.rating = 'up'; up.title = '有用';
+        up.textContent = '👍';
+        up.onclick = function(){ sendFeedback(fId, 'up', msg.content, msg.reasoning || ''); };
+        var down = document.createElement('button');
+        down.className = 'feedback-btn down';
+        down.dataset.msgId = fId; down.dataset.rating = 'down'; down.title = '没用';
+        down.textContent = '👎';
+        down.onclick = function(){ sendFeedback(fId, 'down', msg.content, msg.reasoning || ''); };
+        fbDiv.appendChild(up); fbDiv.appendChild(down);
+        div.appendChild(fbDiv);
+      }
       return div;
     }
 
@@ -885,6 +917,27 @@ function copyCode(btn) {
   copyText(code.textContent, btn);
 }
 
+// ── 反馈评分 ──
+async function sendFeedback(msgId, rating, content, reasoningText) {
+  try {
+    await fetch('/api/feedback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message_id: msgId, rating: rating, content: content, reasoning: reasoningText || '', has_reasoning: !!reasoningText})
+    });
+    var btns = document.querySelectorAll('.feedback-btn[data-msg-id="' + msgId + '"]');
+    btns.forEach(function(b) {
+      b.disabled = true;
+      if (b.dataset.rating === rating) {
+        b.classList.add('active');
+        b.innerHTML = rating === 'up' ? '\\u{1F44D} ✓' : '\\u{1F44E} ✓';
+      } else {
+        b.style.opacity = '0.3';
+      }
+    });
+  } catch(e) { console.error('Feedback error:', e); }
+}
+
 // ----- Markdown Parser (lightweight, no dependencies) -----
 function renderMarkdown(text) {
   return text
@@ -1005,7 +1058,7 @@ function addMessage(role, content) {
     div.appendChild(bubble);
     // Copy button
     const copyBtn = document.createElement('button');
-    copyBtn.className = 'copy-btn';
+    copyBtn.className = 'copy-btn visible';
     copyBtn.textContent = '复制';
     copyBtn.onclick = () => copyText(content, copyBtn);
     div.appendChild(copyBtn);
@@ -1262,6 +1315,31 @@ function escapeHtml(s) {
             models = get_ollama_models()
             return {"models": models}
 
+        @self.app.post("/api/feedback")
+        async def post_feedback(data: dict):
+            return await self._handle_feedback(data)
+
+    async def _handle_feedback(self, data: dict) -> dict:
+        rating = data.get("rating", "")
+        content = data.get("content", "")
+        reasoning = data.get("reasoning", "")
+        if not rating or rating not in ("up", "down") or not content:
+            return {"success": False, "error": "invalid params"}
+        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+            return {"success": False, "error": "memory not available"}
+        try:
+            metadata = {
+                "type": "feedback",
+                "rating": rating,
+                "has_reasoning": bool(reasoning),
+                "response_length": len(content),
+                "timestamp": time.time(),
+            }
+            store = self.brain_jarvis.memory_engine.store
+            store.add_memory(f"Feedback [{rating}]: {content[:300]}", metadata)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     async def _get_debug_data(self) -> dict:
         data = {"timestamp": time.time(), "timestamp_str": __import__("datetime").datetime.now().isoformat()}
