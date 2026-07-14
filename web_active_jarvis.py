@@ -495,7 +495,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #chat-box::-webkit-scrollbar-track{background:transparent}
 #chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
 /* Floating scroll buttons */
-#scroll-nav{position:fixed;right:max(8px,calc(50% - 500px));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;z-index:100}
+#scroll-nav{position:fixed;right:max(8px,calc(50% - 470px));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;z-index:100}
 #scroll-nav button{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(13,13,20,.8);color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;backdrop-filter:blur(4px)}
 #scroll-nav button:hover{transform:scale(1.2);border-color:rgba(255,255,255,.6);color:#fff;background:rgba(13,13,20,.95)}
 #scroll-nav button.scroll-hidden{opacity:0;pointer-events:none}
@@ -636,18 +636,97 @@ async function updateStatus() {
   } catch(e) { /* ignore */ }
 }
 setInterval(updateStatus, 10000);
+var streamContentId = null;
+var streamContentBuf = '';
+
 ws.onmessage = e => {
   const d = JSON.parse(e.data);
+
+  // 推理内容流式到达
+  if (d.type === 'reasoning_chunk') {
+    if (!document.getElementById('stream-reasoning')) {
+      removeTyping();
+      var det = document.createElement('details');
+      det.id = 'stream-reasoning';
+      det.open = true;
+      det.style.cssText = 'margin:2px 0 4px';
+      var sum = document.createElement('summary');
+      sum.textContent = '思考过程';
+      sum.style.cssText = 'cursor:pointer;color:#6366f1;padding:2px 0;font-size:11px';
+      var con = document.createElement('div');
+      con.id = 'stream-reasoning-content';
+      con.style.cssText = 'color:#6b7280;line-height:1.5;padding:4px 8px;white-space:pre-wrap;font-size:11px';
+      det.appendChild(sum); det.appendChild(con);
+      var typingEl = chatBox.querySelector('.typing');
+      if (typingEl) chatBox.insertBefore(det, typingEl);
+      else chatBox.appendChild(det);
+    }
+    var rc = document.getElementById('stream-reasoning-content');
+    if (rc) rc.textContent += d.data;
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return;
+  }
+
+  // 生成内容流式到达（实时打字）
+  if (d.type === 'content_chunk') {
+    removeTyping();
+    if (!streamContentId) {
+      streamContentBuf = '';
+      var div = document.createElement('div');
+      div.className = 'msg assistant';
+      div.id = 'stream-msg';
+      var bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.id = 'stream-bubble';
+      div.appendChild(bubble);
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+      streamContentId = 'stream-msg';
+    }
+    streamContentBuf += d.data;
+    var sb = document.getElementById('stream-bubble');
+    if (sb) {
+      sb.innerHTML = renderMarkdown(escapeHtml(streamContentBuf)) + '<span class="cursor"></span>';
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+    return;
+  }
+
+  // 完整助手回复（替换流式内容 / 无流式时打字机）
   if (d.type === 'event' && d.data.event_type === 'ASSISTANT') {
     removeTyping();
     var reasoning = d.data.reasoning || '';
+    var result = d.data.result || '';
+
+    var streamEl = document.getElementById('stream-msg');
+    if (streamEl) {
+      var finalBubble = streamEl.querySelector('.bubble');
+      if (finalBubble) {
+        finalBubble.innerHTML = renderMarkdown(result);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+      var copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn visible';
+      copyBtn.textContent = '复制';
+      copyBtn.onclick = function() {
+        navigator.clipboard.writeText(result).then(function() {
+          copyBtn.textContent = '已' + String.fromCharCode(10003);
+          setTimeout(function(){ copyBtn.textContent = '复制'; }, 2000);
+        });
+      };
+      streamEl.appendChild(copyBtn);
+      streamContentId = null;
+      return;
+    }
+
     if (reasoning) {
       addThinking(reasoning, function() {
-        typewriteMessage('assistant', d.data.result || '');
+        typewriteMessage('assistant', result);
       });
     } else {
-      typewriteMessage('assistant', d.data.result || '');
+      typewriteMessage('assistant', result);
     }
+    return;
   }
 };
 
@@ -1043,8 +1122,24 @@ function escapeHtml(s) {
                                 "source": f"user_{client_id}"
                             })
 
-                            # 直接在 WebSocket 处理器中调用大脑引擎
-                            brain_resp = self._process_input_direct(text)
+                            # 创建流式回调（实时展示推理过程和生成内容）
+                            import asyncio
+                            _loop = asyncio.get_running_loop()
+                            _stream_content_buf = ['']
+                            def _stream_cb(ctype, content):
+                                if ctype == "reasoning" and content.strip():
+                                    asyncio.run_coroutine_threadsafe(
+                                        websocket.send_json({"type": "reasoning_chunk", "data": content}), _loop
+                                    )
+                                elif ctype == "content" and content:
+                                    _stream_content_buf[0] += content
+                                    asyncio.run_coroutine_threadsafe(
+                                        websocket.send_json({"type": "content_chunk", "data": content}), _loop
+                                    )
+                            # CPU 密集/阻塞任务放到线程池
+                            from functools import partial
+                            _task = partial(self._process_input_direct, text, stream_callback=_stream_cb)
+                            brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task)
                             if brain_resp and brain_resp.get("result"):
                                 await self._broadcast_event({
                                     "event_type": "ASSISTANT",
@@ -1690,13 +1785,13 @@ function escapeHtml(s) {
         if isinstance(result, str):
             print(f"[{timestamp}] {event_type} ({source}): {result}")
     
-    def _process_input_direct(self, text: str) -> dict:
+    def _process_input_direct(self, text: str, stream_callback: callable = None) -> dict:
         """处理用户输入，返回 {result, reasoning}"""
         if not self.brain_jarvis:
             return {"result": "⚠️ 大脑引擎未就绪", "reasoning": ""}
         try:
             start = time.time()
-            result = self.brain_jarvis.process_input(text)
+            result = self.brain_jarvis.process_input(text, stream_callback=stream_callback)
             reasoning = getattr(self.brain_jarvis, '_last_reasoning', '')
             elapsed = time.time() - start
             import logging
