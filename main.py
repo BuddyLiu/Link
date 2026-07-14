@@ -941,6 +941,10 @@ class JARVIS:
         except Exception:
             pass
 
+        self.logger.info(f"[debug] _retrieve_memory_context query='{query}' | _user_profile empty={not bool(getattr(self, "_user_profile", ""))} | profile_len={len(getattr(self, "_user_profile", ""))}")
+        if parts:
+            self.logger.info(f"[debug] _retrieve_memory_context parts before search: {parts}")
+
         # 2. 当前查询相关的记忆（对话 + 事实）
         try:
             related = self.memory_engine.search_memories(query, n_results=5)
