@@ -311,12 +311,13 @@ class JARVIS:
         intent = self._classify_intent(input_text)
         self.logger.info(f"意图分类: {intent.get('type')} (置信度: {intent.get('confidence', 0)})")
 
-        # 简单意图 → 本地秒回（保存到会话历史，支持多轮上下文）
+        # 简单意图 → 本地秒回（保存到会话历史和记忆库，支持多轮上下文）
         if intent["type"] in ("greeting", "chitchat"):
             reply = self._quick_reply(intent, memory_context)
             if reply:
                 self._conversation_history.append({"role": "user", "content": input_text})
                 self._conversation_history.append({"role": "assistant", "content": reply})
+                self._save_to_memory(input_text, reply, "conversation")
                 return reply
 
         if intent["type"] == "simple_query":
@@ -324,6 +325,7 @@ class JARVIS:
             if reply:
                 self._conversation_history.append({"role": "user", "content": input_text})
                 self._conversation_history.append({"role": "assistant", "content": reply})
+                self._save_to_memory(input_text, reply, "conversation")
                 return reply
 
         # 复杂任务 → 先显示"正在分析"
@@ -332,9 +334,17 @@ class JARVIS:
         # === LLM 驱动路由 ===
         cmd = input_text.strip()
         if cmd in ("帮助", "help"):
-            return self._get_help_text()
+            reply = self._get_help_text()
+            self._conversation_history.append({"role": "user", "content": input_text})
+            self._conversation_history.append({"role": "assistant", "content": reply})
+            self._save_to_memory(input_text, reply, "conversation")
+            return reply
         if cmd.startswith("任务列表") or cmd == "我的任务":
-            return self._list_tasks()
+            reply = self._list_tasks()
+            self._conversation_history.append({"role": "user", "content": input_text})
+            self._conversation_history.append({"role": "assistant", "content": reply})
+            self._save_to_memory(input_text, reply, "conversation")
+            return reply
 
         # LLM 生成响应（在线模式用 Function Calling，离线模式用 [[ACTION:xxx]]）
         is_online = False
