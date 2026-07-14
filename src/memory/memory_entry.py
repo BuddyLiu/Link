@@ -17,6 +17,8 @@ class MemoryType(Enum):
     EVENT = "event"                # 事件记忆
     TODO = "todo"                  # 待办事项
     NOTE = "note"                  # 笔记
+    FEEDBACK = "feedback"          # 用户反馈（👍/👎评分）
+    INSIGHT = "insight"            # 分析洞察
 
 
 @dataclass

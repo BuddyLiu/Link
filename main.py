@@ -46,7 +46,7 @@ class JARVIS:
 
         # 对话历史（用于 LLM 上下文维持）
         self._conversation_history = []  # list[{"role":"user"/"assistant", "content": str}]
-        self._MAX_HISTORY_CHARS = 12000  # ~5000 tokens, 8K上下文预留空间给system+profile+response
+        self._MAX_HISTORY_CHARS = 100000  # ~40K tokens, DeepSeek支持1M上下文
         self._history_summary = ""       # 被裁掉的早期对话摘要
 
         # 第三阶段组件
@@ -60,6 +60,10 @@ class JARVIS:
 
         # 最近一次推理的思考过程（DeepSeek reasoning）
         self._last_reasoning = ""
+
+        # 工具执行进度回调（用于实时展示读/写文件等操作）
+        self._progress_callback = None
+        self._tool_call_count = 0  # 当前会话的工具调用计数
         
         # 初始化组件
         self._initialize_components()
@@ -210,23 +214,122 @@ class JARVIS:
             self.logger.error(f"重新配置大脑引擎失败: {e}")
             self.brain_engine = old_engine
 
-    def process_input(self, input_text: str) -> str:
+    def _classify_intent(self, text: str) -> dict:
+        """快速分类用户意图（纯规则，<1ms）"""
+        t = text.strip().lower()
+
+        greeting_words = ["你好", "您好", "嗨", "hello", "hi", "hey", "早上好",
+                          "下午好", "晚上好", "good morning", "good afternoon",
+                          "早安", "午安", "晚安", "在吗", "在不在"]
+        if any(g in t for g in greeting_words):
+            return {"type": "greeting", "confidence": 0.95}
+
+        thanks_words = ["谢谢", "感谢", "多谢", "thanks", "thank", "辛苦了"]
+        if any(w in t for w in thanks_words):
+            return {"type": "chitchat", "sub_intent": "thanks", "confidence": 0.9}
+
+        time_words = ["几点了", "时间", "日期", "今天几号", "星期", "现在时间",
+                      "what time", "date today", "当前时间"]
+        if any(w in t for w in time_words):
+            return {"type": "simple_query", "sub_intent": "time", "confidence": 0.9}
+
+        help_words = ["帮助", "你能做什么", "你会什么", "功能", "help", "commands",
+                      "你可以做什么", "你有什么功能"]
+        if any(w in t for w in help_words):
+            return {"type": "simple_query", "sub_intent": "help", "confidence": 0.9}
+
+        bye_words = ["再见", "拜拜", "bye", "goodbye", "下次聊", "先这样"]
+        if any(w in t for w in bye_words):
+            return {"type": "chitchat", "sub_intent": "bye", "confidence": 0.9}
+
+        praise_words = ["厉害", "不错", "很好", "好的", "ok", "可以", "好棒", "优秀"]
+        if any(w in t for w in praise_words):
+            return {"type": "chitchat", "sub_intent": "praise", "confidence": 0.8}
+
+        return {"type": "complex_task", "confidence": 0.5}
+
+    def _quick_reply(self, intent: dict, memory_context: str = "") -> str:
+        """对简单意图生成快速回复（不调用 LLM）"""
+        import datetime
+        t = intent.get("type", "")
+        sub = intent.get("sub_intent", "")
+
+        if t == "greeting":
+            import datetime
+            hour = datetime.datetime.now().hour
+            period = "早上" if hour < 12 else "下午" if hour < 18 else "晚上"
+            name = ""
+            if memory_context and "用户" in memory_context:
+                for line in memory_context.split("\n"):
+                    if "用户" in line and ":" in line:
+                        name = line.split(":")[-1].strip()[:10]
+                        break
+            greet = f"{period}好"
+            if name:
+                return f"{greet} {name}！我是 JARVIS，有什么需要帮忙的吗？"
+            return f"{greet}！有什么需要帮忙的吗？"
+
+        if t == "chitchat" and sub == "thanks":
+            return "不客气！随时找我 😊"
+        if t == "chitchat" and sub == "bye":
+            return "再见！有需要随时找我 👋"
+        if t == "chitchat" and sub == "praise":
+            return "谢谢！我会继续努力的 💪"
+
+        if t == "simple_query" and sub == "time":
+            now = datetime.datetime.now()
+            return now.strftime("现在是 %Y年%m月%d日 %H:%M (%A)")
+        if t == "simple_query" and sub == "help":
+            return self._get_help_text()
+        return ""
+
+    def process_input(self, input_text: str,
+                      stream_callback: callable = None,
+                      progress_callback: callable = None,
+                      plan_callback: callable = None) -> str:
         """
         处理用户输入
-        
+
         Args:
             input_text: 用户输入文本
-            
+            stream_callback: 流式回调 (chunk_type, text)，用于实时展示思考过程
+            progress_callback: 进度回调 (message)，用于实时展示工具执行过程
+            plan_callback: 计划回调 (plan_text)，首次返回任务计划时触发
+
         Returns:
             str: 处理结果
         """
         self.logger.info(f"处理用户输入: {input_text}")
 
+        # 设置进度回调（供 _execute_tool_call 使用）
+        self._progress_callback = progress_callback
+
         # 检索相关记忆作为上下文
         memory_context = self._retrieve_memory_context(input_text)
 
+        # 意图分类
+        intent = self._classify_intent(input_text)
+        self.logger.info(f"意图分类: {intent.get('type')} (置信度: {intent.get('confidence', 0)})")
+
+        # 简单意图 → 本地秒回（保存到会话历史，支持多轮上下文）
+        if intent["type"] in ("greeting", "chitchat"):
+            reply = self._quick_reply(intent, memory_context)
+            if reply:
+                self._conversation_history.append({"role": "user", "content": input_text})
+                self._conversation_history.append({"role": "assistant", "content": reply})
+                return reply
+
+        if intent["type"] == "simple_query":
+            reply = self._quick_reply(intent, memory_context)
+            if reply:
+                self._conversation_history.append({"role": "user", "content": input_text})
+                self._conversation_history.append({"role": "assistant", "content": reply})
+                return reply
+
+        # 复杂任务 → 先显示"正在分析"
+        self._report_progress("📋", "正在分析任务，请稍候...")
+
         # === LLM 驱动路由 ===
-        # 极少数精确命令直连（完整匹配，避免误拦截）
         cmd = input_text.strip()
         if cmd in ("帮助", "help"):
             return self._get_help_text()
@@ -243,7 +346,9 @@ class JARVIS:
                 pass
 
         if is_online:
-            response = self._tool_response(input_text, memory_context)
+            response = self._tool_response(input_text, memory_context,
+                                           stream_callback=stream_callback,
+                                           plan_callback=plan_callback)
         else:
             response = self._simple_response(input_text, memory_context)
             action_result = self._execute_llm_action(response, input_text)
@@ -328,6 +433,24 @@ class JARVIS:
                     return result
                 except Exception as e:
                     return f"搜索失败: {e}"
+
+            elif action == "EXEC_CMD":
+                params = parse_params(param_str)
+                command = params.get("command", original_input)
+                timeout = int(params.get("timeout", "30"))
+                try:
+                    result = self.tool_manager.execute_tool(
+                        "execute_command", command=command, timeout=timeout
+                    )
+                    output = ""
+                    if result.get("stdout"):
+                        output += f"STDOUT:\n{result['stdout'][:2000]}"
+                    if result.get("stderr"):
+                        output += f"\nSTDERR:\n{result['stderr'][:2000]}"
+                    status = "成功" if result.get("success") else "失败"
+                    return f"命令执行{status} (返回码: {result.get('returncode')}):\n{output}"
+                except Exception as e:
+                    return f"命令执行失败: {e}"
 
             elif action == "SCAN_PROJECT":
                 self._project_scanned = False
@@ -490,6 +613,33 @@ class JARVIS:
                     return result
                 except Exception as e:
                     self.logger.debug(f"NL删除失败: {e}")
+
+        # 策略4: 检测执行命令意图
+        cm = re.search(
+            r'(?:执行|运行|帮我)(?:\s*命令)?\s*[:：]?\s*["\']?([^"\'，,。\n]{3,200})["\']?',
+            user_input, re.IGNORECASE
+        )
+        if cm:
+            command = cm.group(1).strip().strip("'\"")
+            if command and len(command) >= 3:
+                try:
+                    result = self.tool_manager.execute_tool(
+                        "execute_command", command=command, timeout=30
+                    )
+                    self.logger.info(f"NL意图检测: 执行命令 {command}")
+                    output = result.get("stdout", "")[:1000]
+                    error = result.get("stderr", "")[:500]
+                    ret = result.get("returncode", -1)
+                    resp = f"执行结果 (返回码 {ret}):\n"
+                    if output:
+                        resp += f"输出:\n{output}\n"
+                    if error:
+                        resp += f"错误:\n{error}\n"
+                    return resp
+                except PermissionError as e:
+                    return f"⚠️ {e}"
+                except Exception as e:
+                    return f"命令执行失败: {e}"
         return ""
 
     def _extract_facts_from_conversation(self, user_input: str, response: str):
@@ -736,6 +886,23 @@ class JARVIS:
         except Exception:
             pass
 
+    def _save_feedback(self, user_input: str, assistant_content: str, rating: str):
+        """保存用户反馈到记忆库（供 Web 入口调用或后续扩展）"""
+        import time as _time
+        if not self.memory_engine:
+            return
+        metadata = {
+            "type": "feedback",
+            "rating": rating,
+            "user_input": user_input[:500],
+            "assistant_content": assistant_content[:500],
+            "has_reasoning": bool(getattr(self, '_last_reasoning', '')),
+            "response_length": len(assistant_content),
+            "intent_type": self._classify_intent(user_input).get("type", "unknown"),
+            "timestamp": _time.time()
+        }
+        content = f"用户反馈:{rating}|{user_input[:80]}→{assistant_content[:80]}"
+        self.memory_engine.store.add_memory(content, metadata)
 
     def _retrieve_memory_context(self, query: str) -> str:
         """检索相关记忆作为LLM上下文，含用户画像和项目知识"""
@@ -746,6 +913,22 @@ class JARVIS:
         # 1. 用户画像（始终包含）
         if hasattr(self, '_user_profile') and self._user_profile:
             parts.append("【关于用户】\n" + self._user_profile)
+
+        # 1b. 已授权的外部路径（始终包含）
+        try:
+            from tools.file_permissions import get_permission_manager
+            pm = get_permission_manager()
+            perms = pm.list_permissions()
+            ext_perms = [p for p in perms if not p.get("under_project")]
+            if ext_perms:
+                lines = ["【已授权的外部文件/目录】"]
+                for p in ext_perms:
+                    mode_label = "读写" if p["mode"] == "read_write" else "只读" if p["mode"] == "read" else "写入"
+                    lines.append(f"  - {p['path']} ({mode_label}，{'永久' if p['type'] == 'permanent' else '临时'})")
+                lines.append("提示：授权目录后，其下所有文件/子目录自动获得读写权限。")
+                parts.append("\n".join(lines))
+        except Exception:
+            pass
 
         # 2. 当前查询相关的记忆（对话 + 事实）
         try:
@@ -1321,7 +1504,8 @@ class JARVIS:
                     "- 搜索文件内容 → [[ACTION:FILE_GREP|pattern=关键词|include=.py]]\n"
                     "- 按文件名模式搜索 → [[ACTION:FILE_GLOB|pattern=**/*.py]]\n"
                     "- 删除文件 → [[ACTION:FILE_DELETE|path=文件路径]]\n"
-                    "- 授权外部文件访问 → [[ACTION:FILE_AUTHORIZE|path=路径|mode=read|type=temporary]]\n"
+                    "- 授权外部文件/目录访问 → [[ACTION:FILE_AUTHORIZE|path=路径|mode=read|type=temporary]]\n"
+                    "  ⚠️ 授权目录后，其下所有文件自动获得读写权限（无需逐个授权）\n"
                     "- 查看已授权路径 → [[ACTION:FILE_AUTH_LIST]]\n"
                     "\n"
                     "写入文件时：把完整内容放在 content= 中，回复只需写操作标记和简短确认。\n"
@@ -1329,6 +1513,7 @@ class JARVIS:
                     "\n"
                     "文件操作默认只能在当前项目目录内。如需访问外部文件，\n"
                     "必须先通过 FILE_AUTHORIZE 授权。\n"
+                    "  💡 授权目录后，其下所有文件将自动获得读写权限（继承机制）\n"
                     "\n"
                     "## 项目知识库\n"
                     "- 用户要求了解/扫描当前项目 → [[ACTION:SCAN_PROJECT]]\n"
@@ -1338,7 +1523,10 @@ class JARVIS:
                     "- 搜索 → [[ACTION:SEARCH_WEB|query=搜索关键词]]\n"
                     "当用户问天气、新闻、实时信息、你不知道的内容时，\n"
                     "必须搜索后回答，不要说自己不知道或无法获取。\n"
-                    "如果不需要执行操作，不要加任何标记。操作标记放在回答末尾。"
+                    "如果不需要执行操作，不要加任何标记。操作标记放在回答末尾。\n"
+                    "## 系统命令（仅在用户明确要求时使用）\n"
+                    "- 执行命令 → [[ACTION:EXEC_CMD|command=要执行的命令|timeout=30]]\n"
+                    "只能执行安全命令（ls/cat/pwd/git status等），不要执行危险命令。"
                 )
 
                 if memory_context:
@@ -1475,10 +1663,66 @@ class JARVIS:
                 }
             }
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "execute_command",
+                "description": "在终端执行系统命令（仅限安全命令：ls/cat/pwd/git等；禁止rm/sudo/mkfs等危险操作）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "description": "要执行的命令"},
+                        "timeout": {"type": "integer", "description": "超时秒数，默认30", "default": 30}
+                    },
+                    "required": ["command"]
+                }
+            }
+        },
     ]
+
+    def _report_progress(self, icon: str, message: str):
+        """发送进度消息到前端（如果设置了回调）"""
+        import logging
+        logger = logging.getLogger("jarvis")
+        if self._progress_callback:
+            try:
+                full_msg = f"{icon} {message}"
+                logger.info(f"➡️ {full_msg[:120]}")
+                self._progress_callback(full_msg)
+            except Exception as e:
+                logger.warning(f"进度回调失败: {e}")
+        else:
+            logger.warning(f"进度无回调: {icon} {message[:60]}")
+
+    def _format_tool_progress(self, tool_name: str, args: dict) -> str:
+        """将工具调用格式化为人类可读的进度信息"""
+        formats = {
+            "read_file": ("📖", "读取文件 {path}"),
+            "write_file": ("✏️", "写入文件 {path}"),
+            "edit_file": ("🔧", "编辑文件 {path}"),
+            "delete_file": ("🗑️", "删除文件 {path}"),
+            "search_web": ("🔍", "搜索: {query}"),
+            "glob_files": ("🔎", "搜索文件: {pattern}"),
+            "execute_command": ("💻", "执行命令: {command}"),
+            "save_user_fact": ("🧠", "记住用户信息: {category}={value}"),
+            "get_project_info": ("📋", "获取项目信息"),
+        }
+        if tool_name in formats:
+            icon, tmpl = formats[tool_name]
+            try:
+                msg = tmpl.format(**args)
+            except KeyError:
+                msg = tmpl
+            return f"{icon} {msg}"
+        return f"🔧 执行: {tool_name}"
 
     def _execute_tool_call(self, tool_name: str, args: dict) -> str:
         """执行 Tool Calling 返回的工具调用"""
+        self._tool_call_count += 1
+        step_tag = f"[Step {self._tool_call_count}]"
+        progress_msg = f"{step_tag} {self._format_tool_progress(tool_name, args)}"
+        self._report_progress("⏳", progress_msg)
+
         name_map = {
             "read_file": ("read_file", {"path": "path"}),
             "write_file": ("write_file", {"path": "path", "content": "content"}),
@@ -1486,6 +1730,7 @@ class JARVIS:
             "delete_file": ("delete_file", {"path": "path"}),
             "search_web": ("search_web", {"query": "query"}),
             "glob_files": ("glob_files", {"pattern": "pattern"}),
+            "execute_command": ("execute_command", {"command": "command", "timeout": "timeout"}),
         }
 
         if tool_name == "save_user_fact":
@@ -1494,7 +1739,9 @@ class JARVIS:
             if val and self.memory_engine:
                 self.memory_engine.add_fact_memory(f"用户{cat}: {val}", importance=0.85)
                 self._update_user_profile()
-                return f"已保存: {cat}={val}"
+                msg = f"已保存: {cat}={val}"
+                self._report_progress("✅", f"记住用户{cat}: {val}")
+                return msg
             return "保存失败"
 
         if tool_name == "get_project_info":
@@ -1507,13 +1754,28 @@ class JARVIS:
             kwargs = {k: args.get(v, "") for k, v in param_map.items()}
             try:
                 result = self.tool_manager.execute_tool(tool_id, **kwargs)
-                return str(result)
+                result_str = str(result)
+                # 对特定工具推送结果摘要
+                if tool_name == "read_file" and len(result_str) > 20:
+                    snippet = result_str[:300]
+                    self._report_progress("📄", f"文件内容:\n{snippet}")
+                elif tool_name == "search_web" and len(result_str) > 20:
+                    self._report_progress("🔍", f"搜索结果:\n{result_str[:300]}")
+                elif tool_name == "execute_command":
+                    lines = result_str.split('\\n')[:6]
+                    self._report_progress("💻", f"命令输出:\n" + "\\n".join(lines))
+                else:
+                    self._report_progress("✅", f"执行完成: {tool_name}")
+                return result_str
             except Exception as e:
+                self._report_progress("❌", f"执行失败: {tool_name} - {e}")
                 return f"执行失败: {e}"
 
         return f"未知工具: {tool_name}"
 
-    def _tool_response(self, input_text: str, memory_context: str = "") -> str:
+    def _tool_response(self, input_text: str, memory_context: str = "",
+                       stream_callback: callable = None,
+                       plan_callback: callable = None) -> str:
         """使用 Function Calling 的响应（DeepSeek 在线模式）"""
         if not self.brain_engine or not self.brain_engine.model_adapter:
             return self._simple_response(input_text, memory_context)
@@ -1525,6 +1787,17 @@ class JARVIS:
             "- 用户提到个人信息（姓名/职业/手机号/偏好）→ 调用 save_user_fact\n"
             "- 用户要求搜索/查新闻/查天气/你不知道的信息 → 调用 search_web\n"
             "- 文件操作优先用文件工具（read_file / write_file / edit_file / delete_file）\n"
+            "\n"
+            "## 工作流程（重要）\n"
+            "当用户要求修改代码、调研项目、或需要多步骤操作时：\n"
+            "1. 先输出计划：列出你要做的步骤，例如 \"📋 计划：1) 读取 XX 2) 分析 XX 3) 修改 XX\"\n"
+            "2. 每完成一步，在回复中标注 ✅ 并附上结果概要\n"
+            "3. 全部完成后给出总结：\n"
+            "   - 修改/读取了哪些文件\n"
+            "   - 修改了什么内容（简要说明）\n"
+            "   - 如何验证结果\n"
+            "   - **不要只说\"已完成\"**，必须给出有信息量的总结\n"
+            "如果是简单问题（如打招呼、问时间），直接回答即可，不需要规划。\n"
         )
         if memory_context:
             system_prompt += (
@@ -1545,7 +1818,9 @@ class JARVIS:
             result = self.brain_engine.chat_with_tools(
                 messages, self.TOOL_DEFS,
                 tool_executor=self._execute_tool_call,
-                max_rounds=5000
+                max_rounds=5000,
+                stream_callback=stream_callback,
+                plan_callback=plan_callback,
             )
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""

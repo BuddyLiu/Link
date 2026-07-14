@@ -494,6 +494,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #chat-box::-webkit-scrollbar{width:4px}
 #chat-box::-webkit-scrollbar-track{background:transparent}
 #chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+/* Floating scroll buttons */
+#scroll-nav{position:fixed;right:max(8px,calc(50% - 500px));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;z-index:100}
+#scroll-nav button{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(13,13,20,.8);color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;backdrop-filter:blur(4px)}
+#scroll-nav button:hover{transform:scale(1.2);border-color:rgba(255,255,255,.6);color:#fff;background:rgba(13,13,20,.95)}
+#scroll-nav button.scroll-hidden{opacity:0;pointer-events:none}
 .msg{margin-bottom:20px;display:flex;flex-direction:column;max-width:85%}
 .msg.user{align-self:flex-end;align-items:flex-end}
 .msg.assistant{align-self:flex-start;align-items:flex-start}
@@ -586,6 +591,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </details>
 </div>
 <div id="chat-box"></div>
+<div id="scroll-nav">
+<button id="scroll-top" onclick="scrollToTop()" title="&#x21E7; 顶部" class="scroll-hidden">&#x2191;</button>
+<button id="scroll-up" onclick="scrollUpScreen()" title="&#x25B2; 上一屏">&#x25B2;</button>
+<button id="scroll-down" onclick="scrollDownScreen()" title="&#x25BC; 下一屏">&#x25BC;</button>
+<button id="scroll-bottom" onclick="scrollToBottomBtn()" title="&#x21E9; 底部" class="scroll-hidden">&#x2193;</button>
+</div>
 <div class="input-area">
 <div style="width:100%;max-width:820px;display:flex;gap:8px;margin:0 auto">
 <input id="input" placeholder="输入消息..." autofocus>
@@ -704,7 +715,7 @@ async function loadHistory(page) {
     historyPage = page;
 
     // 首次加载滚到底部；翻页不滚动
-    if (page === 1) chatBox.scrollTop = chatBox.scrollHeight;
+    if (page === 1) { chatBox.scrollTop = chatBox.scrollHeight; setTimeout(updateScrollButtons, 100); }
   } catch(e) { console.error('History load failed:', e); }
   historyLoading = false;
 }
@@ -760,6 +771,26 @@ function isNearBottom() {
 function scrollToBottom() {
   if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
 }
+function scrollToTop() {
+  chatBox.scrollTop = 0;
+}
+function scrollUpScreen() {
+  chatBox.scrollTop -= chatBox.clientHeight * 0.85;
+}
+function scrollDownScreen() {
+  chatBox.scrollTop += chatBox.clientHeight * 0.85;
+}
+function scrollToBottomBtn() {
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+function updateScrollButtons() {
+  var st = document.getElementById('scroll-top');
+  var sb = document.getElementById('scroll-bottom');
+  if (st) st.classList.toggle('scroll-hidden', chatBox.scrollTop <= 10);
+  if (sb) sb.classList.toggle('scroll-hidden', chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight <= 20);
+}
+chatBox.addEventListener('scroll', updateScrollButtons);
+setTimeout(updateScrollButtons, 500);
 
 async function copyText(text, btn) {
   try {
@@ -806,12 +837,12 @@ function renderMarkdown(text) {
     // Blockquote
     .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
         // Table
-    .replace(/^(\|.+\|)\n\|[-:\s|]+\|\n((?:\|.+\|\n?)*)/gm, function(m, hdr, bdy) {
+    .replace(/^(\\|.+\\|)\\n\\|[-:\\s|]+\\|\\n((?:\\|.+\\|\\n?)*)/gm, function(m, hdr, bdy) {
       function cl(r){ var a=[]; r.split('|').forEach(function(x,i){ if((i%2==1||i>0)&&x.trim()){a.push(x.trim());} }); return a; }
       var h = '<table><thead><tr>';
       cl(hdr).forEach(function(c){ h += '<th>' + c + '</th>'; });
       h += '</tr></thead><tbody>';
-      bdy.trim().split('\n').forEach(function(r){
+      bdy.trim().split('\\n').forEach(function(r){
         h += '<tr>';
         cl(r).forEach(function(c){ h += '<td>' + c + '</td>'; });
         h += '</tr>';

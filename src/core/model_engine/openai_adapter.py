@@ -59,25 +59,28 @@ class OpenAIAdapter(ModelAdapter):
                         messages: List[Dict[str, str]],
                         temperature: float = 0.7,
                         max_tokens: int = 1024,
+                        stream_callback: callable = None,
                         **kwargs) -> ModelResponse:
         """
-        使用OpenAI API进行聊天完成
-        
+        使用OpenAI API进行聊天完成（支持流式回调）。
+
         Args:
             messages: 消息列表
             temperature: 温度参数
             max_tokens: 最大生成token数
+            stream_callback: 流式回调，接收 (chunk_type, text)
+                            chunk_type: "reasoning" / "content"
             **kwargs: 其他参数
-            
+
         Returns:
             模型响应
         """
         if not self._initialized:
             if not self.initialize():
                 raise RuntimeError("OpenAI适配器未正确初始化")
-        
+
         self._log("debug", f"发送聊天请求到OpenAI，模型: {self.model_name}")
-        
+
         # 准备请求数据
         request_data = {
             "model": self.model_name,
@@ -85,8 +88,7 @@ class OpenAIAdapter(ModelAdapter):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        
-        # 添加其他参数
+
         if kwargs.get("tools"):
             request_data["tools"] = kwargs["tools"]
             request_data["tool_choice"] = kwargs.get("tool_choice", "auto")
@@ -96,44 +98,83 @@ class OpenAIAdapter(ModelAdapter):
             request_data["frequency_penalty"] = kwargs["frequency_penalty"]
         if kwargs.get("presence_penalty"):
             request_data["presence_penalty"] = kwargs["presence_penalty"]
-        
+
         try:
             start_time = time.time()
-            
-            # 导入openai库
             import openai
-            
-            # 配置客户端
+
             client = openai.OpenAI(
                 api_key=self.api_key,
                 base_url=self.api_base,
                 timeout=self.timeout
             )
-            
-            # 发送请求
-            response = client.chat.completions.create(**request_data)
-            
-            # 解析响应
-            choice = response.choices[0]
-            response_text = choice.message.content or ""
-            tool_calls = []
-            if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
-                for tc in choice.message.tool_calls:
-                    tool_calls.append({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        }
-                    })
 
-            # 提取思考内容（DeepSeek reasoning_content）
-            reasoning = ""
-            if hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
-                reasoning = choice.message.reasoning_content
+            use_stream = stream_callback is not None
 
-            # 构建响应对象
+            if use_stream:
+                request_data["stream"] = True
+                request_data["stream_options"] = {"include_usage": True}
+                response = client.chat.completions.create(**request_data)
+
+                reasoning_buf = ""
+                content_buf = ""
+                tool_calls_buf = {}
+                finish_reason = "stop"
+
+                for chunk in response:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if not delta:
+                        continue
+
+                    if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                        reasoning_buf += delta.reasoning_content
+                        stream_callback("reasoning", delta.reasoning_content)
+
+                    if delta.content:
+                        content_buf += delta.content
+                        stream_callback("content", delta.content)
+
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_buf:
+                                tool_calls_buf[idx] = {
+                                    "id": tc.id or "",
+                                    "type": "function",
+                                    "function": {"name": tc.function.name or "", "arguments": tc.function.arguments or ""}
+                                }
+                            else:
+                                if tc.function and tc.function.name:
+                                    tool_calls_buf[idx]["function"]["name"] += tc.function.name
+                                if tc.function and tc.function.arguments:
+                                    tool_calls_buf[idx]["function"]["arguments"] += tc.function.arguments
+
+                    if chunk.choices and chunk.choices[0].finish_reason:
+                        finish_reason = chunk.choices[0].finish_reason
+
+                reasoning = reasoning_buf
+                response_text = content_buf
+                tool_calls = list(tool_calls_buf.values()) if tool_calls_buf else []
+                total_tokens = chunk.usage.total_tokens if hasattr(chunk, 'usage') and chunk.usage else 0
+
+            else:
+                request_data["stream"] = False
+                response = client.chat.completions.create(**request_data)
+                choice = response.choices[0]
+                response_text = choice.message.content or ""
+                tool_calls = []
+                if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
+                    for tc in choice.message.tool_calls:
+                        tool_calls.append({
+                            "id": tc.id, "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                        })
+                reasoning = ""
+                if hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
+                    reasoning = choice.message.reasoning_content
+                finish_reason = choice.finish_reason or "stop"
+                total_tokens = response.usage.total_tokens if response.usage else 0
+
             extra_meta = {}
             if reasoning:
                 extra_meta["reasoning"] = reasoning
@@ -142,18 +183,14 @@ class OpenAIAdapter(ModelAdapter):
             result = ModelResponse(
                 text=response_text,
                 model=self.model_name,
-                tokens_used=response.usage.total_tokens if response.usage else 0,
-                finish_reason=choice.finish_reason or "stop",
-                metadata={
-                    "response_time": time.time() - start_time,
-                    **extra_meta,
-                    "raw_response": response.to_dict() if hasattr(response, 'to_dict') else str(response)
-                }
+                tokens_used=total_tokens,
+                finish_reason=finish_reason,
+                metadata={"response_time": time.time() - start_time, **extra_meta}
             )
-            
+
             self._log("debug", f"OpenAI响应完成，使用{result.tokens_used}个token，耗时{result.metadata['response_time']:.2f}秒")
             return result
-            
+
         except ImportError:
             error_msg = "未安装openai库，请运行: pip install openai"
             self._log("error", error_msg)

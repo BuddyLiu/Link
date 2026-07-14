@@ -43,7 +43,13 @@ class Tool(ABC):
                         if not isinstance(value, str):
                             kwargs[param_name] = str(value)
                     elif expected_type == "integer":
-                        kwargs[param_name] = int(value)
+                        if value == "" or value is None:
+                            if "default" in param_info:
+                                kwargs[param_name] = param_info["default"]
+                            else:
+                                raise ValueError("空值且无默认值")
+                        else:
+                            kwargs[param_name] = int(value)
                     elif expected_type == "number":
                         kwargs[param_name] = float(value)
                     elif expected_type == "boolean":

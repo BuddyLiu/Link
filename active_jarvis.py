@@ -339,8 +339,13 @@ class ReminderEventHandler(EventHandler):
 class SystemEventHandler(EventHandler):
     """系统事件处理器"""
     
-    def __init__(self):
+    def __init__(self, jarvis_ref=None):
+        """
+        Args:
+            jarvis_ref: 父级ActiveJARVIS实例引用，用于执行真正的重启/关闭
+        """
         super().__init__("system_handler")
+        self.jarvis_ref = jarvis_ref
     
     def can_handle(self, event: Event) -> bool:
         return event.event_type == EventType.SYSTEM
@@ -350,13 +355,82 @@ class SystemEventHandler(EventHandler):
         action = data.get("action", "")
         
         if action == "shutdown":
-            return "🔌 系统关闭请求"
+            return self._handle_shutdown()
         elif action == "restart":
-            return "🔄 系统重启请求"
+            return self._handle_restart()
         elif action == "status":
-            return "📊 系统状态检查"
+            return self._handle_status()
         
         return f"未知系统操作: {action}"
+    
+    def _handle_shutdown(self) -> str:
+        """执行真正的关闭操作"""
+        if self.jarvis_ref and hasattr(self.jarvis_ref, 'is_running') and self.jarvis_ref.is_running:
+            print("🔌 执行系统关闭...")
+            self.jarvis_ref.is_running = False
+            return "🔌 系统已关闭"
+        return "🔌 系统关闭请求（JARVIS未运行）"
+    
+    def _handle_restart(self) -> str:
+        """执行真正的重启操作：停止事件循环 → 重新初始化组件 → 重启"""
+        if not self.jarvis_ref:
+            return "🔄 系统重启请求（无JARVIS引用，无法执行）"
+        
+        try:
+            print("🔄 开始执行JARVIS重启...")
+            
+            # 1. 停止当前事件循环
+            if self.jarvis_ref.is_running:
+                self.jarvis_ref.is_running = False
+                if self.jarvis_ref.event_thread:
+                    self.jarvis_ref.event_thread.join(timeout=3)
+                print("  ✅ 事件循环已停止")
+            
+            # 2. 清空事件队列
+            while not self.jarvis_ref.event_queue.empty():
+                try:
+                    self.jarvis_ref.event_queue.get_nowait()
+                except:
+                    break
+            print("  ✅ 事件队列已清空")
+            
+            # 3. 重置统计
+            self.jarvis_ref.stats = {
+                "events_processed": 0,
+                "events_dropped": 0,
+                "start_time": None,
+                "last_event_time": None
+            }
+            
+            # 4. 重新初始化组件
+            self.jarvis_ref._initialize_components()
+            print("  ✅ 组件已重新初始化")
+            
+            # 5. 重新启动事件循环
+            self.jarvis_ref.start(blocking=False)
+            
+            print("  ✅ 事件循环已重新启动")
+            return "🔄 JARVIS重启完成！所有组件已重新初始化。"
+            
+        except Exception as e:
+            return f"❌ 重启失败: {e}"
+    
+    def _handle_status(self) -> str:
+        """获取系统状态"""
+        if not self.jarvis_ref:
+            return "📊 系统状态检查（无JARVIS引用）"
+        
+        stats = self.jarvis_ref.get_stats()
+        lines = [
+            "📊 JARVIS系统状态:",
+            f"  运行中: {'✅' if stats.get('is_running') else '❌'}",
+            f"  运行时长: {stats.get('uptime_seconds', 0):.1f}秒",
+            f"  处理事件: {stats.get('events_processed', 0)}个",
+            f"  事件队列: {stats.get('event_queue_size', 0)}个",
+            f"  事件源: {stats.get('event_sources_count', 0)}个",
+            f"  事件处理器: {stats.get('event_handlers_count', 0)}个",
+        ]
+        return "\n".join(lines)
 
 
 class ActiveJARVIS:
@@ -419,10 +493,10 @@ class ActiveJARVIS:
                 self.legacy_jarvis.planning_engine
             )
         
-        # 初始化事件处理器
+        # 初始化事件处理器（传入 self 引用以支持重启/关闭操作）
         self.event_handlers["task"] = TaskEventHandler(self.legacy_jarvis)
         self.event_handlers["reminder"] = ReminderEventHandler()
-        self.event_handlers["system"] = SystemEventHandler()
+        self.event_handlers["system"] = SystemEventHandler(jarvis_ref=self)
         
         # 设置周期性任务
         if self.config["enable_periodic_tasks"]:
@@ -651,6 +725,7 @@ class ActiveJARVIS:
         print("输入 '退出' 或 'exit' 返回")
         print("输入 '状态' 或 'status' 查看运行状态")
         print("输入 '停止' 或 'stop' 停止主动模式")
+        print("输入 '重启' 或 'restart' 重启JARVIS")
         print("="*60 + "\n")
         
         # 确保主动模式已启动
@@ -681,6 +756,21 @@ class ActiveJARVIS:
                     self.stop()
                     print("主动运行模式已停止")
                     break
+                
+                elif user_input.lower() in ["重启", "restart"]:
+                    restart_event = Event(
+                        event_type=EventType.SYSTEM,
+                        data={"action": "restart"},
+                        priority=EventPriority.CRITICAL,
+                        source="user_cli"
+                    )
+                    handler = self._find_handler(restart_event)
+                    if handler:
+                        result = handler.handle(restart_event)
+                        print(result)
+                    else:
+                        print("❌ 未找到系统事件处理器，无法重启")
+                    continue
                 
                 # 处理用户输入
                 if self.add_user_input(user_input):

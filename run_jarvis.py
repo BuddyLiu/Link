@@ -197,7 +197,7 @@ def run_direct_active(args) -> int:
 
 def run_web_mode(args) -> int:
     """
-    运行Web服务模式
+    运行Web服务模式（启动 web_active_jarvis 前后端一体服务）
 
     Args:
         args: 命令行参数
@@ -206,29 +206,56 @@ def run_web_mode(args) -> int:
         退出码
     """
     try:
+        # 修复路径
+        import os, sys, subprocess
+        _this_dir = os.path.dirname(os.path.abspath(__file__))
+        _src_dir = os.path.join(_this_dir, "src")
+        if _src_dir not in sys.path:
+            sys.path.insert(0, _src_dir)
+        if _this_dir not in sys.path:
+            sys.path.insert(0, _this_dir)
+
+        # 自动停掉旧服务
+        port = args.port
+        try:
+            old_pid = subprocess.check_output(
+                ["lsof", "-ti", f":{port}"], stderr=subprocess.DEVNULL
+            ).decode().strip().split("\n")
+            for pid in old_pid:
+                pid = pid.strip()
+                if pid:
+                    print(f"🔄 停止旧服务 (PID: {pid})...")
+                    os.kill(int(pid), 9)
+                    import time
+                    time.sleep(1)
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+            pass
+
         print("🌐 启动Web服务模式...")
         print(f"💡 服务地址: http://{args.host}:{args.port}")
 
-        # 尝试导入main.py
-        from main import main as main_func
+        from web_active_jarvis import WebActiveJARVIS
 
-        original_argv = sys.argv.copy()
-        sys.argv = [sys.argv[0], "--mode", "web", "--host", args.host, "--port", str(args.port)]
-        if args.debug:
-            sys.argv.append("--debug")
+        config = {"web_host": args.host, "web_port": args.port}
+        web_jarvis = WebActiveJARVIS(config)
 
-        try:
-            result = main_func()
-            return result
-        finally:
-            sys.argv = original_argv
+        global _active_jarvis_instance
+        _active_jarvis_instance = web_jarvis
+        web_jarvis.start(blocking=False)
+        web_jarvis.run_web()
+
+        web_jarvis.stop()
+        _active_jarvis_instance = None
+        return 0
 
     except ImportError as e:
         print(f"❌ 无法导入Web主程序: {e}")
-        print("💡 Web服务模式需要main.py支持")
+        print("💡 Web服务模式需要 web_active_jarvis.py")
         return 1
     except Exception as e:
         print(f"❌ Web模式运行失败: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
@@ -366,7 +393,7 @@ JARVIS智能体统一启动器
 常用选项:
   --debug              启用调试模式
   --host HOST          Web服务主机地址（默认: 127.0.0.1）
-  --port PORT          Web服务端口（默认: 8030）
+  --port PORT          Web服务端口（默认: 8011）
   --active-config FILE 主动模式配置文件路径
   --help              显示此帮助信息
 
@@ -435,8 +462,8 @@ def parse_arguments():
     parser.add_argument(
         "--port",
         type=int,
-        default=8030,
-        help="Web服务端口"
+        default=8011,
+        help="Web服务端口（默认8011）"
     )
     parser.add_argument(
         "--active-config",

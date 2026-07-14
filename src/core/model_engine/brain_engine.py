@@ -481,9 +481,11 @@ class BrainEngine:
 
     def chat_with_tools(self, messages: list, tools: list,
                         tool_executor: callable = None,
-                        max_rounds: int = 50) -> dict:
+                        max_rounds: int = 50,
+                        stream_callback: callable = None,
+                        plan_callback: callable = None) -> dict:
         """
-        带工具调用的对话接口（支持 Function Calling 循环）。
+        带工具调用的对话接口（支持 Function Calling 循环 + 流式推理）。
 
         流程：发送消息+工具定义 → DeepSeek 可能返回 tool_calls →
         执行工具 → 结果发回 → DeepSeek 继续 → 直到返回纯文本。
@@ -493,6 +495,8 @@ class BrainEngine:
             tools: 工具定义列表（OpenAI Function Calling 格式）
             tool_executor: 工具执行回调，接收 (tool_name, args_dict) 返回结果字符串
             max_rounds: 最大工具调用轮数
+            stream_callback: 流式回调，接收 (chunk_type, text)，用于实时展示思考过程
+            plan_callback: 计划回调，接收 (plan_text)，首次返回计划时触发
 
         Returns:
             最终回复文本
@@ -501,11 +505,15 @@ class BrainEngine:
             return "模型适配器未初始化"
 
         for round_num in range(max_rounds):
+            self._log("info", f"LLM 调用轮次 #{round_num + 1}, 消息数: {len(messages)}")
             try:
+                # 仅在最后一轮或首次时启用流式回调（工具调用中间轮不发流）
+                use_stream = stream_callback and (round_num == 0 or tool_executor is None)
                 resp = self.model_adapter.chat_completion(
                     messages, temperature=0.7,
                     max_tokens=self.config.get("default_max_tokens", 4096),
-                    tools=tools,  # 每轮都传，否则 DeepSeek 会退化为文本生成
+                    tools=tools,
+                    stream_callback=stream_callback if use_stream else None,
                 )
 
                 text = resp.text or ""
@@ -513,36 +521,106 @@ class BrainEngine:
                 tool_calls = resp.metadata.get("tool_calls", [])
                 is_tool_call = resp.finish_reason == "tool_calls" or bool(tool_calls)
 
+                if reasoning:
+                    self._log("debug", f"  → 推理: {reasoning[:100]}...")
+                if text:
+                    self._log("debug", f"  → 文本: {text[:80]}...")
+
                 if not is_tool_call:
+                    self._log("info", f"  → 纯文本回复 (长度 {len(text)})")
                     return {"text": text, "reasoning": reasoning}  # 纯文本回复，完成
 
+                # 首次返回计划（DeepSeek 在 tool_calls 前通常会描述计划）
+                if round_num == 0 and plan_callback and text:
+                    plan_callback(text)
+
                 # 有工具调用 → 执行并追加结果
-                messages.append({
+
+                # 去重：合并相同工具+相同参数的调用
+                seen = set()
+                unique_tool_calls = []
+                for tc in tool_calls:
+                    key = f"{tc['function']['name']}({tc['function']['arguments'][:100]})"
+                    if key not in seen:
+                        seen.add(key)
+                        unique_tool_calls.append(tc)
+                if len(unique_tool_calls) < len(tool_calls):
+                    self._log("info", f"  去重: {len(tool_calls)}→{len(unique_tool_calls)} 个工具调用")
+                    tool_calls = unique_tool_calls
+
+                # DeepSeek 要求：多轮工具调用必须传回 reasoning_content
+                asst_msg = {
                     "role": "assistant",
                     "content": text if text else None,
-                    "tool_calls": tool_calls,
-                })
+                }
+                if tool_calls:
+                    asst_msg["tool_calls"] = tool_calls
+                if reasoning:
+                    asst_msg["reasoning_content"] = reasoning
+                messages.append(asst_msg)
 
-                # 检测重复工具调用（相同工具+相同参数 -> 强制退出）
-                call_signatures = [
+                # 检测重复工具调用（跨轮次比较）
+                self._last_tool_sigs = getattr(self, '_last_tool_sigs', [])
+                current_sigs = sorted([
                     f"{tc['function']['name']}({tc['function']['arguments'][:50]})"
                     for tc in tool_calls
-                ]
-                if len(call_signatures) >= 4:
-                    last_four = call_signatures[-4:]
-                    if len(set(last_four)) == 1:  # 连续 4 次完全相同的调用
-                        self._log("warning", "检测到工具调用循环，强制退出")
-                        return {"text": "已完成。", "reasoning": ""}
+                ])
+                if self._last_tool_sigs and current_sigs == self._last_tool_sigs:
+                    self._log("warning", "检测到工具调用循环（连续两轮相同），强制退出")
+                    sig_detail = current_sigs[0][:100] if current_sigs else ""
+                    last_text = ""
+                    if len(messages) >= 2 and messages[-2].get("role") == "assistant":
+                        last_text = (messages[-2].get("content") or "")[:500]
+                    if last_text:
+                        return {"text": f"{last_text}\n\n[检测到工具调用循环，已中断]", "reasoning": ""}
+                    # 按工具类型汇总输出
+                    op_counts = {}
+                    file_ops = []
+                    for mi in range(len(messages)):
+                        if messages[mi].get("role") == "tool" and messages[mi].get("content"):
+                            c = str(messages[mi]["content"])
+                            if c.startswith("找到"):
+                                name = c.split(chr(10))[0][:50] if chr(10) in c else c[:50]
+                                op_counts["搜索"] = op_counts.get("搜索", 0) + 1
+                                file_ops.append(f"  • {name}")
+                            elif c.startswith("已写入"):
+                                op_counts["写入"] = op_counts.get("写入", 0) + 1
+                                file_ops.append(f"  • {c[:70]}")
+                            elif c.startswith("已保存"):
+                                op_counts["记忆"] = op_counts.get("记忆", 0) + 1
+                            elif c.startswith("错误") or c.startswith("执行失败"):
+                                op_counts["失败"] = op_counts.get("失败", 0) + 1
+                            elif c.startswith("{") or c.startswith("命令"):
+                                op_counts["命令"] = op_counts.get("命令", 0) + 1
+                                so_idx = c.find("'stdout': '")
+                                if so_idx >= 0:
+                                    snippet = c[so_idx+11:so_idx+70]
+                                    file_ops.append(f"  • 命令: {snippet}")
+                            else:
+                                op_counts["读取"] = op_counts.get("读取", 0) + 1
+                    if op_counts:
+                        counts = " | ".join([f"{k}×{v}" for k, v in sorted(op_counts.items())])
+                        lines = [f"已完成: {counts}"]
+                        lines.extend(file_ops[:10])
+                        if len(file_ops) > 10:
+                            lines.append(f"  ... 还有 {len(file_ops) - 10} 项")
+                        return {"text": chr(10).join(lines), "reasoning": ""}
+                    return {"text": f"遇到工具调用异常，已中断。\n重复调用的工具: {sig_detail}\n\n建议：确认文件路径是否正确，或换个方式描述需求。", "reasoning": ""}
+                self._last_tool_sigs = current_sigs
 
                 for tc in tool_calls:
                     func_name = tc["function"]["name"]
                     try:
                         args = json.loads(tc["function"]["arguments"])
+                        args_str = {k: (str(v)[:80] + "..." if len(str(v)) > 80 else str(v)) for k, v in args.items()}
+                        self._log("info", f"  → 工具调用: {func_name}({args_str})")
                         if tool_executor:
                             result = tool_executor(func_name, args)
+                            self._log("info", f"  → 工具结果 ({func_name}): {str(result)[:120]}")
                         else:
                             result = f"未知工具: {func_name}"
                     except Exception as e:
+                        self._log("error", f"  → 工具执行异常: {e}")
                         result = f"执行出错: {e}"
 
                     messages.append({

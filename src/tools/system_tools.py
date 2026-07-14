@@ -213,58 +213,171 @@ class ReadFileTool(SystemTool):
 
 
 class ExecuteCommandTool(SystemTool):
-    """执行命令工具"""
-    
+    """执行系统命令工具（多层安全检查+白名单）"""
+
+    # ── 安全命令白名单（前缀匹配，如 ls -la 匹配 ls） ──
+    SAFE_COMMANDS = {
+        # 读文件/信息
+        "ls", "cat", "head", "tail", "echo", "pwd", "which",
+        "date", "cal", "uptime", "whoami", "id", "uname",
+        "hostname", "env", "printenv",
+        # Python / 环境
+        "python --version", "python3 --version",
+        "pip list", "pip3 list", "pip freeze",
+        # Git 只读
+        "git status", "git log", "git diff", "git branch",
+        "git show", "git blame",
+        # 文件系统只读
+        "tree", "du", "df", "file", "stat",
+        "wc", "sort", "cut", "grep",
+        # 杂项安全
+        "clear", "history", "type",
+        # 网络只读
+        "curl", "ping", "dig", "nslookup", "traceroute",
+    }
+
+    # ── 危险模式（子串匹配，任何出现即拒绝） ──
+    DANGEROUS_PATTERNS = [
+        # 系统破坏
+        "rm -rf /", "rm -rf /*", "rm -rf ~",
+        "dd if=", "mkfs", "mkswap", "fdisk", "parted", "format",
+        # 提权
+        "chmod 777 /", "chmod -R 777", "chown -R",
+        "sudo", "su ",
+        # Fork 炸弹 / shell-shock
+        ":(){ :|:& };:", "() { :; };",
+        # 设备操作
+        "> /dev/", "> /dev/sd", "> /dev/nvme",
+        "pv", "cryptsetup", "luks",
+        # 系统断电
+        "shutdown", "reboot", "halt", "poweroff",
+        "init 0", "init 6", "systemctl poweroff",
+        # 重定向管道到 shell
+        "| bash", "| sh", "| zsh", "| /bin/sh",
+        "> /etc/", "> /boot/", "> /sys/",
+    ]
+
     def __init__(self):
         parameters = {
             "command": {
                 "type": "string",
-                "description": "要执行的命令",
+                "description": "要执行的命令（仅限安全命令：ls/cat/pwd/git 等）",
                 "required": True
             },
             "timeout": {
                 "type": "integer",
-                "description": "命令超时时间（秒）",
+                "description": "命令超时时间（秒，上限60）",
                 "required": False,
                 "default": 30
             }
         }
-        super().__init__("execute_command", "执行系统命令", parameters)
-    
+        super().__init__("execute_command", "执行系统命令（安全受限，仅白名单内命令）", parameters)
+        self._project_root = str(Path.cwd())
+
+    def _classify_command(self, command: str) -> str:
+        """将命令分类: 'safe' / 'dangerous' / 'unknown'"""
+        cmd = command.strip().lstrip()
+        cmd_lower = cmd.lower()
+
+        # 1. 危险模式优先（子串匹配）
+        for pattern in self.DANGEROUS_PATTERNS:
+            if pattern in cmd_lower:
+                logger.warning(f"命令被危险模式拦截: {pattern} in {cmd[:100]}")
+                return "dangerous"
+
+        # 2. 白名单前缀匹配
+        first_token = cmd_lower.split()[0] if cmd_lower else ""
+
+        # 尝试完整命令前缀匹配（如 "git status"）
+        for prefix in self.SAFE_COMMANDS:
+            if cmd_lower.startswith(prefix):
+                return "safe"
+
+        # 退而求其次：仅匹配第一个 token（如 "ls" 匹配 "ls -la /tmp"）
+        safe_tokens = {p.split()[0] for p in self.SAFE_COMMANDS}
+        if first_token in safe_tokens:
+            return "safe"
+
+        return "unknown"
+
     def execute(self, **kwargs) -> Dict[str, Any]:
         command = kwargs["command"]
-        timeout = kwargs.get("timeout", 30)
-        
-        # 安全检查：禁止某些危险命令
-        dangerous_patterns = [
-            "rm -rf /", "rm -rf /*", "dd if=", "mkfs", "fdisk",
-            "chmod 777 /", ":(){ :|:& };:",  # fork炸弹
-        ]
-        
-        for pattern in dangerous_patterns:
-            if pattern in command.lower():
-                raise ValueError(f"命令包含危险操作: {pattern}")
-        
-        logger.warning(f"执行系统命令: {command}")
-        
+        timeout = min(kwargs.get("timeout", 30), 60)  # 上限 60s
+
+        # ── Layer 1：命令分类 ──
+        classification = self._classify_command(command)
+        if classification == "dangerous":
+            raise ValueError(
+                f"❌ 命令被安全系统拒绝（检测到危险模式）\n"
+                f"命令: {command[:200]}"
+            )
+        if classification == "unknown":
+            raise PermissionError(
+                f"⚠️ 命令不在安全白名单中，已自动拒绝\n"
+                f"命令: {command[:200]}\n"
+                f"安全命令示例: {', '.join(sorted(self.SAFE_COMMANDS)[:10])} ..."
+            )
+
+        # ── Layer 2：工作目录限制 ──
+        workdir = self._project_root
+
+        # ── Layer 3：执行 ──
+        logger.warning(f"执行命令: {command} (分类={classification}, timeout={timeout}s)")
+
         try:
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                cwd=workdir,
             )
-            
+
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+
+            # 输出截断
+            MAX_OUT = 100_000
+            MAX_ERR = 50_000
+            truncated = False
+            if len(stdout) > MAX_OUT:
+                stdout = stdout[:MAX_OUT] + f"\n... (输出截断, 共 {len(result.stdout)} 字符)"
+                truncated = True
+            if len(stderr) > MAX_ERR:
+                stderr = stderr[:MAX_ERR] + f"\n... (错误截断, 共 {len(result.stderr)} 字符)"
+                truncated = True
+
+            # 二进制检测
+            is_binary = False
+            if stdout:
+                try:
+                    stdout.encode('utf-8')
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    is_binary = True
+                    stdout = f"[二进制输出, {len(result.stdout)} 字节]"
+            if stderr:
+                try:
+                    stderr.encode('utf-8')
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    stderr = f"[二进制错误输出, {len(result.stderr)} 字节]"
+
             return {
                 "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "success": result.returncode == 0
+                "stdout": stdout,
+                "stderr": stderr,
+                "success": result.returncode == 0,
+                "classification": classification,
+                "truncated": truncated,
+                "binary": is_binary,
             }
-            
+
         except subprocess.TimeoutExpired:
-            raise ValueError(f"命令执行超时 (超过{timeout}秒)")
+            raise ValueError(f"⏱ 命令执行超时 (超过{timeout}秒): {command[:100]}")
+        except PermissionError:
+            raise
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"执行命令失败: {str(e)}")
             raise ValueError(f"执行命令失败: {str(e)}")

@@ -1,6 +1,11 @@
 """
 文件操作权限管理器
 控制外部文件/目录的访问授权，分临时和持久权限。
+
+授权规则：
+- 授权单个文件 → 按授权模式（read/write/read_write）控制
+- 授权目录 → 该目录下所有文件和子目录自动获得读写权限（继承机制）
+- 项目目录内 → 默认拥有全部权限
 """
 
 import json
@@ -51,6 +56,12 @@ class FilePermissionManager:
         """
         检查路径是否有指定模式的访问权限。
 
+        规则：
+        - 项目目录内 → 默认允许
+        - 白名单中的路径 → 按授权模式检查
+        - 授权目录的**子路径** → 自动继承读写权限（mode 无关）
+          例如：授权 /data 为 read → /data/sub/file.txt 可读也可写
+
         Args:
             path: 要检查的路径
             mode: "read" / "write"
@@ -64,32 +75,33 @@ class FilePermissionManager:
         if abs_path.startswith(self._project_root):
             return True, ""
 
-        # 2. 白名单检查
-        # 精确匹配
+        # 2. 先检查是否有父目录在白名单中（子路径继承全权限）
+        for whitelisted_path in sorted(self._whitelist.keys(), reverse=True):
+            # 精确匹配 → 交给第 3 步处理
+            if abs_path == whitelisted_path:
+                break
+            # 子路径匹配：授权目录下的所有文件/子目录自动继承读写
+            if abs_path.startswith(whitelisted_path + os.sep):
+                return True, f"（通过父目录 {whitelisted_path} 授权，子路径自动继承读写权限）"
+
+        # 3. 精确白名单匹配
         entry = self._whitelist.get(abs_path)
         if entry:
             if self._mode_allows(entry["mode"], mode):
                 return True, ""
-            else:
-                return False, f"路径已在白名单中，但仅有 {entry['mode']} 权限，需要 {mode} 权限"
-
-        # 3. 父目录白名单检查（如果 /a/b 在白名单中，/a/b/c/d.txt 也应该允许）
-        for whitelisted_path in sorted(self._whitelist.keys(), reverse=True):
-            if abs_path.startswith(whitelisted_path + os.sep) or abs_path == whitelisted_path:
-                entry = self._whitelist[whitelisted_path]
-                if self._mode_allows(entry["mode"], mode):
-                    return True, f"（通过父目录 {whitelisted_path} 授权）"
-                break
+            return False, f"路径已在白名单中，但仅有 {entry['mode']} 权限，需要 {mode} 权限"
 
         return False, self._build_deny_message(abs_path, mode)
 
     def _build_deny_message(self, path: str, mode: str) -> str:
         """构建友好的拒绝访问提示"""
+        parent = os.path.dirname(path)
         return (
             f"不允许访问项目目录之外的路径:\n  {path}\n\n"
             f"如需授权，可以告诉我：\n"
             f'  "授权读取 {path}"\n'
             f'  "授权写入 {path}"\n'
+            f'  "授权目录 {parent} 的读取权限"   ← 授权父目录后，其下所有文件自动获得读写权限\n'
             f'  "永久授权 {path} 的读写权限"'
         )
 
@@ -108,9 +120,13 @@ class FilePermissionManager:
         """
         授权访问外部路径。
 
+        如果授权的是一个目录，则该目录下的所有文件和子目录都将自动继承
+        读写权限（即使授权的是 read，子文件也能读写）。
+
         Args:
             path: 要授权的路径（文件或目录）
             mode: "read" / "write" / "read_write"
+                注意：目录授权时，子文件始终获得读写权限
             perm_type: "temporary" / "permanent"
 
         Returns:
