@@ -205,7 +205,8 @@
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_jarvis.py', doraise=True\\); print\\('✅ OK'\\)\")",
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_jarvis.py', doraise=True\\); print\\('✅ All syntax OK'\\)\")",
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_jarvis.py', doraise=True\\); print\\('✅ Python OK'\\)\")",
-      "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_jarvis.py', doraise=True\\); print\\('✅'\\)\")"
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_jarvis.py', doraise=True\\); print\\('✅'\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('jarvis_manager.py', doraise=True\\); print\\('✅ OK'\\)\")"
     ],
     "additionalDirectories": [
       "/private/tmp",

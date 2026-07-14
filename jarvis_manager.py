@@ -40,23 +40,44 @@ _process_start_time: Optional[float] = None
 
 async def _pipe_stdout(stream):
     """从子进程管道读取 stdout/stderr，广播给所有 WebSocket 客户端"""
+    import re
+    # 过滤规则
+    _heartbeat_pattern = re.compile(
+        r'(heartbeat|心跳|💓|系统心跳|heart beat|check.*alive|alive.*check|'
+        r'periodic|periodic_task|task_monitor|learning_cycle)', re.I
+    )
+    _http_log_pattern = re.compile(
+        r'-\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS)\s+/.*?"\s+\d+'
+    )
     try:
         while True:
             line = await asyncio.get_event_loop().run_in_executor(None, stream.readline)
             if not line:
                 break
             line = line.rstrip("\n\r")
-            if line:
-                # 加时间戳
-                entry = {"t": datetime.now().isoformat(), "m": line}
-                dead = []
-                for ws in _log_clients[:]:
-                    try:
-                        await ws.send_json(entry)
-                    except Exception:
-                        dead.append(ws)
-                for ws in dead:
-                    _log_clients.remove(ws)
+            if not line:
+                continue
+
+            # HTTP 访问日志直接过滤掉
+            if _http_log_pattern.search(line):
+                continue
+
+            is_heartbeat = bool(_heartbeat_pattern.search(line))
+
+            entry = {
+                "t": datetime.now().isoformat(),
+                "m": line,
+                "type": "heartbeat" if is_heartbeat else "",
+            }
+
+            dead = []
+            for ws in _log_clients[:]:
+                try:
+                    await ws.send_json(entry)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                _log_clients.remove(ws)
     except Exception:
         pass
 
@@ -140,6 +161,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .status-text{font-size:13px}
 .status-text .label{color:#6b7280;margin-right:6px}
 .status-text .value{color:#e0e0e0}
+/* Heartbeat breathing light */
+.heartbeat-wrap{display:flex;align-items:center;gap:6px;font-size:11px;color:#6b7280}
+.heartbeat-dot{width:6px;height:6px;border-radius:50%;background:#22c55e;transition:opacity .15s,transform .15s}
+.heartbeat-dot.beat{animation:breath .6s ease-in-out}
+@keyframes breath{0%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.3)}100%{opacity:.3;transform:scale(.8)}}
+.heartbeat-dot.idle{background:#4a4a6a;opacity:.3;animation:none}
 .actions{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
 .actions button{padding:6px 18px;border:none;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:4px}
 .btn-start{background:#22c55e;color:#fff}
@@ -173,6 +200,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <div class="status-text"><span class="label">状态</span><span id="dot" class="status-dot stopped"></span></div>
 <div class="status-text"><span class="label">进程</span><span id="status-text" class="value">检查中...</span></div>
 <div class="status-text"><span class="label">启动时间</span><span id="uptime" class="value">--</span></div>
+<div class="heartbeat-wrap"><span class="heartbeat-dot idle" id="hb-dot"></span><span id="hb-label">等待心跳</span></div>
 <div class="actions">
 <button id="btn-start" class="btn-start" onclick="sendAction('start')">&#x25B6; 启动</button>
 <button id="btn-stop" class="btn-stop" disabled onclick="sendAction('stop')">&#x25A0; 停止</button>
@@ -195,11 +223,31 @@ const btnStop = document.getElementById('btn-stop');
 const logCount = document.getElementById('log-count');
 var logTotal = 0;
 
+// ── 心跳呼吸灯状态 ──
+var hbTimer = null;
+
+function beatHeartbeat() {
+  var dot = document.getElementById('hb-dot');
+  var label = document.getElementById('hb-label');
+  dot.className = 'heartbeat-dot beat';
+  label.textContent = '心跳正常';
+  if (hbTimer) clearTimeout(hbTimer);
+  hbTimer = setTimeout(function(){
+    dot.className = 'heartbeat-dot idle';
+    label.textContent = '等待心跳';
+  }, 3000);
+}
+
 // ── WebSocket 日志 ──
 var ws = new WebSocket('ws://' + location.host + '/ws/logs');
 ws.onmessage = function(e) {
   var d = JSON.parse(e.data);
-  addLog(d.t, d.m, d.type || '');
+  if (d.type === 'heartbeat') {
+    // 心跳日志→触发呼吸灯，不写入日志区
+    beatHeartbeat();
+  } else {
+    addLog(d.t, d.m, d.type || '');
+  }
 };
 ws.onclose = function() {
   setTimeout(function(){
