@@ -27,13 +27,13 @@ class Tool(ABC):
         pass
     
     def validate_parameters(self, **kwargs) -> bool:
-        """验证参数"""
+        """验证参数（原地修改 kwargs 以纠正类型）"""
         for param_name, param_info in self.parameters.items():
             if param_info.get("required", False) and param_name not in kwargs:
                 self._logger.error(f"Missing required parameter: {param_name}")
                 return False
             
-            # 类型检查
+            # 类型检查和转换
             if param_name in kwargs and "type" in param_info:
                 expected_type = param_info["type"]
                 value = kwargs[param_name]

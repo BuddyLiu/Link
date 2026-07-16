@@ -479,6 +479,9 @@ class WebActiveJARVIS:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JARVIS</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0f;height:100vh;display:flex;flex-direction:column;color:#e0e0e0}
@@ -643,6 +646,25 @@ async function updateStatus() {
   } catch(e) { /* ignore */ }
 }
 setInterval(updateStatus, 10000);
+// ── marked + highlight.js 配置 ──
+marked.setOptions({
+  breaks: true,       // 支持 markdown 内换行 → <br>
+  gfm: true,          // GitHub 风格 Markdown（表格、任务列表等）
+});
+try {
+  if (typeof hljs !== 'undefined') {
+    var mdRenderer = new marked.Renderer();
+    mdRenderer.code = function(opt) {
+      var text = opt.text || opt.code || '';
+      var lang = opt.lang || '';
+      var highlighted = (lang && hljs.getLanguage(lang)) ? hljs.highlight(text, {language: lang, ignoreIllegals: true}).value : text;
+      var langAttr = lang ? ' data-lang="' + lang + '"' : '';
+      return '<div class="code-wrap"><button class="code-copy" onclick="copyCode(this)">复制</button><pre><code class="hljs' + (lang ? ' language-' + lang : '') + '"' + langAttr + '>' + highlighted + '</code></pre></div>';
+    };
+    marked.setOptions({renderer: mdRenderer});
+  }
+} catch(e) { console.error('marked/hljs init error:', e); }
+
 var streamContentId = null;
 var streamContentBuf = '';
 
@@ -693,7 +715,7 @@ ws.onmessage = e => {
     streamContentBuf += d.data;
     var sb = document.getElementById('stream-bubble');
     if (sb) {
-      sb.innerHTML = renderMarkdown(escapeHtml(streamContentBuf)) + '<span class="cursor"></span>';
+      sb.innerHTML = renderMarkdown(streamContentBuf) + '<span class="cursor"></span>';
       chatBox.scrollTop = chatBox.scrollHeight;
     }
     return;
@@ -770,7 +792,7 @@ async function loadHistory(page) {
       }
       var bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.innerHTML = renderMarkdown(escapeHtml(msg.content));
+      bubble.innerHTML = renderMarkdown(msg.content);
       div.appendChild(bubble);
       var cb = document.createElement('button');
       cb.className = 'copy-btn visible';
@@ -938,104 +960,41 @@ async function sendFeedback(msgId, rating, content, reasoningText) {
   } catch(e) { console.error('Feedback error:', e); }
 }
 
-// ----- Markdown Parser (lightweight, no dependencies) -----
+// ----- Markdown Parser (using marked + highlight.js) -----
 function renderMarkdown(text) {
-  return text
-    // Code block (wrap with copy button)
-    .replace(/```(?:\\w*)\\n([\\s\\S]*?)```/g,
-      '<div class="code-wrap"><button class="code-copy" onclick="copyCode(this)">复制</button><pre><code>$1</code></pre></div>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Headers
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    // Bold & italic
-    .replace(/\\*\\*\\*(.+?)\\*\\*\\*/g, '<strong><em>$1</em></strong>')
-    .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
-    .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
-    // Strikethrough
-    .replace(/~~(.+?)~~/g, '<del>$1</del>')
-    // Links
-    .replace(/\\[(.+?)\\]\\((.+?)\\)/g, '<a href="$2" target="_blank">$1</a>')
-    // Images
-    .replace(/!\\[(.*?)\\]\\((.+?)\\)/g, '<img src="$2" alt="$1" style="max-width:100%">')
-    // Unordered list
-    .replace(/^[*\\-] (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\\/li>\\n?)+/g, '<ul>$&</ul>')
-    // Ordered list
-    .replace(/^\\d+\\. (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*?<\\/li>(?:\\n?<li>.*?<\\/li>)*)/g, '<ol>$1</ol>')
-    // Blockquote
-    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-        // Table
-    .replace(/^(\\|.+\\|)\\n\\|[-:\\s|]+\\|\\n((?:\\|.+\\|\\n?)*)/gm, function(m, hdr, bdy) {
-      function cl(r){ var a=[]; r.split('|').forEach(function(x,i){ if((i%2==1||i>0)&&x.trim()){a.push(x.trim());} }); return a; }
-      var h = '<table><thead><tr>';
-      cl(hdr).forEach(function(c){ h += '<th>' + c + '</th>'; });
-      h += '</tr></thead><tbody>';
-      bdy.trim().split('\\n').forEach(function(r){
-        h += '<tr>';
-        cl(r).forEach(function(c){ h += '<td>' + c + '</td>'; });
-        h += '</tr>';
-      });
-      return h + '</tbody></table>';
-    })
-// Horizontal rule
-    .replace(/^(---|\\*\\*\\*)$/gm, '<hr>')
-    // Paragraphs (double newline)
-    .replace(/\\n\\n/g, '</p><p>')
-    // Single newline => line break
-    .replace(/\\n/g, '<br>')
-    // Wrap entire content in paragraph if it is plain text
-    .replace(/^(<p>.*)/, '$1')
-    .replace(/^([^<].+)/, '<p>$1</p>')
-    // Clean up empty paragraphs
-    .replace(/<p><\\/p>/g, '');
+  if (!text) return '';
+  try { return marked.parse(text); }
+  catch(e) { return '<p>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
 }
 
-// ----- Typewriter Effect -----
+// ----- Typewriter Effect (token-based progressive reveal) -----
 function typewriteMessage(role, fullText) {
-  const div = document.createElement('div');
+  var tokens, idx = 0;
+  try { tokens = marked.lexer(fullText); } catch(e) { tokens = [{type:'paragraph', text:fullText}]; }
+
+  var div = document.createElement('div');
   div.className = 'msg ' + role;
   chatBox.appendChild(div);
   scrollToBottom();
 
-  const bubble = document.createElement('div');
+  var bubble = document.createElement('div');
   bubble.className = 'bubble';
   div.appendChild(bubble);
 
-  let pos = 0;
-  let htmlBuffer = '';
-  const rendered = renderMarkdown(fullText);
-
   function type() {
-    if (pos < rendered.length) {
-      if (rendered[pos] === '<') {
-        const tagEnd = rendered.indexOf('>', pos);
-        if (tagEnd >= 0) {
-          htmlBuffer += rendered.slice(pos, tagEnd + 1);
-          pos = tagEnd + 1;
-          bubble.innerHTML = htmlBuffer + '<span class="cursor"></span>';
-          scrollToBottom();
-          requestAnimationFrame(type);
-          return;
-        }
-      }
-      htmlBuffer += rendered[pos];
-      pos++;
-      bubble.innerHTML = htmlBuffer + '<span class="cursor"></span>';
+    if (idx < tokens.length) {
+      try { bubble.innerHTML = marked.parser(tokens.slice(0, idx + 1)); }
+      catch(e) { bubble.innerHTML = '<p>' + fullText.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
       scrollToBottom();
-      setTimeout(type, TYPE_SPEED);
+      idx++;
+      setTimeout(type, 50);
     } else {
-      // Done — add copy button
-      bubble.innerHTML = htmlBuffer;
       scrollToBottom();
-      const copyBtn = document.createElement('button');
+      var copyBtn = document.createElement('button');
       copyBtn.className = 'copy-btn visible';
       copyBtn.textContent = '复制';
-      copyBtn.onclick = () => copyText(fullText, copyBtn);
-      bubble.parentElement.appendChild(copyBtn);
+      copyBtn.onclick = function() { copyText(fullText, copyBtn); };
+      div.appendChild(copyBtn);
       sendBtn.disabled = false;
       input.focus();
     }
@@ -1054,7 +1013,7 @@ function addMessage(role, content) {
   } else {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    bubble.innerHTML = renderMarkdown(escapeHtml(content));
+    bubble.innerHTML = renderMarkdown(content);
     div.appendChild(bubble);
     // Copy button
     const copyBtn = document.createElement('button');
