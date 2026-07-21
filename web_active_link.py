@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JARVIS主动运行模式的Web版本
+LINK主动运行模式的Web版本
 提供Web界面，避免CLI模式下心跳输出干扰用户输入
 """
 
@@ -193,11 +193,11 @@ class EventHandler:
 class TaskEventHandler(EventHandler):
     """任务事件处理器"""
 
-    def __init__(self, jarvis_instance=None):
+    def __init__(self, link_instance=None):
         super().__init__("task_handler")
-        self.jarvis = jarvis_instance
-        # 如果传入的是 WebActiveJARVIS 实例，自动获取其中的 brain_jarvis
-        self.brain_jarvis = getattr(jarvis_instance, 'brain_jarvis', None)
+        self.link = link_instance
+        # 如果传入的是 WebActiveLINK 实例，自动获取其中的 brain_link
+        self.brain_link = getattr(link_instance, 'brain_link', None)
 
     def can_handle(self, event: Event) -> bool:
         return event.event_type in [EventType.TASK_STATUS, EventType.USER_INPUT]
@@ -228,9 +228,9 @@ class TaskEventHandler(EventHandler):
     def _handle_user_input(self, event: Event) -> str:
         """处理用户输入事件 — 调用大脑引擎响应"""
         text = event.data.get("text", "")
-        if self.brain_jarvis:
+        if self.brain_link:
             try:
-                return self.brain_jarvis.process_input(text)
+                return self.brain_link.process_input(text)
             except Exception as e:
                 return f"❌ 处理出错: {e}"
         return f"📝 收到用户输入: {text}"
@@ -264,9 +264,9 @@ class SystemEventHandler(EventHandler):
 class LearningEventHandler(EventHandler):
     """学习事件处理器"""
     
-    def __init__(self, jarvis_instance=None):
+    def __init__(self, link_instance=None):
         super().__init__("learning_handler")
-        self.jarvis = jarvis_instance
+        self.link = link_instance
         self.last_learning_time = 0
         self.learning_interval = 3600  # 1小时
     
@@ -320,12 +320,12 @@ class LearningEventHandler(EventHandler):
             return f"❌ 用户偏好学习失败: {e}"
 
 
-class WebActiveJARVIS:
-    """Web版本的主动运行模式JARVIS"""
+class WebActiveLINK:
+    """Web版本的主动运行模式LINK"""
     
     def __init__(self, config: Dict[str, Any] = None):
         """
-        初始化Web版本的主动JARVIS
+        初始化Web版本的主动LINK
         
         Args:
             config: 配置参数
@@ -342,7 +342,7 @@ class WebActiveJARVIS:
         self.event_thread = None
         
         # Web相关
-        self.app = FastAPI(title="JARVIS主动模式Web界面")
+        self.app = FastAPI(title="LINK主动模式Web界面")
         self.websocket_clients = []
         self.event_history = []
         self.max_history = 100
@@ -355,24 +355,24 @@ class WebActiveJARVIS:
             "last_event_time": None
         }
 
-        # 初始化大脑引擎（JARVIS 主实例，用于 LLM 问答）
-        self.brain_jarvis = None
-        self._init_brain_jarvis()
+        # 初始化大脑引擎（LINK 主实例，用于 LLM 问答）
+        self.brain_link = None
+        self._init_brain_link()
 
         # 初始化组件
         self._initialize_components()
         self._setup_routes()
 
-    def _init_brain_jarvis(self):
-        """初始化 JARVIS 大脑引擎（延迟导入避免循环引用）"""
+    def _init_brain_link(self):
+        """初始化 LINK 大脑引擎（延迟导入避免循环引用）"""
         try:
-            from main import JARVIS
-            self.brain_jarvis = JARVIS()
+            from main import LINK
+            self.brain_link = LINK()
             import logging
-            logging.getLogger("jarvis").info("WebActiveJARVIS 大脑引擎已就绪")
+            logging.getLogger("link").info("WebActiveLINK 大脑引擎已就绪")
         except Exception as e:
             print(f"⚠️ 大脑引擎初始化失败，将使用本地响应: {e}")
-            self.brain_jarvis = None
+            self.brain_link = None
 
     def _get_default_config(self) -> Dict[str, Any]:
         """获取默认配置"""
@@ -478,7 +478,7 @@ class WebActiveJARVIS:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS</title>
+<title>LINK</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -584,7 +584,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </head>
 <body>
 <div class="header">
-<h1>JARVIS</h1>
+<h1>LINK</h1>
 <div>
 <a href="/settings">&#x2699; 设置</a>
 <a href="/debug">&#x1F50D; 调试</a>
@@ -622,7 +622,7 @@ const sendBtn = document.getElementById('send-btn');
 const TYPE_SPEED = 30; // ms per character
 var historyPage = 1, historyLoading = false, historyEnd = false;
 
-ws.onopen = () => { addMessage('system', '已连接到 JARVIS'); loadHistory(); updateStatus(); };
+ws.onopen = () => { addMessage('system', '已连接到 LINK'); loadHistory(); updateStatus(); };
 ws.onclose = () => addMessage('system', '连接已断开');
 
 async function updateStatus() {
@@ -1107,7 +1107,7 @@ function escapeHtml(s) {
                     "type": "event",
                     "data": {
                         "event_type": "SYSTEM",
-                        "message": "🔗 已连接到JARVIS主动模式",
+                        "message": "🔗 已连接到LINK主动模式",
                         "timestamp": time.time()
                     }
                 })
@@ -1157,7 +1157,7 @@ function escapeHtml(s) {
                                     "event_type": "ASSISTANT",
                                     "result": brain_resp["result"],
                                     "reasoning": brain_resp.get("reasoning", ""),
-                                    "source": "jarvis_brain",
+                                    "source": "link_brain",
                                     "timestamp": time.time()
                                 })
                     
@@ -1234,8 +1234,8 @@ function escapeHtml(s) {
         async def post_settings(data: dict):
             from src.core.model_engine.provider_settings import save_settings, get_brain_config
             s = save_settings(data)
-            if self.brain_jarvis:
-                self.brain_jarvis._reconfigure_brain(get_brain_config())
+            if self.brain_link:
+                self.brain_link._reconfigure_brain(get_brain_config())
             return {"success": True, "message": "设置已保存"}
 
         @self.app.post("/api/settings/test")
@@ -1284,7 +1284,7 @@ function escapeHtml(s) {
         reasoning = data.get("reasoning", "")
         if not rating or rating not in ("up", "down") or not content:
             return {"success": False, "error": "invalid params"}
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"success": False, "error": "memory not available"}
         try:
             metadata = {
@@ -1294,7 +1294,7 @@ function escapeHtml(s) {
                 "response_length": len(content),
                 "timestamp": time.time(),
             }
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             store.add_memory(f"Feedback [{rating}]: {content[:300]}", metadata)
             return {"success": True}
         except Exception as e:
@@ -1314,19 +1314,19 @@ function escapeHtml(s) {
             "event_history_count": len(self.event_history),
             "uptime": round(time.time() - self.stats.get("start_time", time.time()), 1) if self.stats.get("start_time") else 0,
         }
-        if self.brain_jarvis:
-            bj = self.brain_jarvis
+        if self.brain_link:
+            bj = self.brain_link
             data["memory"] = self._get_memory_debug(bj)
             data["brain"] = self._get_brain_debug(bj)
             data["planning"] = self._get_planning_debug(bj)
         return data
 
-    def _get_memory_debug(self, jarvis) -> dict:
-        result = {"available": jarvis.memory_engine is not None}
-        if not jarvis.memory_engine:
+    def _get_memory_debug(self, link) -> dict:
+        result = {"available": link.memory_engine is not None}
+        if not link.memory_engine:
             return result
         try:
-            store = jarvis.memory_engine.store
+            store = link.memory_engine.store
             result["stats"] = store.get_stats()
             all_m = store.get_all_memories(limit=50)
             result["memories"] = []
@@ -1347,12 +1347,12 @@ function escapeHtml(s) {
             result["error"] = str(e)
         return result
 
-    def _get_brain_debug(self, jarvis) -> dict:
-        result = {"available": jarvis.brain_engine is not None}
-        if not jarvis.brain_engine:
+    def _get_brain_debug(self, link) -> dict:
+        result = {"available": link.brain_engine is not None}
+        if not link.brain_engine:
             return result
         try:
-            be = jarvis.brain_engine
+            be = link.brain_engine
             result["config"] = getattr(be, "config", {})
             result["health"] = be.health_check() if hasattr(be, "health_check") else {}
             history = []
@@ -1369,13 +1369,13 @@ function escapeHtml(s) {
             result["error"] = str(e)
         return result
 
-    def _get_planning_debug(self, jarvis) -> dict:
-        result = {"available": jarvis.planning_engine is not None}
-        if not jarvis.planning_engine:
+    def _get_planning_debug(self, link) -> dict:
+        result = {"available": link.planning_engine is not None}
+        if not link.planning_engine:
             return result
         try:
-            pe = jarvis.planning_engine
-            result["tasks_count"] = len(jarvis.active_tasks)
+            pe = link.planning_engine
+            result["tasks_count"] = len(link.active_tasks)
             result["templates"] = pe.get_task_template_types() if hasattr(pe, "get_task_template_types") else []
             if hasattr(pe, "get_planning_stats"):
                 result["stats"] = pe.get_planning_stats()
@@ -1384,10 +1384,10 @@ function escapeHtml(s) {
         return result
 
     async def _search_debug_memory(self, query: str) -> dict:
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available", "results": []}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             results = store.search_memories(query, n_results=10)
             items = []
             for mem, sim in results:
@@ -1402,10 +1402,10 @@ function escapeHtml(s) {
 
     async def _get_memories_paginated(self, page: int, per_page: int) -> dict:
         """分页获取记忆列表"""
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available", "memories": [], "total": 0}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             all_m = store.get_all_memories(limit=9999)
             total = len(all_m)
             start = (page - 1) * per_page
@@ -1428,10 +1428,10 @@ function escapeHtml(s) {
 
     async def _get_interactions_paginated(self, page: int, per_page: int) -> dict:
         """分页获取 LLM 交互历史"""
-        if not self.brain_jarvis or not self.brain_jarvis.brain_engine:
+        if not self.brain_link or not self.brain_link.brain_engine:
             return {"error": "brain not available", "interactions": [], "total": 0}
         try:
-            be = self.brain_jarvis.brain_engine
+            be = self.brain_link.brain_engine
             if not hasattr(be, "get_interaction_history"):
                 return {"error": "no history", "interactions": [], "total": 0}
 
@@ -1458,10 +1458,10 @@ function escapeHtml(s) {
 
     async def _create_debug_archive(self, data: dict) -> dict:
         """创建记忆归档"""
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available"}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             label = data.get("label", "")
             result = store.create_archive(label)
             return {"success": True, "archive": result}
@@ -1470,10 +1470,10 @@ function escapeHtml(s) {
 
     async def _list_debug_archives(self) -> dict:
         """列出所有归档"""
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available", "archives": []}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             archives = store.list_archives()
             return {"archives": archives, "total": len(archives)}
         except Exception as e:
@@ -1481,10 +1481,10 @@ function escapeHtml(s) {
 
     async def _restore_debug_archive(self, data: dict) -> dict:
         """从归档恢复记忆"""
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available"}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             archive_id = data.get("archive_id", "")
             if not archive_id:
                 return {"error": "archive_id required"}
@@ -1497,25 +1497,25 @@ function escapeHtml(s) {
 
     async def _reset_debug_memory(self) -> dict:
         """清空所有记忆（含缓存画像）"""
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available"}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             count = store.get_stats().get("total_memories", 0)
             store.reset_memory()
             # 同时清空缓存的用户画像（否则_retrieve_memory_context仍会返回旧数据）
-            self.brain_jarvis._user_profile = ""
-            self.brain_jarvis._history_summary = ""
+            self.brain_link._user_profile = ""
+            self.brain_link._history_summary = ""
             return {"success": True, "cleared_count": count}
         except Exception as e:
             return {"error": str(e)}
 
     async def _get_chat_history(self, page: int, per_page: int) -> dict:
         """分页获取历史会话（仅 conversation 类型记忆）"""
-        if not self.brain_jarvis or not self.brain_jarvis.memory_engine:
+        if not self.brain_link or not self.brain_link.memory_engine:
             return {"error": "memory not available", "messages": [], "total": 0}
         try:
-            store = self.brain_jarvis.memory_engine.store
+            store = self.brain_link.memory_engine.store
             all_m = store.get_all_memories(limit=9999)
             # 只保留 conversation 类型
             convs = [m for m in all_m if m.metadata.get("type") == "conversation"]
@@ -1559,7 +1559,7 @@ function escapeHtml(s) {
                     "type": "event",
                     "data": {
                         "event_type": "SYSTEM",
-                        "message": "🚀 JARVIS主动模式已启动",
+                        "message": "🚀 LINK主动模式已启动",
                         "timestamp": time.time()
                     }
                 })
@@ -1580,7 +1580,7 @@ function escapeHtml(s) {
                     "type": "event",
                     "data": {
                         "event_type": "SYSTEM",
-                        "message": "🛑 JARVIS主动模式已停止",
+                        "message": "🛑 LINK主动模式已停止",
                         "timestamp": time.time()
                     }
                 })
@@ -1680,7 +1680,7 @@ function escapeHtml(s) {
         self.is_running = True
         self.stats["start_time"] = time.time()
         
-        print("🚀 启动JARVIS主动运行模式（Web版本）...")
+        print("🚀 启动LINK主动运行模式（Web版本）...")
         print(f"🌐 Web界面地址: http://{self.config['web_host']}:{self.config['web_port']}")
         
         if blocking:
@@ -1827,19 +1827,19 @@ function escapeHtml(s) {
     
     def _process_input_direct(self, text: str, stream_callback: callable = None) -> dict:
         """处理用户输入，返回 {result, reasoning}"""
-        if not self.brain_jarvis:
+        if not self.brain_link:
             return {"result": "⚠️ 大脑引擎未就绪", "reasoning": ""}
         try:
             start = time.time()
-            result = self.brain_jarvis.process_input(text, stream_callback=stream_callback)
-            reasoning = getattr(self.brain_jarvis, '_last_reasoning', '')
+            result = self.brain_link.process_input(text, stream_callback=stream_callback)
+            reasoning = getattr(self.brain_link, '_last_reasoning', '')
             elapsed = time.time() - start
             import logging
-            logging.getLogger("jarvis").info(f"LLM 响应完成 ({elapsed:.1f}s)")
+            logging.getLogger("link").info(f"LLM 响应完成 ({elapsed:.1f}s)")
             return {"result": result, "reasoning": reasoning}
         except Exception as e:
             import logging
-            logging.getLogger("jarvis").error(f"处理输入出错: {e}")
+            logging.getLogger("link").error(f"处理输入出错: {e}")
             return {"result": f"❌ 处理出错: {e}", "reasoning": ""}
 
     def add_user_input(self, text: str, user_id: str = "default"):
@@ -1895,7 +1895,7 @@ function escapeHtml(s) {
 DEBUG_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>JARVIS 调试面板</title>
+<title>LINK 调试面板</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;padding:20px}
@@ -1949,7 +1949,7 @@ tr:hover{background:#f0f7ff}
 </head>
 <body>
 <div class="header">
-<div><h1>🔍 JARVIS 调试面板</h1><span class="sub" id="last-update">加载中...</span></div>
+<div><h1>🔍 LINK 调试面板</h1><span class="sub" id="last-update">加载中...</span></div>
 <div class="toolbar"><button class="refresh" onclick="loadData()">&#x21bb; 刷新</button></div>
 </div>
 
@@ -2411,7 +2411,7 @@ SETTINGS_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS 设置</title>
+<title>LINK 设置</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;padding:20px;max-width:700px;margin:0 auto}
@@ -2440,7 +2440,7 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
 </style>
 </head>
 <body>
-<h1>&#x2699;&#xFE0F; JARVIS 设置</h1>
+<h1>&#x2699;&#xFE0F; LINK 设置</h1>
 <div id="status" class="status"></div>
 
 <div class="card">
@@ -2634,23 +2634,23 @@ loadModels();
 def main():
     """主函数"""
     print("="*60)
-    print("JARVIS主动运行模式（Web版本）")
+    print("LINK主动运行模式（Web版本）")
     print("="*60)
     print("💡 解决CLI模式下心跳输出干扰用户输入的问题")
     print("💡 提供Web界面，支持实时事件监控")
     print("="*60)
     
-    # 创建Web版本的JARVIS
-    web_jarvis = WebActiveJARVIS()
+    # 创建Web版本的LINK
+    web_link = WebActiveLINK()
     
     # 启动主动模式（非阻塞）
-    web_jarvis.start(blocking=False)
+    web_link.start(blocking=False)
     
     # 运行Web服务器
-    web_jarvis.run_web()
+    web_link.run_web()
     
     # 停止主动模式
-    web_jarvis.stop()
+    web_link.stop()
 
 
 if __name__ == "__main__":

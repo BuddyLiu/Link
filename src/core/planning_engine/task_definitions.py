@@ -1,7 +1,7 @@
 """
 复杂任务类型定义模块
 
-定义JARVIS智能体支持的复杂任务类型、模板和约束条件。
+定义LINK智能体支持的复杂任务类型、模板和约束条件。
 """
 
 from dataclasses import dataclass, field

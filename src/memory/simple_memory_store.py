@@ -674,7 +674,7 @@ class SimpleMemoryStore:
             "memory_count": len(memories_data),
             "checksum": checksum,
             "checksum_algorithm": "sha256",
-            "jarvis_version": "3.0",
+            "link_version": "3.0",
             "data": data_payload,
         }
 
@@ -832,7 +832,7 @@ def test_simple_memory_store():
     import tempfile
     import shutil
 
-    test_dir = tempfile.mkdtemp(prefix="jarvis_memory_test_")
+    test_dir = tempfile.mkdtemp(prefix="link_memory_test_")
 
     try:
         store = SimpleMemoryStore(

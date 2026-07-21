@@ -336,7 +336,7 @@ class ModelAdapter(ABC):
         
         style_prompt = style_prompts.get(style, style_prompts["professional"])
         
-        system_prompt = f"""你是一个智能助手JARVIS。{style_prompt}
+        system_prompt = f"""你是一个智能助手LINK。{style_prompt}
         基于用户输入和上下文信息生成合适的回复。
         如果上下文中有相关信息，请利用这些信息提供更准确的回答。
         如果不知道答案，请诚实说明，不要编造信息。"""

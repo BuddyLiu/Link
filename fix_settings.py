@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Replace SETTINGS_HTML in web_active_jarvis.py with sidebar version"""
-with open('web_active_jarvis.py', 'r') as f:
+"""Replace SETTINGS_HTML in web_active_link.py with sidebar version"""
+with open('web_active_link.py', 'r') as f:
     content = f.read()
 
 marker = 'SETTINGS_HTML = """'
@@ -15,7 +15,7 @@ new_html = '''SETTINGS_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS 设置</title>
+<title>LINK 设置</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;display:flex;min-height:100vh}
@@ -58,7 +58,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </head>
 <body>
 <div class="sidebar">
-  <h1>⚙ JARVIS</h1>
+  <h1>⚙ LINK</h1>
   <div class="tab active" onclick="switchTab('model')">\U0001F916 模型</div>
   <div class="tab" onclick="switchTab('auth')">\U0001F510 授权</div>
   <div class="tab" onclick="switchTab('about')">ℹ 关于</div>
@@ -79,7 +79,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <div class="card"><h3>已授权路径</h3><div id="auth-list" style="font-size:13px"><div style="color:#999;padding:8px 0">加载中...</div></div></div>
   </div>
   <div id="tab-about" class="tab-content">
-    <h2>ℹ 关于 JARVIS</h2>
+    <h2>ℹ 关于 LINK</h2>
     <div class="card"><div style="font-size:14px;line-height:2"><div><strong>版本:</strong> 3.0</div><div><strong>架构:</strong> 模块化 | FastAPI + WebSocket</div><div><strong>记忆引擎:</strong> <span id="about-memory">加载中...</span></div><div><strong>大脑引擎:</strong> <span id="about-brain">加载中...</span></div><div><strong>运行状态:</strong> <span id="about-status">加载中...</span></div></div></div>
   </div>
 </div>
@@ -103,6 +103,6 @@ loadSettings();loadModels();loadAuthorizations();loadAboutInfo();
 
 content = content[:start] + new_html + content[end+3:]
 
-with open('web_active_jarvis.py', 'w') as f:
+with open('web_active_link.py', 'w') as f:
     f.write(content)
 print("Done! Written", len(content), "bytes")

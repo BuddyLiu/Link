@@ -1,5 +1,5 @@
 """
-JARVIS工具模块
+LINK工具模块
 提供工具注册、管理和执行功能
 """
 
@@ -53,7 +53,10 @@ class Tool(ABC):
                     elif expected_type == "number":
                         kwargs[param_name] = float(value)
                     elif expected_type == "boolean":
-                        kwargs[param_name] = bool(value)
+                        if isinstance(value, str):
+                            kwargs[param_name] = value.lower() in ("true", "1", "yes")
+                        else:
+                            kwargs[param_name] = bool(value)
                 except (ValueError, TypeError) as e:
                     self._logger.error(f"Invalid type for parameter {param_name}: {e}")
                     return False

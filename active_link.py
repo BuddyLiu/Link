@@ -1,5 +1,5 @@
 """
-JARVIS主动运行模式实现
+LINK主动运行模式实现
 基于事件驱动架构，类似iOS RunLoop的主动智能体系统
 """
 
@@ -266,9 +266,9 @@ class EventHandler:
 class TaskEventHandler(EventHandler):
     """任务事件处理器"""
     
-    def __init__(self, jarvis_instance):
+    def __init__(self, link_instance):
         super().__init__("task_handler")
-        self.jarvis = jarvis_instance
+        self.link = link_instance
     
     def can_handle(self, event: Event) -> bool:
         return event.event_type in [EventType.TASK_STATUS, EventType.USER_INPUT]
@@ -298,11 +298,11 @@ class TaskEventHandler(EventHandler):
     
     def _handle_user_input(self, event: Event) -> str:
         """处理用户输入事件"""
-        if not self.jarvis:
-            return "JARVIS实例未初始化"
+        if not self.link:
+            return "LINK实例未初始化"
         
         text = event.data.get("text", "")
-        return self.jarvis.process_input(text)
+        return self.link.process_input(text)
 
 
 class ReminderEventHandler(EventHandler):
@@ -337,15 +337,15 @@ class ReminderEventHandler(EventHandler):
 
 
 class SystemEventHandler(EventHandler):
-    """系统事件处理器（支持真正的重启/关闭）"""
+    """系统事件处理器"""
     
-    def __init__(self, jarvis_ref=None):
+    def __init__(self, link_ref=None):
         """
         Args:
-            jarvis_ref: 父级ActiveJARVIS实例引用，用于执行真正的重启/关闭
+            link_ref: 父级ActiveLINK实例引用，用于执行真正的重启/关闭
         """
         super().__init__("system_handler")
-        self.jarvis_ref = jarvis_ref
+        self.link_ref = link_ref
     
     def can_handle(self, event: Event) -> bool:
         return event.event_type == EventType.SYSTEM
@@ -360,44 +360,42 @@ class SystemEventHandler(EventHandler):
             return self._handle_restart()
         elif action == "status":
             return self._handle_status()
-        elif action == "heartbeat":
-            return "💓 系统心跳正常"
         
         return f"未知系统操作: {action}"
     
     def _handle_shutdown(self) -> str:
         """执行真正的关闭操作"""
-        if self.jarvis_ref and hasattr(self.jarvis_ref, 'is_running') and self.jarvis_ref.is_running:
+        if self.link_ref and hasattr(self.link_ref, 'is_running') and self.link_ref.is_running:
             print("🔌 执行系统关闭...")
-            self.jarvis_ref.is_running = False
+            self.link_ref.is_running = False
             return "🔌 系统已关闭"
-        return "🔌 系统关闭请求（JARVIS未运行）"
+        return "🔌 系统关闭请求（LINK未运行）"
     
     def _handle_restart(self) -> str:
         """执行真正的重启操作：停止事件循环 → 重新初始化组件 → 重启"""
-        if not self.jarvis_ref:
-            return "🔄 系统重启请求（无JARVIS引用，无法执行）"
+        if not self.link_ref:
+            return "🔄 系统重启请求（无LINK引用，无法执行）"
         
         try:
-            print("🔄 开始执行JARVIS重启...")
+            print("🔄 开始执行LINK重启...")
             
             # 1. 停止当前事件循环
-            if self.jarvis_ref.is_running:
-                self.jarvis_ref.is_running = False
-                if self.jarvis_ref.event_thread:
-                    self.jarvis_ref.event_thread.join(timeout=3)
+            if self.link_ref.is_running:
+                self.link_ref.is_running = False
+                if self.link_ref.event_thread:
+                    self.link_ref.event_thread.join(timeout=3)
                 print("  ✅ 事件循环已停止")
             
             # 2. 清空事件队列
-            while not self.jarvis_ref.event_queue.empty():
+            while not self.link_ref.event_queue.empty():
                 try:
-                    self.jarvis_ref.event_queue.get_nowait()
+                    self.link_ref.event_queue.get_nowait()
                 except:
                     break
             print("  ✅ 事件队列已清空")
             
             # 3. 重置统计
-            self.jarvis_ref.stats = {
+            self.link_ref.stats = {
                 "events_processed": 0,
                 "events_dropped": 0,
                 "start_time": None,
@@ -405,26 +403,26 @@ class SystemEventHandler(EventHandler):
             }
             
             # 4. 重新初始化组件
-            self.jarvis_ref._initialize_components()
+            self.link_ref._initialize_components()
             print("  ✅ 组件已重新初始化")
             
             # 5. 重新启动事件循环
-            self.jarvis_ref.start(blocking=False)
+            self.link_ref.start(blocking=False)
             
             print("  ✅ 事件循环已重新启动")
-            return "🔄 JARVIS重启完成！所有组件已重新初始化。"
+            return "🔄 LINK重启完成！所有组件已重新初始化。"
             
         except Exception as e:
             return f"❌ 重启失败: {e}"
     
     def _handle_status(self) -> str:
         """获取系统状态"""
-        if not self.jarvis_ref:
-            return "📊 系统状态检查（无JARVIS引用）"
+        if not self.link_ref:
+            return "📊 系统状态检查（无LINK引用）"
         
-        stats = self.jarvis_ref.get_stats()
+        stats = self.link_ref.get_stats()
         lines = [
-            "📊 JARVIS系统状态:",
+            "📊 LINK系统状态:",
             f"  运行中: {'✅' if stats.get('is_running') else '❌'}",
             f"  运行时长: {stats.get('uptime_seconds', 0):.1f}秒",
             f"  处理事件: {stats.get('events_processed', 0)}个",
@@ -435,85 +433,18 @@ class SystemEventHandler(EventHandler):
         return "\n".join(lines)
 
 
-class LearningEventHandler(EventHandler):
-    """学习事件处理器"""
+class ActiveLINK:
+    """主动运行模式的LINK"""
     
-    def __init__(self, jarvis_instance=None):
-        super().__init__("learning_handler")
-        self.jarvis = jarvis_instance
-        self.last_learning_time = 0
-        self.learning_interval = 3600  # 1小时
-    
-    def can_handle(self, event: Event) -> bool:
-        return event.event_type == EventType.LEARNING
-    
-    def handle(self, event: Event) -> Any:
-        data = event.data
-        action = data.get("action", "")
-        
-        if action == "analyze_memory":
-            return self._analyze_memory_patterns()
-        elif action == "learn_new_skill":
-            return self._learn_new_skill(data.get("skill", ""))
-        elif action == "optimize_performance":
-            return self._optimize_performance()
-        elif action == "user_preference_learning":
-            return self._learn_user_preferences()
-        
-        return f"未知学习操作: {action}"
-    
-    def _analyze_memory_patterns(self) -> str:
-        """分析记忆模式"""
-        try:
-            # 这里可以集成实际的分析逻辑
-            # 例如：分析用户行为模式、任务执行模式等
-            return "🧠 记忆模式分析完成：发现3个常见任务模式"
-        except Exception as e:
-            return f"❌ 记忆分析失败: {e}"
-    
-    def _learn_new_skill(self, skill_name: str) -> str:
-        """学习新技能"""
-        if not skill_name:
-            skill_name = "通用任务处理"
-        
-        try:
-            # 这里可以集成实际的学习逻辑
-            # 例如：从知识库、网络或演示中学习新技能
-            return f"🎓 开始学习新技能: {skill_name}"
-        except Exception as e:
-            return f"❌ 技能学习失败: {e}"
-    
-    def _optimize_performance(self) -> str:
-        """优化性能"""
-        try:
-            # 这里可以集成性能优化逻辑
-            # 例如：调整模型参数、优化算法、清理缓存等
-            return "⚡ 性能优化完成：响应时间预计减少15%"
-        except Exception as e:
-            return f"❌ 性能优化失败: {e}"
-    
-    def _learn_user_preferences(self) -> str:
-        """学习用户偏好"""
-        try:
-            # 这里可以集成用户偏好学习逻辑
-            # 例如：分析对话历史、任务偏好、响应方式等
-            return "👤 用户偏好学习完成：已更新个性化设置"
-        except Exception as e:
-            return f"❌ 用户偏好学习失败: {e}"
-
-
-class ActiveJARVIS:
-    """主动运行模式的JARVIS"""
-    
-    def __init__(self, legacy_jarvis=None, config: Dict[str, Any] = None):
+    def __init__(self, legacy_link=None, config: Dict[str, Any] = None):
         """
-        初始化主动JARVIS
+        初始化主动LINK
         
         Args:
-            legacy_jarvis: 传统JARVIS实例（用于兼容）
+            legacy_link: 传统LINK实例（用于兼容）
             config: 配置参数
         """
-        self.legacy_jarvis = legacy_jarvis
+        self.legacy_link = legacy_link
         self.config = self._get_default_config()
         if config:
             self.config.update(config)
@@ -546,8 +477,7 @@ class ActiveJARVIS:
                 "heartbeat": {"interval": 1, "enabled": True},
                 "task_monitor": {"interval": 5, "enabled": True},
                 "reminder_check": {"interval": 60, "enabled": True},
-                "memory_cleanup": {"interval": 300, "enabled": True},
-                "learning_cycle": {"interval": 3600, "enabled": True}  # 1小时
+                "memory_cleanup": {"interval": 300, "enabled": True}
             },
             "log_level": "INFO"
         }
@@ -558,31 +488,15 @@ class ActiveJARVIS:
         self.event_sources["user_input"] = UserInputSource()
         self.event_sources["timer"] = TimerSource()
         
-        if self.legacy_jarvis and hasattr(self.legacy_jarvis, 'planning_engine'):
+        if self.legacy_link and hasattr(self.legacy_link, 'planning_engine'):
             self.event_sources["task_status"] = TaskStatusSource(
-                self.legacy_jarvis.planning_engine
+                self.legacy_link.planning_engine
             )
         
-        # 尝试初始化记忆更新源
-        try:
-            # 尝试导入记忆存储
-            from .memory.memory_store import MemoryStore
-            # 创建记忆存储实例（简化版本，实际使用可能需要配置）
-            memory_store = MemoryStore(chroma_persist_directory="./data/memory/chroma")
-            self.event_sources["memory_update"] = MemoryUpdateSource(memory_store)
-        except Exception as e:
-            print(f"⚠️  记忆更新源初始化失败: {e}")
-        
         # 初始化事件处理器（传入 self 引用以支持重启/关闭操作）
-        self.event_handlers["task"] = TaskEventHandler(self.legacy_jarvis)
+        self.event_handlers["task"] = TaskEventHandler(self.legacy_link)
         self.event_handlers["reminder"] = ReminderEventHandler()
-        self.event_handlers["system"] = SystemEventHandler(jarvis_ref=self)
-        
-        # 尝试初始化学习处理器
-        try:
-            self.event_handlers["learning"] = LearningEventHandler(self.legacy_jarvis)
-        except Exception as e:
-            print(f"⚠️  学习处理器初始化失败: {e}")
+        self.event_handlers["system"] = SystemEventHandler(link_ref=self)
         
         # 设置周期性任务
         if self.config["enable_periodic_tasks"]:
@@ -643,26 +557,6 @@ class ActiveJARVIS:
                 event_generator=reminder_check_generator,
                 name="reminder_check"
             )
-        
-        # 学习周期任务
-        if tasks_config.get("learning_cycle", {}).get("enabled"):
-            def learning_cycle_generator():
-                return Event(
-                    event_type=EventType.LEARNING,
-                    data={
-                        "action": "analyze_memory",
-                        "timestamp": time.time(),
-                        "cycle_type": "scheduled"
-                    },
-                    priority=EventPriority.BACKGROUND,
-                    source="learning_cycle"
-                )
-            
-            timer_source.add_periodic_task(
-                interval_seconds=tasks_config["learning_cycle"]["interval"],
-                event_generator=learning_cycle_generator,
-                name="learning_cycle"
-            )
     
     def start(self, blocking: bool = True):
         """
@@ -678,7 +572,7 @@ class ActiveJARVIS:
         self.is_running = True
         self.stats["start_time"] = time.time()
         
-        print("🚀 启动JARVIS主动运行模式...")
+        print("🚀 启动LINK主动运行模式...")
         print(f"📊 配置: {self.config}")
         
         if blocking:
@@ -826,13 +720,12 @@ class ActiveJARVIS:
     def run_cli(self):
         """运行交互式CLI（兼容原有接口）"""
         print("\n" + "="*60)
-        print("JARVIS主动运行模式 - 交互式CLI")
+        print("LINK主动运行模式 - 交互式CLI")
         print("="*60)
         print("输入 '退出' 或 'exit' 返回")
         print("输入 '状态' 或 'status' 查看运行状态")
         print("输入 '停止' 或 'stop' 停止主动模式")
-        print("输入 '重启' 或 'restart' 重启JARVIS")
-        print("输入 '学习' 或 'learn' 触发主动学习")
+        print("输入 '重启' 或 'restart' 重启LINK")
         print("="*60 + "\n")
         
         # 确保主动模式已启动
@@ -857,8 +750,6 @@ class ActiveJARVIS:
                     print(f"   运行时长: {stats.get('uptime_seconds', 0):.1f}秒")
                     print(f"   处理事件: {stats.get('events_processed', 0)}个")
                     print(f"   事件队列: {stats.get('event_queue_size', 0)}个")
-                    print(f"   事件源: {stats.get('event_sources_count', 0)}个")
-                    print(f"   事件处理器: {stats.get('event_handlers_count', 0)}个")
                     continue
                 
                 elif user_input.lower() in ["停止", "stop"]:
@@ -881,18 +772,6 @@ class ActiveJARVIS:
                         print("❌ 未找到系统事件处理器，无法重启")
                     continue
                 
-                elif user_input.lower() in ["学习", "learn"]:
-                    # 触发主动学习
-                    learning_event = Event(
-                        event_type=EventType.LEARNING,
-                        data={"action": "analyze_memory", "manual_trigger": True},
-                        priority=EventPriority.HIGH,
-                        source="user_manual"
-                    )
-                    self.event_queue.put(learning_event)
-                    print("📚 已触发主动学习任务")
-                    continue
-                
                 # 处理用户输入
                 if self.add_user_input(user_input):
                     print(f"📥 已接收: {user_input}")
@@ -909,32 +788,32 @@ class ActiveJARVIS:
                 print(f"❌ 错误: {e}")
 
 
-def create_active_jarvis(legacy_jarvis=None, config: Dict[str, Any] = None) -> ActiveJARVIS:
+def create_active_link(legacy_link=None, config: Dict[str, Any] = None) -> ActiveLINK:
     """
-    创建主动JARVIS的便捷函数
+    创建主动LINK的便捷函数
     
     Args:
-        legacy_jarvis: 传统JARVIS实例
+        legacy_link: 传统LINK实例
         config: 配置参数
         
     Returns:
-        ActiveJARVIS实例
+        ActiveLINK实例
     """
-    return ActiveJARVIS(legacy_jarvis, config)
+    return ActiveLINK(legacy_link, config)
 
 
 if __name__ == "__main__":
     # 测试代码
-    print("🧪 测试主动JARVIS...")
+    print("🧪 测试主动LINK...")
     
     # 创建实例
-    active_jarvis = ActiveJARVIS()
+    active_link = ActiveLINK()
     
     # 启动主动模式（非阻塞）
-    active_jarvis.start(blocking=False)
+    active_link.start(blocking=False)
     
     # 运行CLI
-    active_jarvis.run_cli()
+    active_link.run_cli()
     
     # 停止
-    active_jarvis.stop()
+    active_link.stop()

@@ -4,24 +4,24 @@
 验证：每执行一个步骤都需要用户输入"完成步骤 project_XXX"才能继续
 """
 
-from jarvis.main import JARVIS
+from link.main import LINK
 
 def test_manual_task_execution():
     """测试手动任务执行功能"""
     print("=" * 70)
-    print("JARVIS 手动任务执行功能测试")
+    print("LINK 手动任务执行功能测试")
     print("=" * 70)
     print("目标：每执行一个步骤都需要用户输入'完成步骤 project_XXX'才能继续")
     print()
     
-    # 初始化JARVIS
-    jarvis = JARVIS()
+    # 初始化LINK
+    link = LINK()
     
     print("1. 🎯 用户创建任务：'帮我规划一个成都美食之旅'")
     print("-" * 50)
     
     # 创建任务
-    response = jarvis.process_input("帮我规划一个成都美食之旅")
+    response = link.process_input("帮我规划一个成都美食之旅")
     print("响应预览:", response[:200])
     
     # 检查是否没有自动执行
@@ -37,7 +37,7 @@ def test_manual_task_execution():
     import re
     
     print("📋 从任务列表获取最新任务ID...")
-    list_response = jarvis.process_input("任务列表")
+    list_response = link.process_input("任务列表")
     print(f"任务列表响应: {list_response[:100]}...")
     
     # 方法1: 从任务列表中提取ID
@@ -87,7 +87,7 @@ def test_manual_task_execution():
     
     # 手动开始执行（应该只执行第一步）
     print(f"输入命令: '开始执行 {task_id}'")
-    start_response = jarvis.process_input(f"开始执行 {task_id}")
+    start_response = link.process_input(f"开始执行 {task_id}")
     print("开始执行响应预览:", start_response[:300])
     
     # 检查是否执行了第一步
@@ -104,7 +104,7 @@ def test_manual_task_execution():
     
     # 继续执行第二步
     print(f"输入命令: '完成步骤 {task_id}'")
-    step2_response = jarvis.process_input(f"完成步骤 {task_id}")
+    step2_response = link.process_input(f"完成步骤 {task_id}")
     print("第二步执行响应预览:", step2_response[:300])
     
     # 检查是否执行了第二步
@@ -118,12 +118,12 @@ def test_manual_task_execution():
     print("-" * 50)
     
     # 查看任务列表
-    list_response = jarvis.process_input("任务列表")
+    list_response = link.process_input("任务列表")
     print("任务列表状态:")
     print(list_response)
     
     # 查看任务详情
-    detail_response = jarvis.process_input(f"查看任务 {task_id}")
+    detail_response = link.process_input(f"查看任务 {task_id}")
     print(f"\n任务详情前200字符:", detail_response[:200])
     
     # 检查进度
@@ -161,7 +161,7 @@ def test_auto_execution_disabled():
     print("🚫 自动执行功能禁用测试")
     print("=" * 70)
     
-    jarvis = JARVIS()
+    link = LINK()
     
     print("测试多个任务创建场景:")
     
@@ -173,7 +173,7 @@ def test_auto_execution_disabled():
     
     for i, task_desc in enumerate(tasks, 1):
         print(f"\n{i}. 创建任务: '{task_desc}'")
-        response = jarvis.process_input(task_desc)
+        response = link.process_input(task_desc)
         
         if "自动开始执行任务" in response:
             print(f"  ❌ 问题：任务{i}自动开始执行了")

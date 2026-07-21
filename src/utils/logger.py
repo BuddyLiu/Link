@@ -1,5 +1,5 @@
 """
-JARVIS日志模块
+LINK日志模块
 提供统一、可配置的日志记录功能
 """
 
@@ -38,7 +38,7 @@ class ColorFormatter(logging.Formatter):
 
 
 def setup_logger(
-    name: str = "jarvis",
+    name: str = "link",
     log_level: Optional[str] = None,
     log_file: Optional[str] = None,
     console_output: bool = True
@@ -121,7 +121,7 @@ def get_default_log_file() -> str:
     
     # 按日期命名日志文件
     date_str = datetime.now().strftime("%Y-%m-%d")
-    return str(log_dir / f"jarvis_{date_str}.log")
+    return str(log_dir / f"link_{date_str}.log")
 
 
 class LoggerMixin:
@@ -139,7 +139,7 @@ class LoggerMixin:
             log_file = get_default_log_file() if settings.system.debug_mode else None
             
             self._logger = setup_logger(
-                name=f"jarvis.{class_name}",
+                name=f"link.{class_name}",
                 log_file=log_file,
                 console_output=settings.system.debug_mode
             )
@@ -158,7 +158,7 @@ def get_global_logger() -> logging.Logger:
     log_file = get_default_log_file() if settings.system.debug_mode else None
     
     return setup_logger(
-        name="jarvis",
+        name="link",
         log_file=log_file,
         console_output=True
     )

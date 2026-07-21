@@ -4,25 +4,25 @@
 展示任务创建后自动执行，减少用户手动干预
 """
 
-from main import JARVIS
+from main import LINK
 
 
 def demo_auto_task_execution():
     """演示自动任务执行功能"""
     print("=" * 70)
-    print("JARVIS 自动任务执行功能演示")
+    print("LINK 自动任务执行功能演示")
     print("=" * 70)
     print("场景：用户创建一个任务后，系统自动开始执行，减少手动干预")
     print()
     
-    # 初始化JARVIS
-    jarvis = JARVIS()
+    # 初始化LINK
+    link = LINK()
     
     print("1. 🎯 用户创建任务：'帮我规划一个杭州西湖一日游'")
     print("-" * 50)
     
     # 创建任务
-    response = jarvis.process_input("帮我规划一个杭州西湖一日游")
+    response = link.process_input("帮我规划一个杭州西湖一日游")
     
     # 检查是否自动开始执行
     if "自动开始执行任务" in response:
@@ -55,7 +55,7 @@ def demo_auto_task_execution():
     print("-" * 50)
     
     # 查看任务列表
-    list_response = jarvis.process_input("任务列表")
+    list_response = link.process_input("任务列表")
     print("任务列表状态:")
     print(list_response)
     
@@ -66,7 +66,7 @@ def demo_auto_task_execution():
     if task_id:
         # 继续执行下一个步骤
         print(f"输入命令: '完成步骤 {task_id}'")
-        next_response = jarvis.process_input(f"完成步骤 {task_id}")
+        next_response = link.process_input(f"完成步骤 {task_id}")
         print("执行结果:", next_response[:150])
     
     print()
@@ -100,7 +100,7 @@ def demo_manual_vs_auto_comparison():
     print("📊 手动执行 vs 自动执行 对比演示")
     print("=" * 70)
     
-    jarvis = JARVIS()
+    link = LINK()
     
     print("🔸 传统手动执行流程:")
     print("   1. 用户: '帮我规划一个周末读书计划'")
@@ -137,4 +137,4 @@ if __name__ == "__main__":
     print("   2. 对于复杂任务：创建后使用 '开始执行 <ID> 自动'")
     print("   3. 需要控制节奏：使用 '完成步骤 <ID>' 逐步执行")
     print("   4. 查看进度：使用 '任务列表' 或 '查看任务 <ID>'")
-    print("\n🚀 JARVIS 现在能真正理解任务并自动执行！")
+    print("\n🚀 LINK 现在能真正理解任务并自动执行！")

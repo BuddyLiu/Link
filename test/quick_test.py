@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """快速验证手动执行模式"""
 
-from jarvis.main import JARVIS
+from link.main import LINK
 
 def quick_test():
     """快速测试手动执行模式"""
     print("快速验证手动执行模式")
     print("-" * 40)
     
-    # 初始化JARVIS
-    jarvis = JARVIS()
+    # 初始化LINK
+    link = LINK()
     
     # 1. 创建任务
     print("1. 创建任务: '帮我测试手动执行'")
-    response = jarvis.process_input("帮我测试手动执行")
+    response = link.process_input("帮我测试手动执行")
     print(f"响应前150字符: {response[:150]}")
     
     # 检查是否有"自动开始执行"字样
@@ -28,7 +28,7 @@ def quick_test():
     
     # 2. 检查任务列表
     print("\n2. 检查任务列表:")
-    list_response = jarvis.process_input("任务列表")
+    list_response = link.process_input("任务列表")
     print(list_response)
     
     # 3. 尝试提取任务ID
@@ -43,7 +43,7 @@ def quick_test():
         
         # 4. 手动开始执行
         print(f"\n4. 手动开始执行: '开始执行 {task_id}'")
-        start_response = jarvis.process_input(f"开始执行 {task_id}")
+        start_response = link.process_input(f"开始执行 {task_id}")
         print(f"开始执行响应: {start_response[:200]}")
         
         if "继续下一步请输入" in start_response or "步骤1" in start_response:

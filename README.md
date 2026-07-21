@@ -1,6 +1,6 @@
-# JARVIS智能体基座
+# LINK智能体基座
 
-JARVIS（Just A Rather Very Intelligent System）是一个模块化、可扩展的智能体基座系统，旨在构建类似电影《钢铁侠》中贾维斯的AI助手。项目遵循Order.txt中定义的三个阶段路线图，目前已完成第三阶段功能开发。
+LINK 智能体基座 — 一个模块化、可扩展的智能体系统，旨在构建类似电影《钢铁侠》中 JARVIS 的 AI 助手。项目遵循 Order.txt 中定义的三个阶段路线图，目前已完成第三阶段功能开发。
 
 ## 🚀 项目状态
 
@@ -17,29 +17,29 @@ JARVIS（Just A Rather Very Intelligent System）是一个模块化、可扩展�
 
 ```bash
 # 启动主动运行模式（默认，事件驱动，类似iOS RunLoop）
-python main/run_jarvis.py
+python run_link.py
 
 # 启动传统CLI模式（响应式，无主动监控）
-python main/run_jarvis.py cli
+python run_link.py cli
 
 # 启动Web服务模式
-python main/run_jarvis.py web --host 0.0.0.0 --port 8030
+python run_link.py web --host 0.0.0.0 --port 8030
 
 # 运行测试套件
-python main/run_jarvis.py test
+python run_link.py test
 
 # 运行自动执行演示
-python main/run_jarvis.py demo
+python run_link.py demo
 
 # 启动简单Web界面
-python main/run_jarvis.py simple-web
+python run_link.py simple-web
 ```
 
 ### 命令行选项
 
 ```
 用法：
-  python main/run_jarvis.py [模式] [选项]
+  python run_link.py [模式] [选项]
 
 可用模式：
   active       - 主动运行模式（默认，事件驱动，类似iOS RunLoop）
@@ -62,11 +62,11 @@ python main/run_jarvis.py simple-web
 ### 核心模块
 
 ```
-JARVIS/
+LINK/
 ├── main/                    # 启动入口和演示脚本
-│   ├── run_jarvis.py       # 🔥 统一启动入口（主要使用这个）
+│   ├── run_link.py       # 🔥 统一启动入口（主要使用这个）
 │   ├── main.py             # 传统主程序（第三阶段）
-│   ├── active_jarvis_enhanced.py    # 主动运行模式实现
+│   ├── active_link_enhanced.py    # 主动运行模式实现
 │   ├── main_with_active.py           # 包含主动模式的主程序
 │   └── 其他启动脚本...
 ├── src/                    # 源代码
@@ -117,7 +117,7 @@ JARVIS/
 
 1. 克隆项目并进入目录：
    ```bash
-   cd /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/JARVIS
+   cd /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/LINK
    ```
 
 2. 创建并激活虚拟环境：
@@ -142,17 +142,17 @@ JARVIS/
 
 1. **启动主动运行模式**（推荐）：
    ```bash
-   python main/run_jarvis.py
+   python run_link.py
    ```
 
 2. **传统CLI交互**：
    ```bash
-   python main/run_jarvis.py cli
+   python run_link.py cli
    ```
 
 3. **查看帮助信息**：
    ```bash
-   python main/run_jarvis.py --help
+   python run_link.py --help
    ```
 
 ### 使用示例
@@ -161,16 +161,16 @@ JARVIS/
 
 ```
 >>> 现在几点了
-JARVIS: 当前时间是：2026年03月03日 17:30:45
+LINK: 当前时间是：2026年03月03日 17:30:45
 
 >>> 帮我规划一个周末聚会
-JARVIS: ✅ 任务创建成功！...
+LINK: ✅ 任务创建成功！...
 
 >>> 任务列表
-JARVIS: 📋 活跃任务 (3个):...
+LINK: 📋 活跃任务 (3个):...
 
 >>> 规划引擎
-JARVIS: 🎯 规划引擎信息：...
+LINK: 🎯 规划引擎信息：...
 ```
 
 ## 🔧 高级配置
@@ -209,7 +209,7 @@ JARVIS: 🎯 规划引擎信息：...
 
 使用配置启动：
 ```bash
-python main/run_jarvis.py active --active-config config/active_config.json
+python run_link.py active --active-config config/active_config.json
 ```
 
 ## 📚 文档
@@ -227,14 +227,14 @@ python main/run_jarvis.py active --active-config config/active_config.json
 ### 运行完整测试套件
 
 ```bash
-python main/run_jarvis.py test
+python run_link.py test
 ```
 
 ### 运行特定测试
 
 ```bash
 # 主动模式测试
-python -m test.test_active_jarvis
+python -m test.test_active_link
 
 # 规划引擎测试
 python -m test.test_planning_engine
@@ -303,4 +303,4 @@ MIT License
 
 ---
 
-**💡 提示**：项目的主要启动入口是 `main/run_jarvis.py`，所有功能都通过这个统一的入口访问。使用 `--help` 参数查看所有可用选项。
+**💡 提示**：项目的主要启动入口是 `main/run_link.py`，所有功能都通过这个统一的入口访问。使用 `--help` 参数查看所有可用选项。

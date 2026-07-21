@@ -8,20 +8,20 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
-from jarvis.reflection import (
+from link.reflection import (
     create_reflection_engine,
     create_learning_module,
     create_knowledge_updater,
     ReflectionTrigger
 )
-from jarvis.reminders import (
+from link.reminders import (
     create_reminder_manager,
     create_trigger_checker,
     create_notification_sender,
     ReminderTrigger,
     ReminderStatus
 )
-from jarvis.config.settings import settings
+from link.config.settings import settings
 
 
 class TestNewComponents:
@@ -306,7 +306,7 @@ class TestNewComponents:
     def run_all_tests(self):
         """运行所有测试"""
         print("=" * 60)
-        print("JARVIS新组件测试套件")
+        print("LINK新组件测试套件")
         print("=" * 60)
         
         results = {

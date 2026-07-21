@@ -240,7 +240,7 @@ def test_graph_index():
     import tempfile
     import shutil
 
-    test_dir = tempfile.mkdtemp(prefix="jarvis_graph_test_")
+    test_dir = tempfile.mkdtemp(prefix="link_graph_test_")
     try:
         g = GraphIndex(persist_directory=test_dir)
         print("✅ GraphIndex 初始化成功")

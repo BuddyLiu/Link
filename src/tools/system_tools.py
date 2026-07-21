@@ -1,5 +1,5 @@
 """
-JARVIS系统工具模块
+LINK系统工具模块
 提供基础的系统工具功能
 """
 
@@ -9,7 +9,8 @@ import json
 import platform
 import subprocess
 import datetime
-from typing import Dict, Any, Optional
+import shlex
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 # 修复导入路径问题
@@ -179,17 +180,24 @@ class ReadFileTool(SystemTool):
             path_obj = p
             if not path_obj.exists():
                 raise FileNotFoundError(f"文件不存在: {path}")
-            
+
             if not path_obj.is_file():
                 raise ValueError(f"路径不是文件: {path}")
-            
+
             # 检查文件大小（限制读取大文件）
-            file_size = path_obj.stat().st_size
+            try:
+                file_size = path_obj.stat().st_size
+            except (FileNotFoundError, OSError):
+                raise FileNotFoundError(f"无法访问文件: {path}")
             if file_size > 10 * 1024 * 1024:  # 10MB限制
                 raise ValueError(f"文件太大 ({file_size} bytes)，超过10MB限制")
-            
-            with open(path_obj, 'r', encoding=encoding) as f:
-                content = f.read()
+
+            # 尝试以文本模式读取（TOCTOU: open 可能失败如果文件被中间删除）
+            try:
+                with open(path_obj, 'r', encoding=encoding) as f:
+                    content = f.read()
+            except (FileNotFoundError, OSError):
+                raise FileNotFoundError(f"读取文件时文件被移除: {path}")
             
             # 限制返回内容长度
             max_length = 50000
@@ -252,10 +260,13 @@ class ExecuteCommandTool(SystemTool):
         # 系统断电
         "shutdown", "reboot", "halt", "poweroff",
         "init 0", "init 6", "systemctl poweroff",
-        # 重定向管道到 shell
+        # 重定向管道到 shell（shell=False 后不再需要，但保留作为防御层）
         "| bash", "| sh", "| zsh", "| /bin/sh",
         "> /etc/", "> /boot/", "> /sys/",
     ]
+
+    # ── Shell 元字符（禁止多语句拼接，即使 shell=False 也不允许绕行） ──
+    SHELL_METACHARS = [";", "|", "&", "$", "`", "(", ")", "{", "}"]
 
     def __init__(self):
         parameters = {
@@ -285,15 +296,29 @@ class ExecuteCommandTool(SystemTool):
                 logger.warning(f"命令被危险模式拦截: {pattern} in {cmd[:100]}")
                 return "dangerous"
 
-        # 2. 白名单前缀匹配
-        first_token = cmd_lower.split()[0] if cmd_lower else ""
+        # 2. 禁止 shell 元字符（多语句拼接）
+        for mc in self.SHELL_METACHARS:
+            if mc in cmd:
+                logger.warning(f"命令含 shell 元字符: {mc} in {cmd[:100]}")
+                return "dangerous"
+
+        # 3. 白名单前缀匹配（用 shlex 拆解，获取真实命令）
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            # shlex 解析失败（引号不匹配等）
+            logger.warning(f"命令 shlex 解析失败: {cmd[:100]}")
+            return "dangerous"
+        if not tokens:
+            return "unknown"
+        first_token = tokens[0].lower()
 
         # 尝试完整命令前缀匹配（如 "git status"）
         for prefix in self.SAFE_COMMANDS:
             if cmd_lower.startswith(prefix):
                 return "safe"
 
-        # 退而求其次：仅匹配第一个 token（如 "ls" 匹配 "ls -la /tmp"）
+        # 退而求其次：仅匹配第一个 token
         safe_tokens = {p.split()[0] for p in self.SAFE_COMMANDS}
         if first_token in safe_tokens:
             return "safe"
@@ -321,13 +346,18 @@ class ExecuteCommandTool(SystemTool):
         # ── Layer 2：工作目录限制 ──
         workdir = self._project_root
 
-        # ── Layer 3：执行 ──
+        # ── Layer 3：解析命令为参数列表（禁用 shell=True 防止注入） ──
+        try:
+            cmd_args = shlex.split(command)
+        except ValueError as e:
+            raise ValueError(f"命令格式错误: {e}")
+
         logger.warning(f"执行命令: {command} (分类={classification}, timeout={timeout}s)")
 
         try:
             result = subprocess.run(
-                command,
-                shell=True,
+                cmd_args,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -348,18 +378,23 @@ class ExecuteCommandTool(SystemTool):
                 stderr = stderr[:MAX_ERR] + f"\n... (错误截断, 共 {len(result.stderr)} 字符)"
                 truncated = True
 
-            # 二进制检测
+            # 二进制检测（text=True 时 stdout 已是字符串，检测控制字符模式）
             is_binary = False
             if stdout:
-                try:
-                    stdout.encode('utf-8')
-                except (UnicodeEncodeError, UnicodeDecodeError):
+                null_count = stdout.count('\x00')
+                control_chars = sum(1 for c in stdout
+                                    if 0 < ord(c) < 8 and c not in ('\n', '\r', '\t'))
+                if null_count > 0:
                     is_binary = True
+                elif len(stdout) > 0 and (control_chars / len(stdout)) > 0.1:
+                    is_binary = True
+                if is_binary:
                     stdout = f"[二进制输出, {len(result.stdout)} 字节]"
             if stderr:
-                try:
-                    stderr.encode('utf-8')
-                except (UnicodeEncodeError, UnicodeDecodeError):
+                null_count = stderr.count('\x00')
+                control_chars = sum(1 for c in stderr
+                                    if 0 < ord(c) < 8 and c not in ('\n', '\r', '\t'))
+                if null_count > 0 or (len(stderr) > 0 and (control_chars / len(stderr)) > 0.1):
                     stderr = f"[二进制错误输出, {len(result.stderr)} 字节]"
 
             return {
@@ -441,6 +476,8 @@ class EditFileTool(SystemTool):
 class WriteFileTool(SystemTool):
     """写入文件工具——创建新文件或覆盖已有文件"""
 
+    MAX_WRITE_SIZE = 10 * 1024 * 1024  # 10MB
+
     def __init__(self):
         parameters = {
             "path": {"type": "string", "description": "文件路径", "required": True},
@@ -458,6 +495,11 @@ class WriteFileTool(SystemTool):
     def execute(self, **kwargs) -> str:
         path = self._safe_path(kwargs["path"])
         content = kwargs["content"]
+
+        if len(content) > self.MAX_WRITE_SIZE:
+            raise ValueError(
+                f"写入内容太大 ({len(content)} 字节)，超过 {self.MAX_WRITE_SIZE} 字节的限制"
+            )
 
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
@@ -774,9 +816,7 @@ class CalculateTool(SystemTool):
             }
             
             def eval_expr(node):
-                if isinstance(node, ast.Num):
-                    return node.n
-                elif isinstance(node, ast.Constant):
+                if isinstance(node, ast.Constant):
                     return node.value
                 elif isinstance(node, ast.BinOp):
                     left_val = eval_expr(node.left)

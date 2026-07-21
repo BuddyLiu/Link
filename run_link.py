@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JARVIS智能体统一启动入口
+LINK智能体统一启动入口
 支持多种启动模式：传统CLI、Web服务、主动运行模式等
 
 说明：这个文件位于项目根目录，所有导入路径已修复
@@ -21,25 +21,25 @@ src_dir = os.path.join(current_dir, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)  # 添加src目录
 
-# 全局变量，用于存储运行中的JARVIS实例，便于优雅退出
-_active_jarvis_instance = None
+# 全局变量，用于存储运行中的LINK实例，便于优雅退出
+_active_link_instance = None
 
 
 def handle_exit_signal(signum, frame):
-    """处理退出信号，优雅关闭JARVIS"""
-    print(f"\n📴 收到退出信号 ({signal.Signals(signum).name})，正在关闭JARVIS...")
+    """处理退出信号，优雅关闭LINK"""
+    print(f"\n📴 收到退出信号 ({signal.Signals(signum).name})，正在关闭LINK...")
     
-    global _active_jarvis_instance
-    if _active_jarvis_instance is not None:
+    global _active_link_instance
+    if _active_link_instance is not None:
         try:
-            if hasattr(_active_jarvis_instance, 'stop'):
-                _active_jarvis_instance.stop()
-                print("✅ JARVIS已优雅关闭")
-            elif hasattr(_active_jarvis_instance, 'shutdown'):
-                _active_jarvis_instance.shutdown()
-                print("✅ JARVIS已优雅关闭")
+            if hasattr(_active_link_instance, 'stop'):
+                _active_link_instance.stop()
+                print("✅ LINK已优雅关闭")
+            elif hasattr(_active_link_instance, 'shutdown'):
+                _active_link_instance.shutdown()
+                print("✅ LINK已优雅关闭")
         except Exception as e:
-            print(f"⚠️  关闭JARVIS时出错: {e}")
+            print(f"⚠️  关闭LINK时出错: {e}")
     
     sys.exit(0)
 
@@ -143,7 +143,7 @@ def run_active_mode(args) -> int:
 
 def run_direct_active(args) -> int:
     """
-    直接运行主动模式（使用active_jarvis_enhanced.py）
+    直接运行主动模式（使用active_link_enhanced.py）
 
     Args:
         args: 命令行参数
@@ -154,50 +154,50 @@ def run_direct_active(args) -> int:
     try:
         print("🚀 直接启动主动运行模式...")
 
-        # 尝试导入ActiveJARVIS类
-        from active_jarvis_enhanced import ActiveJARVIS
+        # 尝试导入ActiveLINK类
+        from active_link_enhanced import ActiveLINK
 
-        # 创建并启动ActiveJARVIS
-        global _active_jarvis_instance
-        active_jarvis = ActiveJARVIS()
-        _active_jarvis_instance = active_jarvis
+        # 创建并启动ActiveLINK
+        global _active_link_instance
+        active_link = ActiveLINK()
+        _active_link_instance = active_link
 
         # 启动后台事件循环（非阻塞）
-        active_jarvis.start(blocking=False)
+        active_link.start(blocking=False)
 
         # 运行CLI交互界面
-        active_jarvis.run_cli()
+        active_link.run_cli()
 
-        # CLI结束后停止JARVIS
-        active_jarvis.stop()
-        _active_jarvis_instance = None
+        # CLI结束后停止LINK
+        active_link.stop()
+        _active_link_instance = None
 
         return 0
 
     except ImportError as e:
         print(f"❌ 无法导入主动模式: {e}")
-        print("💡 请确保active_jarvis_enhanced.py存在")
-        if _active_jarvis_instance is not None:
+        print("💡 请确保active_link_enhanced.py存在")
+        if _active_link_instance is not None:
             try:
-                _active_jarvis_instance.stop()
+                _active_link_instance.stop()
             except Exception:
                 pass
-            _active_jarvis_instance = None
+            _active_link_instance = None
         return 1
     except Exception as e:
         print(f"❌ 主动模式运行失败: {e}")
-        if _active_jarvis_instance is not None:
+        if _active_link_instance is not None:
             try:
-                _active_jarvis_instance.stop()
+                _active_link_instance.stop()
             except Exception:
                 pass
-            _active_jarvis_instance = None
+            _active_link_instance = None
         return 1
 
 
 def run_web_mode(args) -> int:
     """
-    运行Web服务模式（启动 web_active_jarvis 前后端一体服务）
+    运行Web服务模式（启动 web_active_link 前后端一体服务）
 
     Args:
         args: 命令行参数
@@ -234,23 +234,23 @@ def run_web_mode(args) -> int:
         print("🌐 启动Web服务模式...")
         print(f"💡 服务地址: http://{args.host}:{args.port}")
 
-        from web_active_jarvis import WebActiveJARVIS
+        from web_active_link import WebActiveLINK
 
         config = {"web_host": args.host, "web_port": args.port}
-        web_jarvis = WebActiveJARVIS(config)
+        web_link = WebActiveLINK(config)
 
-        global _active_jarvis_instance
-        _active_jarvis_instance = web_jarvis
-        web_jarvis.start(blocking=False)
-        web_jarvis.run_web()
+        global _active_link_instance
+        _active_link_instance = web_link
+        web_link.start(blocking=False)
+        web_link.run_web()
 
-        web_jarvis.stop()
-        _active_jarvis_instance = None
+        web_link.stop()
+        _active_link_instance = None
         return 0
 
     except ImportError as e:
         print(f"❌ 无法导入Web主程序: {e}")
-        print("💡 Web服务模式需要 web_active_jarvis.py")
+        print("💡 Web服务模式需要 web_active_link.py")
         return 1
     except Exception as e:
         print(f"❌ Web模式运行失败: {e}")
@@ -311,7 +311,8 @@ def run_test_suite(args) -> int:
 
         # 尝试导入测试模块
         test_suites = [
-            ("test.test_active_jarvis", "主动模式测试套件"),
+            ("test.test_tools", "工具系统测试套件"),
+            ("test.test_active_link", "主动模式测试套件"),
             ("test.test_planning_engine", "规划引擎测试套件"),
             ("test.test_task_execution", "任务执行测试套件"),
         ]
@@ -339,7 +340,7 @@ def run_test_suite(args) -> int:
 
         print("❌ 未找到测试套件")
         print("💡 可用的测试文件:")
-        print("   - test/test_active_jarvis.py")
+        print("   - test/test_active_link.py")
         print("   - test/test_planning_engine.py")
         print("   - test/test_task_execution.py")
         return 1
@@ -378,10 +379,10 @@ def run_auto_execution_demo(args) -> int:
 def print_help() -> None:
     """打印详细的帮助信息"""
     help_text = """
-JARVIS智能体统一启动器
+LINK智能体统一启动器
 
 使用方法:
-  python3 run_jarvis.py [模式] [选项]
+  python3 run_link.py [模式] [选项]
 
 可用模式:
   active       - 主动运行模式（默认，事件驱动，类似iOS RunLoop）
@@ -399,29 +400,29 @@ JARVIS智能体统一启动器
 
 示例:
   # 启动主动运行模式（默认）
-  python3 run_jarvis.py
+  python3 run_link.py
   
   # 启动传统CLI模式
-  python3 run_jarvis.py cli
+  python3 run_link.py cli
   
   # 启动Web服务
-  python3 run_jarvis.py web --host 127.0.0.1 --port 8030
+  python3 run_link.py web --host 127.0.0.1 --port 8030
   
   # 运行测试套件
-  python3 run_jarvis.py test
+  python3 run_link.py test
   
   # 运行自动执行演示
-  python3 run_jarvis.py demo
+  python3 run_link.py demo
   
   # 启动自定义Web服务（指定端口）
-  python3 run_jarvis.py web --port 9000
+  python3 run_link.py web --port 9000
 
 高级用法:
   # 使用自定义配置文件启动主动模式
-  python3 run_jarvis.py active --active-config config/active_config.json
+  python3 run_link.py active --active-config config/active_config.json
   
   # 调试模式运行
-  python3 run_jarvis.py --debug
+  python3 run_link.py --debug
 
 版本信息:
   • 主动运行模式: 事件驱动架构，支持多优先级调度
@@ -435,7 +436,7 @@ JARVIS智能体统一启动器
 def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
-        description="JARVIS智能体统一启动器",
+        description="LINK智能体统一启动器",
         add_help=False  # 自定义帮助处理
     )
     
@@ -495,7 +496,7 @@ def main() -> int:
     
     # 显示启动横幅
     print("\n" + "="*60)
-    print("JARVIS智能体 - 统一启动入口")
+    print("LINK智能体 - 统一启动入口")
     print("🎯 版本: 3.0 | 架构: 模块化 | 阶段: 第三阶段")
     print("="*60)
     
@@ -515,14 +516,14 @@ def main() -> int:
         return_code = handler(args)
         
         if return_code == 0:
-            print("\n✅ JARVIS正常退出")
+            print("\n✅ LINK正常退出")
         else:
-            print(f"\n❌ JARVIS异常退出 (代码: {return_code})")
+            print(f"\n❌ LINK异常退出 (代码: {return_code})")
         
         return return_code
         
     except KeyboardInterrupt:
-        print("\n\n📴 用户中断，正在关闭JARVIS...")
+        print("\n\n📴 用户中断，正在关闭LINK...")
         return 0
     except Exception as e:
         print(f"\n❌ 启动过程中发生未预期错误: {e}")

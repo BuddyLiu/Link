@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JARVIS智能体基座主入口文件
+LINK智能体基座主入口文件
 支持第三阶段：复杂任务规划、反思和主动提醒
 """
 
@@ -31,12 +31,12 @@ except ImportError:
     from .core.model_engine import BrainEngine, create_brain_engine
 
 
-class JARVIS:
-    """JARVIS智能体主类"""
+class LINK:
+    """LINK智能体主类"""
     
     def __init__(self):
-        """初始化JARVIS智能体"""
-        self.logger = logger.getChild("jarvis")
+        """初始化LINK智能体"""
+        self.logger = logger.getChild("link")
         self.settings = settings
         self.tool_manager = tool_manager
         
@@ -68,11 +68,11 @@ class JARVIS:
         # 初始化组件
         self._initialize_components()
         
-        self.logger.info("JARVIS智能体初始化完成（第三阶段：复杂任务规划）")
+        self.logger.info("LINK智能体初始化完成（第三阶段：复杂任务规划）")
     
     def _initialize_components(self):
         """初始化所有组件"""
-        self.logger.info("开始初始化JARVIS组件...")
+        self.logger.info("开始初始化LINK组件...")
         
         # 初始化工具
         self._initialize_tools()
@@ -92,7 +92,7 @@ class JARVIS:
         except Exception:
             pass
 
-        self.logger.info("JARVIS组件初始化完成")
+        self.logger.info("LINK组件初始化完成")
     
     def _initialize_tools(self):
         """初始化系统工具"""
@@ -267,7 +267,7 @@ class JARVIS:
             self.logger.info(f"[debug] greeting name='{name}' | memory_context[:300]={memory_context[:300]!r}")
             greet = f"{period}好"
             if name:
-                return f"{greet} {name}！我是 JARVIS，有什么需要帮忙的吗？"
+                return f"{greet} {name}！我是 LINK，有什么需要帮忙的吗？"
             return f"{greet}！有什么需要帮忙的吗？"
 
         if t == "chitchat" and sub == "thanks":
@@ -301,6 +301,9 @@ class JARVIS:
             str: 处理结果
         """
         self.logger.info(f"处理用户输入: {input_text}")
+
+        # 重置每次输入的计数器
+        self._tool_call_count = 0
 
         # 设置进度回调（供 _execute_tool_call 使用）
         self._progress_callback = progress_callback
@@ -676,7 +679,7 @@ class JARVIS:
                         if line and len(line) > 4 \
                            and "助手" not in line \
                            and "Assistant" not in line \
-                           and "JARVIS" not in line.upper() \
+                           and "LINK" not in line.upper() \
                            and not line.endswith("。") or (line.endswith("。") and len(line) > 8):
                             if line not in facts:
                                 facts.append(line)
@@ -689,7 +692,7 @@ class JARVIS:
             f = f.strip().strip('。，.').strip()
             if len(f) < 4:
                 continue
-            if 'JARVIS' in f.upper() or '助手' in f or '助理' in f:
+            if 'LINK' in f.upper() or '助手' in f or '助理' in f:
                 continue
             if f not in clean_facts:
                 clean_facts.append(f)
@@ -764,7 +767,7 @@ class JARVIS:
         import re
         # 我叫X / 我的名字是X / 名字叫X（不含"我是"，避免误匹配）
         m = re.search(r'(?:我叫|我的名字叫?|名字叫|人称)(\S{2,6})', text)
-        if m and len(m.group(1)) >= 2 and 'JARVIS' not in m.group(1).upper():
+        if m and len(m.group(1)) >= 2 and 'LINK' not in m.group(1).upper():
             facts.append(f"用户叫{m.group(1)}")
         # 职业：我是XXX / 我做XXX / 我的职业是XXX
         # 匹配"我是iOS开发工程师"、"我是一名产品经理"等
@@ -773,7 +776,7 @@ class JARVIS:
             job = m.group(1).strip()
             # 清理开头残留的"名"、"位"等
             job = re.sub(r'^[名位个]', '', job).strip()
-            if job and job not in ('JARVIS', 'jarvis', '机器人') and len(job) >= 4:
+            if job and job not in ('LINK', 'link', '机器人') and len(job) >= 4:
                 facts.append(f"用户职业: {job}")
         # 手机号：1XX... / 我的手机号是X / X 这是我的手机号
         m = re.search(r'(1[3-9]\d{9})(?:\s*这是我?的手机号)?|(?:我的手机号(?:\s*是)?[:：\s]*|手机号[:：\s]*)(1[3-9]\d{9})', text)
@@ -786,7 +789,7 @@ class JARVIS:
         m = re.search(r'(?:我喜欢|我平时|我爱|我热衷于|我爱好)(.{2,20})', text)
         if m:
             pref = m.group(1).strip()
-            if len(pref) >= 2 and 'JARVIS' not in pref.upper():
+            if len(pref) >= 2 and 'LINK' not in pref.upper():
                 facts.append(f"用户偏好: {pref}")
         return facts
 
@@ -1502,7 +1505,7 @@ class JARVIS:
         if self.brain_engine:
             try:
                 system_prompt = (
-                    "你是一个AI助手JARVIS，由用户构建的私人智能助手。"
+                    "你是一个AI助手LINK，由用户构建的私人智能助手。"
                     "请用中文友好地回答用户的问题。回答简洁明了，不要使用markdown格式。\n\n"
                     "## 你可以执行的操作\n"
                     "如果用户请求以下操作，请在回答末尾加上操作标记 （不要标记在中间或开头）：\n"
@@ -1602,8 +1605,8 @@ class JARVIS:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
-                        "content": {"type": "string"}
+                        "path": {"type": "string", "description": "文件路径"},
+                        "content": {"type": "string", "description": "文件内容"}
                     },
                     "required": ["path", "content"]
                 }
@@ -1617,7 +1620,7 @@ class JARVIS:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
+                        "path": {"type": "string", "description": "文件路径"},
                         "old": {"type": "string", "description": "被替换的原内容"},
                         "new": {"type": "string", "description": "替换后的内容"}
                     },
@@ -1633,7 +1636,7 @@ class JARVIS:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"}
+                        "path": {"type": "string", "description": "文件路径"}
                     },
                     "required": ["path"]
                 }
@@ -1647,7 +1650,7 @@ class JARVIS:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"}
+                        "query": {"type": "string", "description": "搜索关键词"}
                     },
                     "required": ["query"]
                 }
@@ -1661,9 +1664,84 @@ class JARVIS:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string"}
+                        "pattern": {"type": "string", "description": "文件模式，如 **/*.py"}
                     },
                     "required": ["pattern"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "grep_files",
+                "description": "在文件中搜索文本（关键词匹配）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "搜索关键词"},
+                        "path": {"type": "string", "description": "搜索路径，默认当前目录"},
+                        "include": {"type": "string", "description": "文件后缀过滤，如 .py,.txt"},
+                        "max_results": {"type": "integer", "description": "最大结果数，默认20"}
+                    },
+                    "required": ["pattern"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "获取当前日期和时间",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "format": {
+                            "type": "string",
+                            "enum": ["full", "date", "time", "timestamp"],
+                            "description": "时间格式: full(完整时间), date(仅日期), time(仅时间), timestamp(时间戳)"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_files",
+                "description": "列出目录中的文件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "要列出的目录路径"},
+                        "recursive": {"type": "boolean", "description": "是否递归列出子目录"}
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_system_info",
+                "description": "获取系统信息（平台、架构、Python版本等）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "detail": {"type": "boolean", "description": "是否显示详细信息"}
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calculate",
+                "description": "执行数学计算",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "expression": {"type": "string", "description": "数学表达式，如 2 + 3 * 4"}
+                    },
+                    "required": ["expression"]
                 }
             }
         },
@@ -1698,7 +1776,7 @@ class JARVIS:
     def _report_progress(self, icon: str, message: str):
         """发送进度消息到前端（如果设置了回调）"""
         import logging
-        logger = logging.getLogger("jarvis")
+        logger = logging.getLogger("link")
         if self._progress_callback:
             try:
                 full_msg = f"{icon} {message}"
@@ -1718,6 +1796,11 @@ class JARVIS:
             "delete_file": ("🗑️", "删除文件 {path}"),
             "search_web": ("🔍", "搜索: {query}"),
             "glob_files": ("🔎", "搜索文件: {pattern}"),
+            "grep_files": ("🔎", "搜索文本: {pattern}"),
+            "get_time": ("🕐", "获取时间"),
+            "list_files": ("📂", "列出目录: {path}"),
+            "get_system_info": ("💻", "获取系统信息"),
+            "calculate": ("🧮", "计算: {expression}"),
             "execute_command": ("💻", "执行命令: {command}"),
             "save_user_fact": ("🧠", "记住用户信息: {category}={value}"),
             "get_project_info": ("📋", "获取项目信息"),
@@ -1745,6 +1828,11 @@ class JARVIS:
             "delete_file": ("delete_file", {"path": "path"}),
             "search_web": ("search_web", {"query": "query"}),
             "glob_files": ("glob_files", {"pattern": "pattern"}),
+            "grep_files": ("grep_files", {"pattern": "pattern", "path": "path", "include": "include", "max_results": "max_results"}),
+            "get_time": ("get_time", {"format": "format"}),
+            "list_files": ("list_files", {"path": "path", "recursive": "recursive"}),
+            "get_system_info": ("get_system_info", {"detail": "detail"}),
+            "calculate": ("calculate", {"expression": "expression"}),
             "execute_command": ("execute_command", {"command": "command", "timeout": "timeout"}),
         }
 
@@ -1768,7 +1856,14 @@ class JARVIS:
             tool_id, param_map = name_map[tool_name]
             kwargs = {k: args.get(v, "") for k, v in param_map.items()}
             try:
-                result = self.tool_manager.execute_tool(tool_id, **kwargs)
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+                TOOL_TIMEOUT = 120  # 全局工具超时（秒）
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self.tool_manager.execute_tool, tool_id, **kwargs)
+                    try:
+                        result = future.result(timeout=TOOL_TIMEOUT)
+                    except FutureTimeout:
+                        raise TimeoutError(f"工具执行超时 (>{TOOL_TIMEOUT}s): {tool_name}")
                 result_str = str(result)
                 # 对特定工具推送结果摘要
                 if tool_name == "read_file" and len(result_str) > 20:
@@ -1782,8 +1877,21 @@ class JARVIS:
                 else:
                     self._report_progress("✅", f"执行完成: {tool_name}")
                 return result_str
+            except PermissionError as e:
+                self._report_progress("❌", f"权限被拒绝: {tool_name}")
+                return f"权限被拒绝: {e}"
+            except FileNotFoundError as e:
+                self._report_progress("❌", f"文件未找到: {tool_name}")
+                return f"文件未找到: {e}"
+            except TimeoutError as e:
+                self._report_progress("⏱", f"操作超时: {tool_name}")
+                return f"操作超时: {e}"
+            except ValueError as e:
+                self._report_progress("❌", f"参数无效: {tool_name}")
+                return f"参数无效: {e}"
             except Exception as e:
                 self._report_progress("❌", f"执行失败: {tool_name} - {e}")
+                self.logger.error(f"工具执行异常 {tool_name}: {e}", exc_info=True)
                 return f"执行失败: {e}"
 
         return f"未知工具: {tool_name}"
@@ -1797,7 +1905,7 @@ class JARVIS:
 
         # 构建系统提示
         system_prompt = (
-            "你是一个AI助手JARVIS，用中文回答。\n\n"
+            "你是一个AI助手LINK，用中文回答。\n\n"
             "## 工具使用规则\n"
             "- 用户提到个人信息（姓名/职业/手机号/偏好）→ 调用 save_user_fact\n"
             "- 用户要求搜索/查新闻/查天气/你不知道的信息 → 调用 search_web\n"
@@ -1881,7 +1989,7 @@ class JARVIS:
         """获取帮助文本"""
         tool_names = self.tool_manager.get_tool_names()
         
-        help_text = "JARVIS智能体（第三阶段）可用功能：\n\n"
+        help_text = "LINK智能体（第三阶段）可用功能：\n\n"
         help_text += "1. 📋 基础功能：\n"
         help_text += "   - 询问时间：可以说'现在几点了'或'告诉我时间'\n"
         help_text += "   - 获取帮助：可以说'帮助'或'help'\n"
@@ -1949,7 +2057,7 @@ class JARVIS:
     def run_cli(self):
         """运行命令行交互界面"""
         print("\n" + "="*50)
-        print("JARVIS智能体 v3.0 - 第三阶段")
+        print("LINK智能体 v3.0 - 第三阶段")
         print("🎯 支持复杂任务规划、反思和主动提醒")
         print("="*50)
         print("输入 '退出' 或 'exit' 结束程序")
@@ -1973,7 +2081,7 @@ class JARVIS:
                 
                 # 处理用户输入
                 response = self.process_input(user_input)
-                print(f"JARVIS: {response}\n")
+                print(f"LINK: {response}\n")
                 
             except KeyboardInterrupt:
                 print("\n\n程序已中断")
@@ -1983,10 +2091,10 @@ class JARVIS:
                 print(f"抱歉，处理时出现错误: {str(e)}\n")
     
     def run_web(self, host: str = "127.0.0.1", port: int = 8011):
-        """运行Web服务（使用 web_active_jarvis.py 的 WebActiveJARVIS）"""
+        """运行Web服务（使用 web_active_link.py 的 WebActiveLINK）"""
         try:
-            from web_active_jarvis import WebActiveJARVIS
-            web_app = WebActiveJARVIS()
+            from web_active_link import WebActiveLINK
+            web_app = WebActiveLINK()
             # 覆盖默认端口
             web_app.config["web_host"] = host
             web_app.config["web_port"] = port
@@ -2001,7 +2109,7 @@ class JARVIS:
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="JARVIS智能体基座")
+    parser = argparse.ArgumentParser(description="LINK智能体基座")
     parser.add_argument(
         "--mode",
         choices=["cli", "web", "test"],
@@ -2034,17 +2142,17 @@ def main():
         logger.debug("调试模式已启用")
     
     try:
-        # 创建JARVIS实例
-        jarvis = JARVIS()
+        # 创建LINK实例
+        link = LINK()
         
         # 根据模式运行
         if args.mode == "cli":
-            jarvis.run_cli()
+            link.run_cli()
         elif args.mode == "web":
-            jarvis.run_web(args.host, args.port)
+            link.run_web(args.host, args.port)
         elif args.mode == "test":
             # 运行测试
-            test_results = run_tests(jarvis)
+            test_results = run_tests(link)
             print(f"测试完成: {test_results}")
         
     except KeyboardInterrupt:
@@ -2056,7 +2164,7 @@ def main():
     return 0
 
 
-def run_tests(jarvis: JARVIS) -> dict:
+def run_tests(link: LINK) -> dict:
     """运行测试"""
     logger.info("开始运行测试...")
     
@@ -2070,7 +2178,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试1：基础功能测试
     test_results["total"] += 1
     try:
-        response = jarvis.process_input("现在几点了")
+        response = link.process_input("现在几点了")
         logger.info(f"测试1通过: {response[:50]}...")
         test_results["passed"] += 1
         test_results["details"].append("测试1: 基础功能 - 通过")
@@ -2082,7 +2190,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试2：帮助功能测试
     test_results["total"] += 1
     try:
-        response = jarvis.process_input("帮助")
+        response = link.process_input("帮助")
         if response and len(response) > 0:
             logger.info("测试2通过: 帮助功能正常")
             test_results["passed"] += 1
@@ -2099,7 +2207,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试3：规划引擎初始化测试
     test_results["total"] += 1
     try:
-        if jarvis.planning_engine is not None:
+        if link.planning_engine is not None:
             logger.info("测试3通过: 规划引擎初始化成功")
             test_results["passed"] += 1
             test_results["details"].append("测试3: 规划引擎初始化 - 通过")
@@ -2115,7 +2223,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试4：复杂任务规划测试（简化）
     test_results["total"] += 1
     try:
-        response = jarvis.process_input("帮我规划一个简单的项目")
+        response = link.process_input("帮我规划一个简单的项目")
         if response and "任务创建成功" in response:
             logger.info("测试4通过: 复杂任务规划正常")
             test_results["passed"] += 1

@@ -81,7 +81,7 @@ class MemoryStore:
             )
             
             # 创建或获取记忆集合
-            collection_name = "jarvis_memories"
+            collection_name = "link_memories"
             
             try:
                 self.collection = self.chroma_client.get_collection(collection_name)
@@ -91,7 +91,7 @@ class MemoryStore:
                 self.collection = self.chroma_client.create_collection(
                     name=collection_name,
                     embedding_function=ChromaEmbeddingFunction(self.embedding_service),
-                    metadata={"description": "JARVIS智能体记忆存储"}
+                    metadata={"description": "LINK智能体记忆存储"}
                 )
                 self.logger.info(f"创建新的记忆集合: {collection_name}")
             

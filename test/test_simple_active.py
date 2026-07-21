@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-简单测试主动运行模式（不依赖传统JARVIS的复杂依赖）
+简单测试主动运行模式（不依赖传统LINK的复杂依赖）
 """
 
 import sys
@@ -11,13 +11,13 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from jarvis.active_jarvis_enhanced import ActiveJARVIS, Event, EventType, EventPriority
+    from link.active_link_enhanced import ActiveLINK, Event, EventType, EventPriority
     print("✅ 成功导入主动模式组件")
 except ImportError as e:
     print(f"❌ 导入失败: {e}")
     # 尝试从当前目录导入
     try:
-        # 创建简化的ActiveJARVIS版本用于测试
+        # 创建简化的ActiveLINK版本用于测试
         import asyncio
         import threading
         import time
@@ -36,43 +36,43 @@ def test_basic_functionality():
     """测试基本功能"""
     print("\n🧪 测试1: 基本实例化和启动")
     try:
-        active_jarvis = ActiveJARVIS()
-        print("✅ ActiveJARVIS实例创建成功")
+        active_link = ActiveLINK()
+        print("✅ ActiveLINK实例创建成功")
         
         # 测试配置
-        config = active_jarvis.config
+        config = active_link.config
         print(f"📊 默认配置: event_loop_interval={config.get('event_loop_interval')}")
         print(f"📊 周期性任务: {len(config.get('periodic_tasks', {}))}个")
         
         # 测试启动
-        active_jarvis.start(blocking=False)
+        active_link.start(blocking=False)
         print("✅ 主动模式启动成功（非阻塞）")
         
         # 等待初始化
         time.sleep(2)
         
         # 获取统计
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         print(f"📊 运行统计:")
         print(f"   运行中: {stats.get('is_running', False)}")
         print(f"   已处理事件: {stats.get('events_processed', 0)}")
         
         # 测试添加用户输入
         print("\n🧪 测试2: 用户输入处理")
-        success = active_jarvis.add_user_input("测试用户输入")
+        success = active_link.add_user_input("测试用户输入")
         print(f"✅ 添加用户输入: {'成功' if success else '失败'}")
         
         # 等待处理
         time.sleep(1)
         
         # 再次获取统计
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         print(f"📊 处理后统计:")
         print(f"   已处理事件: {stats.get('events_processed', 0)}")
         
         # 测试停止
         print("\n🧪 测试3: 停止功能")
-        active_jarvis.stop()
+        active_link.stop()
         print("✅ 主动模式停止成功")
         
         return True
@@ -88,7 +88,7 @@ def test_event_system():
     print("\n🧪 测试4: 事件系统")
     try:
         # 创建实例但不启动
-        active_jarvis = ActiveJARVIS()
+        active_link = ActiveLINK()
         
         # 测试事件创建
         event = Event(
@@ -104,7 +104,7 @@ def test_event_system():
         print(f"   源: {event.source}")
         
         # 测试事件处理器
-        from jarvis.active_jarvis_enhanced import SystemEventHandler
+        from link.active_link_enhanced import SystemEventHandler
         handler = SystemEventHandler()
         
         print(f"✅ 事件处理器创建成功:")
@@ -137,8 +137,8 @@ def test_periodic_tasks():
             "log_level": "INFO"
         }
         
-        active_jarvis = ActiveJARVIS(config=config)
-        active_jarvis.start(blocking=False)
+        active_link = ActiveLINK(config=config)
+        active_link.start(blocking=False)
         
         print("✅ 自定义配置加载成功")
         print(f"📊 配置: {config}")
@@ -146,17 +146,17 @@ def test_periodic_tasks():
         print("⏳ 等待周期性任务执行（5秒）...")
         
         # 记录开始统计
-        start_stats = active_jarvis.get_stats()
+        start_stats = active_link.get_stats()
         start_processed = start_stats.get('events_processed', 0)
         
         # 等待
         time.sleep(5)
         
         # 记录结束统计
-        end_stats = active_jarvis.get_stats()
+        end_stats = active_link.get_stats()
         end_processed = end_stats.get('events_processed', 0)
         
-        active_jarvis.stop()
+        active_link.stop()
         
         processed_during_test = end_processed - start_processed
         
@@ -185,14 +185,14 @@ def test_cli_interaction():
         print("   - 模式控制: ✅ 支持")
         
         # 创建实例测试基本方法
-        active_jarvis = ActiveJARVIS()
+        active_link = ActiveLINK()
         
         # 测试状态获取
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         print(f"📊 初始状态: 运行中={stats.get('is_running', False)}")
         
         # 测试用户输入方法
-        success = active_jarvis.add_user_input("测试输入")
+        success = active_link.add_user_input("测试输入")
         print(f"📥 用户输入方法: {'✅ 可用' if success else '❌ 不可用'}")
         
         return True
@@ -206,7 +206,7 @@ def main():
     print("="*60)
     print("🧪 简单主动运行模式测试")
     print("="*60)
-    print("💡 这个测试不依赖传统JARVIS的复杂依赖")
+    print("💡 这个测试不依赖传统LINK的复杂依赖")
     print("="*60)
     
     test_results = []
@@ -247,8 +247,8 @@ def main():
     if passed == total:
         print("\n🎉 所有测试通过！主动运行模式核心功能正常")
         print("💡 建议:")
-        print("   1. 运行 'python3 jarvis/active_jarvis_enhanced.py' 体验完整功能")
-        print("   2. 使用 'python3 run_jarvis_enhanced.py --mode active' 启动集成版本")
+        print("   1. 运行 'python3 link/active_link_enhanced.py' 体验完整功能")
+        print("   2. 使用 'python3 run_link_enhanced.py --mode active' 启动集成版本")
         print("   3. 输入'状态'查看运行统计，输入'学习'触发主动学习")
         return True
     elif passed >= total * 0.7:

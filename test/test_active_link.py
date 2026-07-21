@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""测试JARVIS主动运行模式"""
+"""测试LINK主动运行模式"""
 
 import sys
 import os
@@ -15,15 +15,15 @@ def test_basic_event_loop():
     print("🧪 测试基本事件循环...")
     
     try:
-        from jarvis.active_jarvis_enhanced import (
-            ActiveJARVIS, Event, EventType, EventPriority
+        from link.active_link_enhanced import (
+            ActiveLINK, Event, EventType, EventPriority
         )
         
-        # 创建主动JARVIS实例（不依赖传统JARVIS）
-        active_jarvis = ActiveJARVIS()
+        # 创建主动LINK实例（不依赖传统LINK）
+        active_link = ActiveLINK()
         
         # 启动非阻塞模式
-        active_jarvis.start(blocking=False)
+        active_link.start(blocking=False)
         print("✅ 事件循环启动成功")
         
         # 等待事件循环初始化
@@ -33,7 +33,7 @@ def test_basic_event_loop():
         print("📤 添加测试事件...")
         
         # 用户输入事件
-        active_jarvis.add_user_input("测试用户输入")
+        active_link.add_user_input("测试用户输入")
         print("✅ 添加用户输入事件")
         
         # 自定义事件
@@ -48,7 +48,7 @@ def test_basic_event_loop():
         # 实际应该通过add_user_input等公开方法添加事件
         
         # 获取统计信息
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         print(f"📊 运行统计:")
         print(f"   运行中: {stats.get('is_running', False)}")
         print(f"   已处理事件: {stats.get('events_processed', 0)}")
@@ -59,12 +59,12 @@ def test_basic_event_loop():
         time.sleep(3)
         
         # 再次获取统计信息
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         print(f"📊 处理后统计:")
         print(f"   已处理事件: {stats.get('events_processed', 0)}")
         
         # 停止事件循环
-        active_jarvis.stop()
+        active_link.stop()
         print("✅ 事件循环停止成功")
         
         return True
@@ -80,7 +80,7 @@ def test_periodic_tasks():
     print("\n🧪 测试周期性任务...")
     
     try:
-        from jarvis.active_jarvis_enhanced import ActiveJARVIS
+        from link.active_link_enhanced import ActiveLINK
         
         # 创建自定义配置，缩短测试间隔
         config = {
@@ -94,8 +94,8 @@ def test_periodic_tasks():
             "log_level": "INFO"
         }
         
-        active_jarvis = ActiveJARVIS(config=config)
-        active_jarvis.start(blocking=False)
+        active_link = ActiveLINK(config=config)
+        active_link.start(blocking=False)
         
         print("✅ 周期性任务启动，等待10秒...")
         print("📝 预期看到心跳和任务监控事件")
@@ -103,13 +103,13 @@ def test_periodic_tasks():
         # 等待10秒观察周期性任务
         for i in range(10):
             time.sleep(1)
-            stats = active_jarvis.get_stats()
+            stats = active_link.get_stats()
             processed = stats.get('events_processed', 0)
             print(f"  第{i+1}秒 - 已处理事件: {processed}")
         
-        active_jarvis.stop()
+        active_link.stop()
         
-        final_stats = active_jarvis.get_stats()
+        final_stats = active_link.get_stats()
         total_processed = final_stats.get('events_processed', 0)
         
         if total_processed > 0:
@@ -132,15 +132,15 @@ def test_user_interaction():
         print("📝 模拟用户输入处理...")
         
         # 由于真实用户输入需要交互，我们创建一个模拟线程
-        from jarvis.active_jarvis_enhanced import ActiveJARVIS
+        from link.active_link_enhanced import ActiveLINK
         
         config = {
             "event_loop_interval": 0.1,
             "log_level": "DEBUG"
         }
         
-        active_jarvis = ActiveJARVIS(config=config)
-        active_jarvis.start(blocking=False)
+        active_link = ActiveLINK(config=config)
+        active_link.start(blocking=False)
         
         # 添加多个用户输入
         test_inputs = [
@@ -153,16 +153,16 @@ def test_user_interaction():
         print("📤 发送测试输入...")
         for i, text in enumerate(test_inputs, 1):
             print(f"  输入{i}: {text}")
-            active_jarvis.add_user_input(text)
+            active_link.add_user_input(text)
             time.sleep(1)  # 等待处理
         
         # 等待处理完成
         time.sleep(3)
         
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         processed = stats.get('events_processed', 0)
         
-        active_jarvis.stop()
+        active_link.stop()
         
         if processed >= len(test_inputs):
             print(f"✅ 用户交互测试成功，处理了 {processed} 个事件")
@@ -180,7 +180,7 @@ def test_learning_events():
     print("\n🧪 测试学习事件...")
     
     try:
-        from jarvis.active_jarvis_enhanced import ActiveJARVIS
+        from link.active_link_enhanced import ActiveLINK
         
         config = {
             "event_loop_interval": 0.1,
@@ -191,23 +191,23 @@ def test_learning_events():
             "log_level": "INFO"
         }
         
-        active_jarvis = ActiveJARVIS(config=config)
-        active_jarvis.start(blocking=False)
+        active_link = ActiveLINK(config=config)
+        active_link.start(blocking=False)
         
         print("⏳ 等待学习事件触发（10秒）...")
         
         # 记录开始统计
-        start_stats = active_jarvis.get_stats()
+        start_stats = active_link.get_stats()
         start_processed = start_stats.get('events_processed', 0)
         
         # 等待学习事件
         time.sleep(10)
         
         # 记录结束统计
-        end_stats = active_jarvis.get_stats()
+        end_stats = active_link.get_stats()
         end_processed = end_stats.get('events_processed', 0)
         
-        active_jarvis.stop()
+        active_link.stop()
         
         processed_during_test = end_processed - start_processed
         
@@ -222,39 +222,39 @@ def test_learning_events():
         print(f"❌ 学习事件测试失败: {e}")
         return False
 
-def test_integration_with_legacy_jarvis():
-    """测试与传统JARVIS的集成"""
-    print("\n🧪 测试与传统JARVIS集成...")
+def test_integration_with_legacy_link():
+    """测试与传统LINK的集成"""
+    print("\n🧪 测试与传统LINK集成...")
     
     try:
-        # 尝试导入传统JARVIS
-        from jarvis.main import JARVIS
+        # 尝试导入传统LINK
+        from link.main import LINK
         
-        # 创建传统JARVIS实例
-        print("🔧 初始化传统JARVIS...")
-        legacy_jarvis = JARVIS()
+        # 创建传统LINK实例
+        print("🔧 初始化传统LINK...")
+        legacy_link = LINK()
         
-        # 创建主动JARVIS，传入传统实例
-        print("🔧 创建主动JARVIS...")
-        from jarvis.active_jarvis_enhanced import ActiveJARVIS
+        # 创建主动LINK，传入传统实例
+        print("🔧 创建主动LINK...")
+        from link.active_link_enhanced import ActiveLINK
         
-        active_jarvis = ActiveJARVIS(legacy_jarvis=legacy_jarvis)
-        active_jarvis.start(blocking=False)
+        active_link = ActiveLINK(legacy_link=legacy_link)
+        active_link.start(blocking=False)
         
         print("✅ 集成启动成功")
         print("📤 发送任务创建请求...")
         
-        # 通过主动JARVIS发送用户输入
-        active_jarvis.add_user_input("帮我规划一个周末旅行")
+        # 通过主动LINK发送用户输入
+        active_link.add_user_input("帮我规划一个周末旅行")
         
         # 等待处理
         time.sleep(5)
         
         # 获取统计
-        stats = active_jarvis.get_stats()
+        stats = active_link.get_stats()
         processed = stats.get('events_processed', 0)
         
-        active_jarvis.stop()
+        active_link.stop()
         
         if processed > 0:
             print(f"✅ 集成测试成功，处理了 {processed} 个事件")
@@ -271,7 +271,7 @@ def test_integration_with_legacy_jarvis():
 def run_all_tests():
     """运行所有测试"""
     print("="*60)
-    print("🚀 JARVIS主动运行模式测试套件")
+    print("🚀 LINK主动运行模式测试套件")
     print("="*60)
     
     test_results = []
@@ -282,7 +282,7 @@ def run_all_tests():
         ("周期性任务", test_periodic_tasks),
         ("用户交互", test_user_interaction),
         ("学习事件", test_learning_events),
-        ("传统JARVIS集成", test_integration_with_legacy_jarvis),
+        ("传统LINK集成", test_integration_with_legacy_link),
     ]
     
     for test_name, test_func in tests:
@@ -327,8 +327,8 @@ if __name__ == "__main__":
     if success:
         print("\n✨ 主动运行模式核心功能验证完成")
         print("💡 建议下一步:")
-        print("  1. 运行 'python jarvis/active_jarvis_enhanced.py' 测试完整功能")
-        print("  2. 修改 run_jarvis.py 支持主动模式启动")
+        print("  1. 运行 'python link/active_link_enhanced.py' 测试完整功能")
+        print("  2. 修改 run_link.py 支持主动模式启动")
         print("  3. 集成到实际使用场景中")
     else:
         print("\n🔧 测试发现问题，需要修复实现")

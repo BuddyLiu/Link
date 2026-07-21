@@ -245,7 +245,7 @@ class NotificationSender:
             elif system == "Linux":
                 try:
                     import notify2
-                    notify2.init("JARVIS Reminder")
+                    notify2.init("LINK Reminder")
                     notification = notify2.Notification(
                         reminder.title,
                         reminder.content,
@@ -292,7 +292,7 @@ class NotificationSender:
             
             # 创建邮件
             msg = MIMEMultipart()
-            msg["From"] = email_config.get("from_email", "jarvis@example.com")
+            msg["From"] = email_config.get("from_email", "link@example.com")
             msg["To"] = reminder.metadata.get("email", email_config.get("default_to"))
             msg["Subject"] = f"提醒: {reminder.title}"
             
@@ -306,7 +306,7 @@ class NotificationSender:
                 <p><strong>时间:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <p><strong>触发类型:</strong> {reminder.trigger_type.value}</p>
                 <hr>
-                <p><em>这是来自JARVIS智能体的自动提醒。</em></p>
+                <p><em>这是来自LINK智能体的自动提醒。</em></p>
             </body>
             </html>
             """
@@ -458,13 +458,13 @@ class NotificationSender:
                 "event": "reminder_triggered",
                 "timestamp": datetime.now().isoformat(),
                 "reminder": content,
-                "source": "jarvis"
+                "source": "link"
             }
             
             # 发送请求
             headers = {
                 "Content-Type": "application/json",
-                "User-Agent": "JARVIS-Reminder/1.0"
+                "User-Agent": "LINK-Reminder/1.0"
             }
             
             timeout = self.config.get("notification_timeout", 30)

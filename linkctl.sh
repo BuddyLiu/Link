@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# JARVIS 服务管理脚本
+# LINK 服务管理脚本
 # 支持启动、停止、重启、状态查看、日志查看等操作
 # 自动管理后台服务进程的生命周期
 # 兼容 bash 3.2+ (macOS 默认)
 #
-# 使用方式: ./jarvisctl.sh <command> [mode]
+# 使用方式: ./linkctl.sh <command> [mode]
 #
 # 命令:
 #   start   - 启动服务
@@ -24,7 +24,7 @@ set -euo pipefail
 # ----- 配置 ----------------------------------------------------------------
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="${PROJECT_DIR}/.venv"
-MAIN_SCRIPT="${PROJECT_DIR}/run_jarvis.py"
+MAIN_SCRIPT="${PROJECT_DIR}/run_link.py"
 LOG_DIR="${PROJECT_DIR}/data/logs"
 PID_DIR="${PROJECT_DIR}/data/pids"
 
@@ -193,7 +193,7 @@ start_service() {
 	# 交互式模式只给提示
 	if ! is_background_service "$service"; then
 		log_info "$(service_desc "$service") 为交互式模式，请在终端手动运行:"
-		echo "  source .venv/bin/activate && python3 run_jarvis.py $(service_args "$service")"
+		echo "  source .venv/bin/activate && python3 run_link.py $(service_args "$service")"
 		return 0
 	fi
 
@@ -314,7 +314,7 @@ show_service_status() {
 # ----- 主命令 --------------------------------------------------------------
 
 usage() {
-	echo "JARVIS 服务管理脚本"
+	echo "LINK 服务管理脚本"
 	echo ""
 	echo "用法:"
 	echo "  $(basename "$0") <command> [mode]"
@@ -355,7 +355,7 @@ main() {
 	case "$command" in
 		# ----- start ---------------------------------------------------
 		start)
-			log_step "JARVIS 服务启动"
+			log_step "LINK 服务启动"
 
 			if [[ "$service" == "all" ]]; then
 				local failed=0
@@ -377,7 +377,7 @@ main() {
 
 		# ----- stop ----------------------------------------------------
 		stop)
-			log_step "JARVIS 服务停止"
+			log_step "LINK 服务停止"
 
 			if [[ "$service" == "all" ]]; then
 				local i
@@ -392,7 +392,7 @@ main() {
 
 		# ----- restart -------------------------------------------------
 		restart)
-			log_step "JARVIS 服务重启"
+			log_step "LINK 服务重启"
 
 			if [[ "$service" == "all" ]]; then
 				local i
@@ -416,9 +416,9 @@ main() {
 
 		# ----- status --------------------------------------------------
 		status)
-			log_step "JARVIS 服务状态"
+			log_step "LINK 服务状态"
 			echo ""
-			echo "  项目: JARVIS 智能体基座"
+			echo "  项目: LINK 智能体基座"
 			echo "  目录: ${PROJECT_DIR}"
 			echo ""
 
@@ -433,11 +433,11 @@ main() {
 
 			echo ""
 			if $any_running; then
-				log_info "JARVIS 服务运行中"
+				log_info "LINK 服务运行中"
 				echo "  API 地址: http://127.0.0.1:$(service_port web)"
 			else
-				log_warn "JARVIS 服务未运行"
-				echo "  使用 ./jarvisctl.sh start 启动"
+				log_warn "LINK 服务未运行"
+				echo "  使用 ./linkctl.sh start 启动"
 			fi
 			;;
 
@@ -459,7 +459,7 @@ main() {
 			fi
 
 			if [[ "$log_target" == "all" ]] || [[ -z "$log_target" ]] || [[ "$log_target" == "status" ]]; then
-				echo "JARVIS 日志文件:"
+				echo "LINK 日志文件:"
 				local s
 				for s in "${SERVICE_NAMES[@]}"; do
 					local lf
@@ -471,8 +471,8 @@ main() {
 					fi
 				done
 				echo ""
-				echo "查看具体: ./jarvisctl.sh logs web"
-				echo "实时跟踪: ./jarvisctl.sh logs web -f"
+				echo "查看具体: ./linkctl.sh logs web"
+				echo "实时跟踪: ./linkctl.sh logs web -f"
 			else
 				local lf
 				lf="$(log_file "$log_target")"

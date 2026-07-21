@@ -1,6 +1,6 @@
-# JARVIS智能体基座
+# LINK智能体基座
 
-JARVIS（Just A Rather Very Intelligent System）是一个模块化、可扩展的智能体基座系统，旨在构建类似电影《钢铁侠》中贾维斯的AI助手。
+LINK（Just A Rather Very Intelligent System）是一个模块化、可扩展的智能体基座系统，旨在构建类似电影《钢铁侠》中贾维斯的AI助手。
 
 ## 第一阶段：搭建骨架（已完成）
 
@@ -31,7 +31,7 @@ JARVIS（Just A Rather Very Intelligent System）是一个模块化、可扩展�
 ### 项目结构
 
 ```
-jarvis/
+link/
 ├── __init__.py          # 项目入口
 ├── main.py              # 主程序入口
 ├── requirements.txt     # 依赖包列表
@@ -73,7 +73,7 @@ jarvis/
 #### 命令行交互模式（推荐）
 
 ```bash
-cd jarvis
+cd link
 python main.py
 ```
 
@@ -95,10 +95,10 @@ python main.py --mode test
 
 ```
 >>> 现在几点了
-JARVIS: 当前时间是：2026年03月02日 15:25:30
+LINK: 当前时间是：2026年03月02日 15:25:30
 
 >>> 帮助
-JARVIS: JARVIS智能体第一阶段可用功能：
+LINK: LINK智能体第一阶段可用功能：
 ...
 ```
 

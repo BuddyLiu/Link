@@ -16,7 +16,7 @@ def test_reflection():
     
     try:
         # 导入反思引擎
-        from jarvis.reflection.reflection_engine import ReflectionEngine, ReflectionTrigger
+        from link.reflection.reflection_engine import ReflectionEngine, ReflectionTrigger
         
         # 创建引擎
         engine = ReflectionEngine({
@@ -57,7 +57,7 @@ def test_reminder():
     
     try:
         # 导入提醒管理器
-        from jarvis.reminders.reminder_manager import ReminderManager, ReminderTrigger
+        from link.reminders.reminder_manager import ReminderManager, ReminderTrigger
         
         # 创建管理器
         manager = ReminderManager({
@@ -96,14 +96,14 @@ def test_integration():
     try:
         # 检查所有文件是否存在
         required_files = [
-            "jarvis/reflection/__init__.py",
-            "jarvis/reflection/reflection_engine.py",
-            "jarvis/reflection/learning_module.py",
-            "jarvis/reflection/knowledge_updater.py",
-            "jarvis/reminders/__init__.py",
-            "jarvis/reminders/reminder_manager.py",
-            "jarvis/reminders/trigger_checker.py",
-            "jarvis/reminders/notification_sender.py"
+            "link/reflection/__init__.py",
+            "link/reflection/reflection_engine.py",
+            "link/reflection/learning_module.py",
+            "link/reflection/knowledge_updater.py",
+            "link/reminders/__init__.py",
+            "link/reminders/reminder_manager.py",
+            "link/reminders/trigger_checker.py",
+            "link/reminders/notification_sender.py"
         ]
         
         missing_files = []
@@ -119,8 +119,8 @@ def test_integration():
             
         # 检查导入
         try:
-            from jarvis.reflection import ReflectionEngine, ReflectionTrigger, LearningModule, KnowledgeUpdater
-            from jarvis.reminders import ReminderManager, ReminderTrigger, TriggerChecker, NotificationSender
+            from link.reflection import ReflectionEngine, ReflectionTrigger, LearningModule, KnowledgeUpdater
+            from link.reminders import ReminderManager, ReminderTrigger, TriggerChecker, NotificationSender
             print("✅ 所有模块可以正确导入")
             return True
         except Exception as e:
@@ -134,7 +134,7 @@ def test_integration():
 def main():
     """主函数"""
     print("=" * 60)
-    print("JARVIS 新组件简化测试")
+    print("LINK 新组件简化测试")
     print("=" * 60)
     
     # 切换到虚拟环境

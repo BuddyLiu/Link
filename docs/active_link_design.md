@@ -1,8 +1,8 @@
-# JARVIS主动运行模式设计方案
+# LINK主动运行模式设计方案
 
 ## 问题分析
 
-当前JARVIS系统的局限性：
+当前LINK系统的局限性：
 1. **被动响应式架构**：等待用户输入 → 处理 → 返回结果
 2. **无自主运行能力**：没有用户指令时完全空闲
 3. **缺乏持续监控**：不主动检查任务状态、记忆变化或环境条件
@@ -23,7 +23,7 @@
 ### 核心组件
 
 ```
-JARVIS主动运行系统
+LINK主动运行系统
 ├── EventLoop (主事件循环)
 ├── Event Sources (事件源)
 │   ├── UserInputSource (用户输入)
@@ -47,7 +47,7 @@ JARVIS主动运行系统
 ### 事件循环流程
 
 ```python
-class ActiveJARVIS:
+class ActiveLINK:
     def __init__(self):
         self.event_loop = EventLoop()
         self.is_running = False
@@ -300,20 +300,20 @@ periodic_tasks = {
 ### 1. 渐进式迁移
 ```python
 # 第一阶段：保持向后兼容
-class HybridJARVIS:
+class HybridLINK:
     def __init__(self):
         self.active_mode = False
-        self.legacy_jarvis = LegacyJARVIS()  # 现有系统
-        self.active_jarvis = None
+        self.legacy_link = LegacyLINK()  # 现有系统
+        self.active_link = None
     
     def run(self, mode="active"):
         if mode == "active":
             self.active_mode = True
-            self.active_jarvis = ActiveJARVIS()
-            self.active_jarvis.run()
+            self.active_link = ActiveLINK()
+            self.active_link.run()
         else:
             # 回退到传统模式
-            self.legacy_jarvis.run_cli()
+            self.legacy_link.run_cli()
 ```
 
 ### 2. 组件重用
@@ -393,7 +393,7 @@ active_mode:
 
 ## 总结
 
-主动运行模式将使JARVIS从一个被动的工具转变为真正的智能助手。通过事件驱动架构、优先级调度和自主学习机制，系统将能够：
+主动运行模式将使LINK从一个被动的工具转变为真正的智能助手。通过事件驱动架构、优先级调度和自主学习机制，系统将能够：
 
 1. **主动感知**环境和用户需求
 2. **智能决策**任务执行顺序

@@ -5,26 +5,26 @@
 
 import sys
 import time
-from jarvis.main import JARVIS
+from link.main import LINK
 
 def test_task_creation_and_execution():
     """测试任务创建和执行"""
-    print("🔄 初始化JARVIS系统...")
-    jarvis = JARVIS()
+    print("🔄 初始化LINK系统...")
+    link = LINK()
     
-    print("✅ JARVIS初始化完成")
+    print("✅ LINK初始化完成")
     
     # 测试1：创建任务
     print("\n📋 测试1：创建旅行规划任务...")
     task_input = "帮我规划一个北京三日游"
-    response = jarvis.process_input(task_input)
+    response = link.process_input(task_input)
     print(f"任务创建响应: {response[:100]}...")
     
     # 提取任务ID - 从任务列表响应中提取更可靠
     task_id = None
     
     # 先尝试从任务列表获取
-    list_response = jarvis.process_input("任务列表")
+    list_response = link.process_input("任务列表")
     print(f"任务列表响应: {list_response[:100]}...")
     
     import re
@@ -65,17 +65,17 @@ def test_task_creation_and_execution():
     
     # 测试2：查看任务列表
     print("\n📋 测试2：查看任务列表...")
-    list_response = jarvis.process_input("任务列表")
+    list_response = link.process_input("任务列表")
     print(f"任务列表: {list_response}")
     
     # 测试3：查看任务详情
     print(f"\n📋 测试3：查看任务详情 {task_id}...")
-    detail_response = jarvis.process_input(f"查看任务 {task_id}")
+    detail_response = link.process_input(f"查看任务 {task_id}")
     print(f"任务详情: {detail_response[:200]}...")
     
     # 测试4：开始执行任务
     print(f"\n🚀 测试4：开始执行任务 {task_id}...")
-    start_response = jarvis.process_input(f"开始执行 {task_id}")
+    start_response = link.process_input(f"开始执行 {task_id}")
     print(f"开始执行响应: {start_response}")
     
     # 检查是否包含大脑引擎生成的执行方案
@@ -86,12 +86,12 @@ def test_task_creation_and_execution():
         
     # 测试5：完成第一个步骤
     print(f"\n📝 测试5：完成步骤 {task_id}...")
-    complete_response = jarvis.process_input(f"完成步骤 {task_id}")
+    complete_response = link.process_input(f"完成步骤 {task_id}")
     print(f"完成步骤响应: {complete_response}")
     
     # 再次查看任务状态
     print("\n📋 最终任务状态检查...")
-    final_list = jarvis.process_input("任务列表")
+    final_list = link.process_input("任务列表")
     print(f"最终任务列表: {final_list}")
     
     print("\n🎉 测试完成")
@@ -99,7 +99,7 @@ def test_task_creation_and_execution():
 def test_brain_engine_direct():
     """直接测试大脑引擎"""
     print("\n🧠 直接测试大脑引擎...")
-    from jarvis.core.model_engine import create_brain_engine
+    from link.core.model_engine import create_brain_engine
     
     config = {
         'model_provider': 'ollama',
@@ -117,7 +117,7 @@ def test_brain_engine_direct():
             print("✅ 大脑引擎状态良好")
             
             # 测试任务执行提示
-            from jarvis.core.planning_engine.task_definitions import (
+            from link.core.planning_engine.task_definitions import (
                 TaskType, create_task
             )
             
@@ -134,8 +134,8 @@ def test_brain_engine_direct():
                 print(f"步骤动作: {step.action}")
                 
                 # 测试生成执行提示
-                if hasattr(jarvis, '_generate_execution_prompt'):
-                    prompt = jarvis._generate_execution_prompt(task, step)
+                if hasattr(link, '_generate_execution_prompt'):
+                    prompt = link._generate_execution_prompt(task, step)
                     print(f"\n生成的提示长度: {len(prompt)}")
                     print(f"提示前200字符: {prompt[:200]}...")
                     
@@ -151,14 +151,14 @@ def test_brain_engine_direct():
         print(f"❌ 大脑引擎直接测试失败: {e}")
 
 if __name__ == "__main__":
-    print("JARVIS任务执行测试")
+    print("LINK任务执行测试")
     print("=" * 60)
     
     try:
         # 测试任务创建和执行
         test_task_creation_and_execution()
         
-        # 注意：这里不调用test_brain_engine_direct，因为需要jarvis实例
+        # 注意：这里不调用test_brain_engine_direct，因为需要link实例
         # test_brain_engine_direct()
         
     except KeyboardInterrupt:

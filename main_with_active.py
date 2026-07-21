@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JARVIS智能体基座主入口文件
+LINK智能体基座主入口文件
 支持主动运行模式（类似iOS RunLoop的主动智能体系统）
 """
 
@@ -22,11 +22,11 @@ try:
     from core.model_engine import BrainEngine, create_brain_engine
     # 尝试导入主动模式
     try:
-        from .active_jarvis_enhanced import ActiveJARVIS, create_active_jarvis
+        from .active_link_enhanced import ActiveLINK, create_active_link
         ACTIVE_MODE_AVAILABLE = True
     except ImportError:
         try:
-            from active_jarvis_enhanced import ActiveJARVIS, create_active_jarvis
+            from active_link_enhanced import ActiveLINK, create_active_link
             ACTIVE_MODE_AVAILABLE = True
         except ImportError:
             ACTIVE_MODE_AVAILABLE = False
@@ -41,18 +41,18 @@ except ImportError:
     from .core.model_engine import BrainEngine, create_brain_engine
     # 尝试导入主动模式
     try:
-        from .active_jarvis_enhanced import ActiveJARVIS, create_active_jarvis
+        from .active_link_enhanced import ActiveLINK, create_active_link
         ACTIVE_MODE_AVAILABLE = True
     except ImportError:
         ACTIVE_MODE_AVAILABLE = False
 
 
-class JARVIS:
-    """JARVIS智能体主类"""
+class LINK:
+    """LINK智能体主类"""
     
     def __init__(self):
-        """初始化JARVIS智能体"""
-        self.logger = logger.getChild("jarvis")
+        """初始化LINK智能体"""
+        self.logger = logger.getChild("link")
         self.settings = settings
         self.tool_manager = tool_manager
         
@@ -64,11 +64,11 @@ class JARVIS:
         # 初始化组件
         self._initialize_components()
         
-        self.logger.info("JARVIS智能体初始化完成（第三阶段：复杂任务规划）")
+        self.logger.info("LINK智能体初始化完成（第三阶段：复杂任务规划）")
     
     def _initialize_components(self):
         """初始化所有组件"""
-        self.logger.info("开始初始化JARVIS组件...")
+        self.logger.info("开始初始化LINK组件...")
         
         # 初始化工具
         self._initialize_tools()
@@ -82,7 +82,7 @@ class JARVIS:
         # 初始化大脑引擎
         self._initialize_brain_engine()
         
-        self.logger.info("JARVIS组件初始化完成")
+        self.logger.info("LINK组件初始化完成")
     
     def _initialize_tools(self):
         """初始化系统工具"""
@@ -770,7 +770,7 @@ class JARVIS:
         """获取帮助文本"""
         tool_names = self.tool_manager.get_tool_names()
         
-        help_text = "JARVIS智能体（第三阶段）可用功能：\n\n"
+        help_text = "LINK智能体（第三阶段）可用功能：\n\n"
         help_text += "1. 📋 基础功能：\n"
         help_text += "   - 询问时间：可以说'现在几点了'或'告诉我时间'\n"
         help_text += "   - 获取帮助：可以说'帮助'或'help'\n"
@@ -838,7 +838,7 @@ class JARVIS:
     def run_cli(self):
         """运行命令行交互界面"""
         print("\n" + "="*50)
-        print("JARVIS智能体 v3.0 - 第三阶段")
+        print("LINK智能体 v3.0 - 第三阶段")
         print("🎯 支持复杂任务规划、反思和主动提醒")
         print("="*50)
         print("输入 '退出' 或 'exit' 结束程序")
@@ -862,7 +862,7 @@ class JARVIS:
                 
                 # 处理用户输入
                 response = self.process_input(user_input)
-                print(f"JARVIS: {response}\n")
+                print(f"LINK: {response}\n")
                 
             except KeyboardInterrupt:
                 print("\n\n程序已中断")
@@ -879,7 +879,7 @@ class JARVIS:
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="JARVIS智能体基座")
+    parser = argparse.ArgumentParser(description="LINK智能体基座")
     parser.add_argument(
         "--mode",
         choices=["cli", "web", "test", "active"],
@@ -921,16 +921,16 @@ def main():
         if args.mode == "active":
             # 主动运行模式
             if not ACTIVE_MODE_AVAILABLE:
-                print("❌ 主动运行模式不可用，请确保active_jarvis_enhanced.py存在")
-                print("💡 您可以运行: python jarvis/active_jarvis_enhanced.py")
+                print("❌ 主动运行模式不可用，请确保active_link_enhanced.py存在")
+                print("💡 您可以运行: python link/active_link_enhanced.py")
                 return 1
             
-            print("🚀 启动JARVIS主动运行模式...")
+            print("🚀 启动LINK主动运行模式...")
             
-            # 创建传统JARVIS实例
-            legacy_jarvis = JARVIS()
+            # 创建传统LINK实例
+            legacy_link = LINK()
             
-            # 创建主动JARVIS配置
+            # 创建主动LINK配置
             config = {}
             if args.active_config:
                 try:
@@ -942,30 +942,30 @@ def main():
                     print(f"⚠️  配置文件加载失败: {e}")
                     print("ℹ️  使用默认配置")
             
-            # 创建主动JARVIS
-            active_jarvis = create_active_jarvis(legacy_jarvis=legacy_jarvis, config=config)
+            # 创建主动LINK
+            active_link = create_active_link(legacy_link=legacy_link, config=config)
             
             # 启动主动模式
-            active_jarvis.start(blocking=False)
+            active_link.start(blocking=False)
             
             # 运行CLI界面
-            active_jarvis.run_cli()
+            active_link.run_cli()
             
             # 停止主动模式
-            active_jarvis.stop()
+            active_link.stop()
             
         else:
             # 传统模式
-            jarvis = JARVIS()
+            link = LINK()
             
             # 根据模式运行
             if args.mode == "cli":
-                jarvis.run_cli()
+                link.run_cli()
             elif args.mode == "web":
-                jarvis.run_web(args.host, args.port)
+                link.run_web(args.host, args.port)
             elif args.mode == "test":
                 # 运行测试
-                test_results = run_tests(jarvis)
+                test_results = run_tests(link)
                 print(f"测试完成: {test_results}")
         
     except KeyboardInterrupt:
@@ -977,7 +977,7 @@ def main():
     return 0
 
 
-def run_tests(jarvis: JARVIS) -> dict:
+def run_tests(link: LINK) -> dict:
     """运行测试"""
     logger.info("开始运行测试...")
     
@@ -991,7 +991,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试1：基础功能测试
     test_results["total"] += 1
     try:
-        response = jarvis.process_input("现在几点了")
+        response = link.process_input("现在几点了")
         logger.info(f"测试1通过: {response[:50]}...")
         test_results["passed"] += 1
         test_results["details"].append("测试1: 基础功能 - 通过")
@@ -1003,7 +1003,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试2：帮助功能测试
     test_results["total"] += 1
     try:
-        response = jarvis.process_input("帮助")
+        response = link.process_input("帮助")
         if response and len(response) > 0:
             logger.info("测试2通过: 帮助功能正常")
             test_results["passed"] += 1
@@ -1020,7 +1020,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试3：规划引擎初始化测试
     test_results["total"] += 1
     try:
-        if jarvis.planning_engine is not None:
+        if link.planning_engine is not None:
             logger.info("测试3通过: 规划引擎初始化成功")
             test_results["passed"] += 1
             test_results["details"].append("测试3: 规划引擎初始化 - 通过")
@@ -1036,7 +1036,7 @@ def run_tests(jarvis: JARVIS) -> dict:
     # 测试4：复杂任务规划测试（简化）
     test_results["total"] += 1
     try:
-        response = jarvis.process_input("帮我规划一个简单的项目")
+        response = link.process_input("帮我规划一个简单的项目")
         if response and "任务创建成功" in response:
             logger.info("测试4通过: 复杂任务规划正常")
             test_results["passed"] += 1

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-JARVIS 服务管理控制台
-独立进程运行，管理主 JARVIS 服务的启动/停止/重启，实时显示运行日志。
+LINK 服务管理控制台
+独立进程运行，管理主 LINK 服务的启动/停止/重启，实时显示运行日志。
 
 用法:
-  python3 jarvis_manager.py [--port 8899]
+  python3 link_manager.py [--port 8899]
 
 访问:
   http://localhost:8899
@@ -25,10 +25,10 @@ import uvicorn
 
 # ── 配置 ──
 MANAGER_PORT = 8899
-JARVIS_PORT = 8011
-JARVIS_CMD = ["python3", "run_jarvis.py", "web", "--port", str(JARVIS_PORT)]
+LINK_PORT = 8011
+LINK_CMD = ["python3", "run_link.py", "web", "--port", str(LINK_PORT)]
 
-app = FastAPI(title="JARVIS 管理控制台")
+app = FastAPI(title="LINK 管理控制台")
 
 # ── 全局状态 ──
 _process: Optional[subprocess.Popen] = None
@@ -92,7 +92,7 @@ async def _watch_process():
         for ws in _log_clients[:]:
             try:
                 await ws.send_json({"t": datetime.now().isoformat(),
-                                    "m": f"[系统] JARVIS 进程已退出 (返回码: {returncode})",
+                                    "m": f"[系统] LINK 进程已退出 (返回码: {returncode})",
                                     "type": "system"})
             except Exception:
                 dead.append(ws)
@@ -102,7 +102,7 @@ async def _watch_process():
         pass
 
 
-def _kill_jarvis(port: int) -> bool:
+def _kill_link(port: int) -> bool:
     """杀掉占用指定端口的进程"""
     try:
         import subprocess as sp
@@ -143,7 +143,7 @@ MANAGER_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JARVIS 管理控制台</title>
+<title>LINK 管理控制台</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0f;height:100vh;display:flex;flex-direction:column;color:#e0e0e0}
@@ -193,7 +193,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </head>
 <body>
 <div class="header">
-<h1>JARVIS <span>管理控制台</span></h1>
+<h1>LINK <span>管理控制台</span></h1>
 <a href="http://localhost:8011" target="_blank" style="color:#6366f1;text-decoration:none;font-size:12px;padding:4px 10px;border:1px solid #1a1a2e;border-radius:4px">&#x2197; 打开聊天页面</a>
 </div>
 <div class="status-bar">
@@ -209,7 +209,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </div>
 <div id="log-box"></div>
 <div class="footer">
-<span>JARVIS 管理控制台 v1.0</span>
+<span>LINK 管理控制台 v1.0</span>
 <span id="log-count">0 条日志</span>
 </div>
 
@@ -337,19 +337,19 @@ async def get_index():
 
 @app.post("/api/start")
 async def api_start():
-    """启动 JARVIS"""
+    """启动 LINK"""
     global _process, _process_start_time
 
     if _process and _process.poll() is None:
         return {"status": "already_running", "pid": _process.pid}
 
     # 先清理旧进程
-    _kill_jarvis(JARVIS_PORT)
+    _kill_link(LINK_PORT)
 
     # 启动新进程
     try:
         _process = subprocess.Popen(
-            JARVIS_CMD,
+            LINK_CMD,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -367,24 +367,24 @@ async def api_start():
         for ws in _log_clients[:]:
             try:
                 await ws.send_json({"t": datetime.now().isoformat(),
-                                    "m": f"[系统] JARVIS 已启动 (PID: {_process.pid})",
+                                    "m": f"[系统] LINK 已启动 (PID: {_process.pid})",
                                     "type": "system"})
             except Exception:
                 _log_clients.remove(ws)
 
-        return {"status": "started", "pid": _process.pid, "msg": f"JARVIS 已启动 (PID: {_process.pid})"}
+        return {"status": "started", "pid": _process.pid, "msg": f"LINK 已启动 (PID: {_process.pid})"}
     except Exception as e:
         return {"status": "error", "error": str(e), "msg": f"启动失败: {e}"}
 
 
 @app.post("/api/stop")
 async def api_stop():
-    """停止 JARVIS"""
+    """停止 LINK"""
     global _process, _process_start_time
 
     if not _process or _process.poll() is not None:
         # 没有进程记录，但仍可能有一个占用端口的进程
-        killed = _kill_jarvis(JARVIS_PORT)
+        killed = _kill_link(LINK_PORT)
         _process = None
         _process_start_time = None
         if killed:
@@ -394,8 +394,8 @@ async def api_stop():
                     await ws.send_json({"t": datetime.now().isoformat(), "m": "[系统] " + msg, "type": "system"})
                 except Exception:
                     _log_clients.remove(ws)
-            return {"status": "stopped", "msg": "JARVIS 已停止"}
-        return {"status": "not_running", "msg": "JARVIS 未在运行"}
+            return {"status": "stopped", "msg": "LINK 已停止"}
+        return {"status": "not_running", "msg": "LINK 未在运行"}
 
     try:
         pid = _process.pid
@@ -413,28 +413,28 @@ async def api_stop():
         for ws in _log_clients[:]:
             try:
                 await ws.send_json({"t": datetime.now().isoformat(),
-                                    "m": f"[系统] JARVIS 已停止 (PID: {pid})",
+                                    "m": f"[系统] LINK 已停止 (PID: {pid})",
                                     "type": "system"})
             except Exception:
                 _log_clients.remove(ws)
 
-        return {"status": "stopped", "msg": f"JARVIS 已停止"}
+        return {"status": "stopped", "msg": f"LINK 已停止"}
     except Exception as e:
         return {"status": "error", "error": str(e), "msg": f"停止失败: {e}"}
 
 
 @app.post("/api/restart")
 async def api_restart():
-    """重启 JARVIS"""
+    """重启 LINK"""
     stop_result = await api_stop()
     await asyncio.sleep(1)
     start_result = await api_start()
-    return {"status": "restarted", "stop": stop_result, "start": start_result, "msg": "JARVIS 已重启"}
+    return {"status": "restarted", "stop": stop_result, "start": start_result, "msg": "LINK 已重启"}
 
 
 @app.get("/api/status")
 async def api_status():
-    """获取 JARVIS 状态"""
+    """获取 LINK 状态"""
     global _process, _process_start_time
 
     running = False
@@ -447,7 +447,7 @@ async def api_status():
         if _process_start_time:
             elapsed = int(time.time() - _process_start_time)
             uptime_str = format_uptime(elapsed)
-    elif _is_port_open(JARVIS_PORT):
+    elif _is_port_open(LINK_PORT):
         running = True
         pid = "unknown (port occupied)"
 
@@ -455,14 +455,14 @@ async def api_status():
         "running": running,
         "pid": pid,
         "uptime": uptime_str,
-        "port": JARVIS_PORT,
+        "port": LINK_PORT,
         "manager_port": MANAGER_PORT,
     }
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "jarvis-manager"}
+    return {"status": "ok", "service": "link-manager"}
 
 
 @app.websocket("/ws/logs")
@@ -501,7 +501,7 @@ def cleanup():
     global _process
     if _process and _process.poll() is None:
         try:
-            _kill_jarvis(JARVIS_PORT)
+            _kill_link(LINK_PORT)
         except Exception:
             pass
     _process = None
@@ -510,7 +510,7 @@ def cleanup():
 # ── 入口 ──
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="JARVIS 管理控制台")
+    parser = argparse.ArgumentParser(description="LINK 管理控制台")
     parser.add_argument("--port", type=int, default=MANAGER_PORT, help=f"管理端口 (默认 {MANAGER_PORT})")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
     args = parser.parse_args()
@@ -518,10 +518,10 @@ if __name__ == "__main__":
     import atexit
     atexit.register(cleanup)
 
-    print(f"⚙️  JARVIS 管理控制台启动中...")
+    print(f"⚙️  LINK 管理控制台启动中...")
     print(f"   • 管理地址: http://{args.host}:{args.port}")
-    print(f"   • 管理对象: JARVIS (port {JARVIS_PORT})")
-    print(f"   • 启动命令: {' '.join(JARVIS_CMD)}")
+    print(f"   • 管理对象: LINK (port {LINK_PORT})")
+    print(f"   • 启动命令: {' '.join(LINK_CMD)}")
     print(f"\n打开浏览器访问 http://{args.host}:{args.port} 进入管理控制台\n")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

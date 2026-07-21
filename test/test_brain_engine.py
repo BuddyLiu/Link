@@ -7,8 +7,8 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from jarvis.core.model_engine import create_brain_engine, BrainEngine
-from jarvis.core.model_engine.model_adapter import ModelResponse
+from link.core.model_engine import create_brain_engine, BrainEngine
+from link.core.model_engine.model_adapter import ModelResponse
 import time
 
 
@@ -220,7 +220,7 @@ def test_chat_completion(engine: BrainEngine):
 def main():
     """主函数"""
     print("=" * 60)
-    print("🧪 JARVIS 大脑引擎测试")
+    print("🧪 LINK 大脑引擎测试")
     print("=" * 60)
     
     # 检查虚拟环境

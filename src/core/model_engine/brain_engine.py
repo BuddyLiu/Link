@@ -507,8 +507,8 @@ class BrainEngine:
         for round_num in range(max_rounds):
             self._log("info", f"LLM 调用轮次 #{round_num + 1}, 消息数: {len(messages)}")
             try:
-                # 仅在最后一轮或首次时启用流式回调（工具调用中间轮不发流）
-                use_stream = stream_callback and (round_num == 0 or tool_executor is None)
+                # 所有轮次均启用流式回调，确保最终回答也能实时展示
+                use_stream = stream_callback is not None
                 resp = self.model_adapter.chat_completion(
                     messages, temperature=0.7,
                     max_tokens=self.config.get("default_max_tokens", 4096),

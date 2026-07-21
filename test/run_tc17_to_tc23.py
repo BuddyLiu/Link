@@ -13,7 +13,7 @@ from core.planning_engine.task_definitions import TaskType, TaskPriority
 def main():
     e = create_planning_engine({"max_planning_time":15,"max_planning_depth":4})
     c = e.get_planning_stats()["components_initialized"]
-    print("="*60+"\n🧪 JARVIS TC17~TC26 Test Suite\n"+"="*60)
+    print("="*60+"\n🧪 LINK TC17~TC26 Test Suite\n"+"="*60)
     print(f"Decomposer:{'✅' if c['task_decomposer'] else '❌'} Planner:{'✅' if c['tot_planner'] else '❌'} Eval:{'✅' if c['state_evaluator'] else '❌'} Explorer:{'✅' if c['explorer'] else '❌'}")
     r={}
 

@@ -1,5 +1,5 @@
 """
-JARVIS记忆模块
+LINK记忆模块
 提供长期记忆存储、检索和管理功能
 
 注意：使用SimpleMemoryStore替代ChromaDB的MemoryStore，
@@ -11,7 +11,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 __version__ = "1.1.0"
-__author__ = "JARVIS Team"
+__author__ = "LINK Team"
 
 # 使用轻量级实现替代chromadb (chromadb不兼容Python 3.14+)
 from .simple_memory_store import SimpleMemoryStore as MemoryStore

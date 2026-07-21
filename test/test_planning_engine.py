@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-测试JARVIS规划引擎功能的演示脚本
+测试LINK规划引擎功能的演示脚本
 """
 
 import sys
@@ -13,14 +13,14 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from jarvis.core.planning_engine import PlanningEngine, create_planning_engine
-    from jarvis.core.planning_engine.task_definitions import (
+    from link.core.planning_engine import PlanningEngine, create_planning_engine
+    from link.core.planning_engine.task_definitions import (
         TaskType, TaskPriority, TaskConstraint, create_task
     )
-    from jarvis.utils.logger import logger, setup_logger
+    from link.utils.logger import logger, setup_logger
 except ImportError as e:
     print(f"导入失败: {e}")
-    print("请确保已安装所有依赖项: pip install -r jarvis/requirements.txt")
+    print("请确保已安装所有依赖项: pip install -r link/requirements.txt")
     sys.exit(1)
 
 
@@ -255,7 +255,7 @@ def test_integration_scenario():
         # 1. 创建项目管理任务
         print("1. 创建项目管理任务...")
         project_task = engine.create_task(
-            goal="开发JARVIS智能体的新功能模块",
+            goal="开发LINK智能体的新功能模块",
             description="规划一个软件开发项目，包括需求分析、设计、实现、测试和部署阶段",
             task_type=TaskType.PROJECT_MANAGEMENT,
             priority=TaskPriority.HIGH,
@@ -328,7 +328,7 @@ def test_integration_scenario():
 
 def main():
     """主测试函数"""
-    print("🚀 JARVIS规划引擎功能测试")
+    print("🚀 LINK规划引擎功能测试")
     print("=" * 60)
     
     # 设置日志
@@ -369,7 +369,7 @@ def main():
     
     if success:
         print("✅ 所有测试完成!")
-        print("\n🎉 JARVIS规划引擎功能正常!")
+        print("\n🎉 LINK规划引擎功能正常!")
         print("   已实现的功能包括:")
         print("   1. 复杂任务创建和类型检测")
         print("   2. 任务分解为可执行步骤")
@@ -377,8 +377,8 @@ def main():
         print("   4. 多路径探索和优化决策")
         print("   5. 任务状态评估和质量分析")
         print("   6. 任务管理和进度跟踪")
-        print("\n   现在可以运行JARVIS主程序体验完整功能:")
-        print("   python run_jarvis.py --mode cli")
+        print("\n   现在可以运行LINK主程序体验完整功能:")
+        print("   python run_link.py --mode cli")
     else:
         print("⚠️  部分测试失败，但核心功能可能仍可用")
     

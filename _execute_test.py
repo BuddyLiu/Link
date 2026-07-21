@@ -10,7 +10,7 @@ def s(m): print(f"\n{Y}{'='*60}{N}\n{B}{Y}{m}{N}\n{Y}{'='*60}{N}")
 
 e=create_planning_engine({"max_planning_time":15,"max_planning_depth":4})
 c=e.get_planning_stats()["components_initialized"]
-print(f"{B}{'='*60}{N}\n{B}🧪 JARVIS TC17~TC26 测试{N}\n{B}{'='*60}{N}")
+print(f"{B}{'='*60}{N}\n{B}🧪 LINK TC17~TC26 测试{N}\n{B}{'='*60}{N}")
 print(f"任务分解器:{'✅' if c['task_decomposer'] else '❌'} ToT规划器:{'✅' if c['tot_planner'] else '❌'} 评估器:{'✅' if c['state_evaluator'] else '❌'} 探索器:{'✅' if c['explorer'] else '❌'}")
 r={}
 
@@ -54,7 +54,7 @@ print(f"原:{tp.priority}");tp.priority=TaskPriority.HIGH;print(f"新:{tp.priori
 r["TC23"]=tp.priority==TaskPriority.HIGH;p("通过")
 
 s("TC24: 项目任务")
-pm=e.create_task(goal="JARVIS开发",description="软件开发项目",task_type=TaskType.PROJECT_MANAGEMENT,priority=TaskPriority.HIGH)
+pm=e.create_task(goal="LINK开发",description="软件开发项目",task_type=TaskType.PROJECT_MANAGEMENT,priority=TaskPriority.HIGH)
 e.decompose_task(pm);print(f"ID:{pm.id} 步骤:{len(pm.steps)}");r["TC24"]=True;p("通过")
 
 s("TC25: 多任务管理")
