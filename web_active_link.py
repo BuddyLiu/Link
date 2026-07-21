@@ -881,7 +881,12 @@ async function loadHistory(page) {
     historyPage = page;
 
     // 首次加载滚到底部；翻页不滚动
-    if (page === 1) { chatBox.scrollTop = chatBox.scrollHeight; setTimeout(updateScrollButtons, 100); }
+    if (page === 1) {
+        chatBox.classList.add('instant-scroll');
+        chatBox.scrollTop = chatBox.scrollHeight;
+        setTimeout(function(){ chatBox.classList.remove('instant-scroll'); }, 50);
+        setTimeout(updateScrollButtons, 100);
+      }
   } catch(e) { console.error('History load failed:', e); }
   historyLoading = false;
 }
