@@ -580,6 +580,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #status-bar summary:hover{opacity:.8}
 #status-content{display:flex;gap:16px;padding:4px 0 8px;color:#6b7280;flex-wrap:wrap}
 #status-content span{white-space:nowrap}
+/* Permission Modal */
+.modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.65);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal-box{background:#13131f;border:1px solid #1a1a2e;border-radius:14px;padding:24px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.modal-title{color:#a5b4fc;font-size:15px;font-weight:500;margin-bottom:6px}
+.modal-subtitle{color:#6b7280;font-size:12px;margin-bottom:16px}
+.modal-section{margin-bottom:14px}
+.modal-section label{display:block;color:#9ca3af;font-size:11px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+.modal-section .value{color:#e0e0e0;font-size:13px;padding:8px 12px;background:#0d0d14;border-radius:6px;border:1px solid #1a1a2e;word-break:break-all}
+.modal-duration{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.modal-duration button{padding:6px 8px;background:#0d0d14;border:1px solid #1a1a2e;border-radius:6px;color:#9ca3af;font-size:11px;cursor:pointer;transition:all .15s}
+.modal-duration button:hover{border-color:#6366f1;color:#e0e0e0}
+.modal-duration button.active{background:rgba(99,102,241,.15);border-color:#6366f1;color:#a5b4fc}
+.modal-actions{display:flex;gap:8px;margin-top:18px}
+.modal-btn{padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .15s;flex:1}
+.modal-btn.confirm{background:#6366f1;color:#fff}
+.modal-btn.confirm:hover{background:#4f46e5}
+.modal-btn.deny{background:#0d0d14;color:#9ca3af;border:1px solid #1a1a2e}
+.modal-btn.deny:hover{color:#ef4444;border-color:#ef4444}
 </style>
 </head>
 <body>
@@ -670,6 +688,21 @@ var streamContentBuf = '';
 
 ws.onmessage = e => {
   const d = JSON.parse(e.data);
+
+  // 权限请求弹窗
+  if (d.type === 'permission_request') {
+    _pendingPermRequestId = d.request_id;
+    document.getElementById('perm-resource-type').textContent =
+      d.resource_type === 'command' ? '命令执行' : '文件操作';
+    document.getElementById('perm-resource').textContent = d.resource;
+    var modeMap = {'read':'读取','write':'写入','execute':'执行','read_write':'读写'};
+    document.getElementById('perm-mode').textContent = modeMap[d.mode] || d.mode;
+    document.getElementById('perm-duration').querySelectorAll('button').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.duration === 'once');
+    });
+    document.getElementById('permission-modal').style.display = 'flex';
+    return;
+  }
 
   // 推理内容流式到达
   if (d.type === 'reasoning_chunk') {
@@ -1089,85 +1122,216 @@ function escapeHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+
+// Permission Modal
+var _pendingPermRequestId = null;
+
+// Duration selector
+document.addEventListener('click', function(e) {
+  if (e.target.closest('#perm-duration') && e.target.tagName === 'BUTTON') {
+    var parent = document.getElementById('perm-duration');
+    parent.querySelectorAll('button').forEach(function(b) { b.classList.remove('active'); });
+    e.target.classList.add('active');
+  }
+});
+
+function confirmPermission() {
+  var active = document.querySelector('#perm-duration .active');
+  ws.send(JSON.stringify({
+    type: 'permission_response',
+    request_id: _pendingPermRequestId,
+    approved: true,
+    duration: active ? active.dataset.duration : 'once'
+  }));
+  document.getElementById('permission-modal').style.display = 'none';
+  _pendingPermRequestId = null;
+}
+
+function denyPermission() {
+  ws.send(JSON.stringify({
+    type: 'permission_response',
+    request_id: _pendingPermRequestId,
+    approved: false,
+    duration: 'once'
+  }));
+  document.getElementById('permission-modal').style.display = 'none';
+  _pendingPermRequestId = null;
+}
 </script>
+
+<!-- Permission Modal -->
+<div id="permission-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">🔒 授权请求</div>
+    <div class="modal-subtitle">LINK 需要获得以下资源的访问权限</div>
+    <div class="modal-section">
+      <label>资源类型</label>
+      <div class="value" id="perm-resource-type">文件操作</div>
+    </div>
+    <div class="modal-section">
+      <label>资源路径</label>
+      <div class="value" id="perm-resource">/path/to/file</div>
+    </div>
+    <div class="modal-section">
+      <label>操作类型</label>
+      <div class="value" id="perm-mode">读取</div>
+    </div>
+    <div class="modal-section">
+      <label>授权时长</label>
+      <div class="modal-duration" id="perm-duration">
+        <button data-duration="once" class="active">仅一次</button>
+        <button data-duration="1h">1 小时</button>
+        <button data-duration="4h">4 小时</button>
+        <button data-duration="8h">8 小时</button>
+        <button data-duration="12h">12 小时</button>
+        <button data-duration="24h">24 小时</button>
+        <button data-duration="permanent" style="grid-column:span 2">永久</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn deny" onclick="denyPermission()">拒绝</button>
+      <button class="modal-btn confirm" onclick="confirmPermission()">授权</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>"""
 
         
+        # ── 权限请求管理器回调注册用（单例） ──
+        from tools.permission_request_manager import PermissionRequestManager as PRM
+        _prm_registered = False
+
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
-            """WebSocket端点"""
+            """WebSocket端点（双任务架构）"""
             await websocket.accept()
             client_id = str(uuid.uuid4())
             self.websocket_clients.append({"id": client_id, "websocket": websocket})
-            
-            try:
-                # 发送欢迎消息
-                await websocket.send_json({
-                    "type": "event",
-                    "data": {
-                        "event_type": "SYSTEM",
-                        "message": "🔗 已连接到LINK主动模式",
-                        "timestamp": time.time()
-                    }
-                })
-                
-                # 发送当前状态
-                await self._broadcast_stats()
-                
-                while True:
-                    # 接收消息
-                    data = await websocket.receive_json()
-                    
-                    if data.get("type") == "command":
-                        await self._handle_command(websocket, data.get("command"))
-                    elif data.get("type") == "user_input":
-                        text = data.get("text", "")
-                        if text:
-                            # 加入事件系统（用于历史记录）
-                            self.add_user_input(text, client_id)
 
-                            # 广播"收到输入"事件
-                            await self._broadcast_event({
-                                "event_type": "USER_INPUT",
-                                "message": f"📝 收到用户输入: {text}",
-                                "source": f"user_{client_id}"
+            # 发送欢迎消息
+            await websocket.send_json({
+                "type": "event",
+                "data": {
+                    "event_type": "SYSTEM",
+                    "message": "🔗 已连接到LINK主动模式",
+                    "timestamp": time.time()
+                }
+            })
+            await self._broadcast_stats()
+
+            # 双任务通信：receive_task 将用户输入放入此队列，process_task 消费
+            input_queue: asyncio.Queue = asyncio.Queue()
+            loop = asyncio.get_running_loop()
+
+            async def receive_task():
+                """接收任务：处理所有入站消息"""
+                nonlocal _prm_registered
+                try:
+                    while True:
+                        data = await websocket.receive_json()
+                        msg_type = data.get("type", "")
+
+                        if msg_type == "user_input":
+                            await input_queue.put(data)
+
+                        elif msg_type == "permission_response":
+                            prm = PRM.get_instance()
+                            prm.respond(
+                                data.get("request_id", ""),
+                                data.get("approved", False),
+                                data.get("duration", "once")
+                            )
+                            await websocket.send_json({
+                                "type": "event",
+                                "data": {
+                                    "event_type": "SYSTEM",
+                                    "message": f"授权{'已批准' if data.get('approved') else '已拒绝'}"
+                                }
                             })
 
-                            # 创建流式回调（实时展示推理过程和生成内容）
-                            import asyncio
-                            _loop = asyncio.get_running_loop()
-                            _stream_content_buf = ['']
-                            def _stream_cb(ctype, content):
-                                if ctype == "reasoning" and content.strip():
-                                    asyncio.run_coroutine_threadsafe(
-                                        websocket.send_json({"type": "reasoning_chunk", "data": content}), _loop
-                                    )
-                                elif ctype == "content" and content:
-                                    _stream_content_buf[0] += content
-                                    asyncio.run_coroutine_threadsafe(
-                                        websocket.send_json({"type": "content_chunk", "data": content}), _loop
-                                    )
-                            # CPU 密集/阻塞任务放到线程池
-                            from functools import partial
-                            _task = partial(self._process_input_direct, text, stream_callback=_stream_cb)
-                            brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task)
-                            if brain_resp and brain_resp.get("result"):
-                                await self._broadcast_event({
-                                    "event_type": "ASSISTANT",
-                                    "result": brain_resp["result"],
-                                    "reasoning": brain_resp.get("reasoning", ""),
-                                    "source": "link_brain",
-                                    "timestamp": time.time()
-                                })
-                    
-            except WebSocketDisconnect:
-                # 客户端断开连接
+                        elif msg_type == "command":
+                            await self._handle_command(websocket, data.get("command"))
+                except WebSocketDisconnect:
+                    pass
+                except Exception as e:
+                    print(f"receive_task 异常: {e}")
+                finally:
+                    PRM.get_instance().cancel_all()
+
+            async def process_task():
+                """处理任务：消费用户输入并执行 LLM 调用"""
+                try:
+                    while True:
+                        data = await input_queue.get()
+                        text = data.get("text", "")
+                        if not text:
+                            continue
+
+                        self.add_user_input(text, client_id)
+                        await self._broadcast_event({
+                            "event_type": "USER_INPUT",
+                            "message": f"📝 收到用户输入: {text}",
+                            "source": f"user_{client_id}"
+                        })
+
+                        # 注册权限请求回调（通知前端弹窗）
+                        prm = PRM.get_instance()
+                        def _perm_cb(req):
+                            asyncio.run_coroutine_threadsafe(
+                                websocket.send_json({
+                                    "type": "permission_request",
+                                    "request_id": req.id,
+                                    "resource": req.resource,
+                                    "mode": req.mode,
+                                    "resource_type": req.resource_type.value,
+                                }),
+                                loop
+                            )
+                        prm.register_callback(_perm_cb)
+
+                        # 创建流式回调
+                        _stream_content_buf = ['']
+                        def _stream_cb(ctype, content):
+                            if ctype == "reasoning" and content.strip():
+                                asyncio.run_coroutine_threadsafe(
+                                    websocket.send_json({"type": "reasoning_chunk", "data": content}), loop
+                                )
+                            elif ctype == "content" and content:
+                                _stream_content_buf[0] += content
+                                asyncio.run_coroutine_threadsafe(
+                                    websocket.send_json({"type": "content_chunk", "data": content}), loop
+                                )
+                        # CPU 密集/阻塞任务放到线程池
+                        from functools import partial
+                        _task = partial(self._process_input_direct, text, stream_callback=_stream_cb)
+                        brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task)
+
+                        # 取消注册权限回调
+                        prm.unregister_callback(_perm_cb)
+
+                        if brain_resp and brain_resp.get("result"):
+                            await self._broadcast_event({
+                                "event_type": "ASSISTANT",
+                                "result": brain_resp["result"],
+                                "reasoning": brain_resp.get("reasoning", ""),
+                                "source": "link_brain",
+                                "timestamp": time.time()
+                            })
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    print(f"process_task 异常: {e}")
+
+            # 并行运行两个任务
+            try:
+                await asyncio.gather(receive_task(), process_task())
+            except Exception as e:
+                print(f"WebSocket 处理器异常: {e}")
+            finally:
                 self.websocket_clients = [c for c in self.websocket_clients if c["id"] != client_id]
                 await self._broadcast_stats()
-            except Exception as e:
-                print(f"WebSocket错误: {e}")
-                self.websocket_clients = [c for c in self.websocket_clients if c["id"] != client_id]
     
         @self.app.get("/debug")
         async def get_debug_page():
@@ -1277,6 +1441,18 @@ function escapeHtml(s) {
         @self.app.post("/api/feedback")
         async def post_feedback(data: dict):
             return await self._handle_feedback(data)
+
+        @self.app.get("/api/permission-settings")
+        async def get_permission_settings():
+            from tools.permission_settings import PermissionSettings
+            ps = PermissionSettings()
+            return ps.list_settings()
+
+        @self.app.post("/api/permission-settings")
+        async def save_permission_settings(data: dict):
+            from tools.permission_settings import PermissionSettings
+            ps = PermissionSettings()
+            return ps.update_settings(data)
 
     async def _handle_feedback(self, data: dict) -> dict:
         rating = data.get("rating", "")
@@ -2490,6 +2666,41 @@ h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
   <div class="model-info" id="model-info"></div>
 </div>
 
+<!-- Permission Defaults -->
+<div class="card">
+  <h2>&#x1F512; 默认授权规则</h2>
+  <div class="field">
+    <label>文件读取权限</label>
+    <select id="perm-file-read">
+      <option value="ask">每次询问</option>
+      <option value="once">仅本次</option>
+      <option value="1h">授权1小时</option>
+      <option value="24h">授权24小时</option>
+      <option value="permanent">永久授权</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>文件写入权限</label>
+    <select id="perm-file-write">
+      <option value="ask">每次询问</option>
+      <option value="once">仅本次</option>
+      <option value="1h">授权1小时</option>
+      <option value="24h">授权24小时</option>
+      <option value="permanent">永久授权</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>命令执行权限</label>
+    <select id="perm-command-exec">
+      <option value="ask">每次询问</option>
+      <option value="once">仅本次</option>
+      <option value="1h">授权1小时</option>
+      <option value="24h">授权24小时</option>
+      <option value="permanent">永久授权</option>
+    </select>
+  </div>
+</div>
+
 <div style="display:flex;gap:10px;margin-top:8px">
   <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
   <button class="btn btn-secondary" onclick="testConnection()">测试连接</button>
@@ -2569,6 +2780,14 @@ function updateBaseUrl() {
   if (p !== "custom") {
     document.getElementById("model-name").value = models[p] || "";
   }
+  // Load permission settings
+  try {
+    const pr = await fetch("/api/permission-settings");
+    const ps = await pr.json();
+    if (ps.file_read) document.getElementById("perm-file-read").value = ps.file_read;
+    if (ps.file_write) document.getElementById("perm-file-write").value = ps.file_write;
+    if (ps.command_exec) document.getElementById("perm-command-exec").value = ps.command_exec;
+  } catch(e) { console.log("perm settings load:", e); }
 }
 
 async function saveSettings() {
@@ -2577,6 +2796,9 @@ async function saveSettings() {
   var data = {
     mode: (document.querySelector("input[name=mode]:checked") || {}).value || "offline",
     provider: document.getElementById("provider").value,
+    file_read: document.getElementById("perm-file-read").value,
+    file_write: document.getElementById("perm-file-write").value,
+    command_exec: document.getElementById("perm-command-exec").value,
     api_base: document.getElementById("api-base").value,
     api_key: document.getElementById("api-key").value,
     model: document.getElementById("model-name").value,

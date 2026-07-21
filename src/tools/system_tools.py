@@ -593,11 +593,18 @@ class GlobFilesTool(SystemTool):
         max_results = int(kwargs.get("max_results", 30))
 
         search_path = Path(root).resolve()
-        allowed = Path(os.getcwd()).resolve()
+        # 使用统一的权限管理器检查路径
+        from tools.file_permissions import get_permission_manager
+        pm = get_permission_manager()
+        allowed = pm.project_root()  # 项目根目录
+        allowed_path = Path(allowed)
         try:
-            search_path.relative_to(allowed)
+            search_path.relative_to(allowed_path)
         except ValueError:
-            raise PermissionError(f"不允许访问项目目录外: {search_path}")
+            # 外部路径：通过权限管理器检查
+            ok, _ = pm.is_path_allowed(str(search_path), "read")
+            if not ok:
+                raise PermissionError(f"不允许访问项目目录外: {search_path}")
 
         full_pattern = str(search_path / pattern)
         matches = sorted(glob.glob(full_pattern, recursive=True))[:max_results]
@@ -610,7 +617,7 @@ class GlobFilesTool(SystemTool):
         for m in matches:
             p = Path(m)
             try:
-                rel = p.relative_to(allowed)
+                rel = p.relative_to(allowed_path)
             except ValueError:
                 rel = m
             if p.is_dir():

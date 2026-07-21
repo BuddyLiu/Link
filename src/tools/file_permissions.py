@@ -10,9 +10,22 @@
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Dict, Optional
 from utils.logger import logger
+
+# 授权时长映射（秒）
+DURATION_MAP = {
+    "once": 0,
+    "1h": 3600,
+    "2h": 7200,
+    "4h": 14400,
+    "8h": 28800,
+    "12h": 43200,
+    "24h": 86400,
+    "permanent": -1,  # 永不过期
+}
 
 
 # 全局单例
@@ -43,10 +56,12 @@ class FilePermissionManager:
 
     def __init__(self, persist_path: str = "./data/permissions.json"):
         self._project_root = str(Path(os.getcwd()).resolve())
-        # whitelist: { abs_path: {"mode": "read"/"write"/"read_write", "type": "temporary"/"permanent"} }
+        # whitelist: { abs_path: {"mode": ..., "type": ..., "expires_at": Optional[float]} }
         self._whitelist: Dict[str, dict] = {}
         self._persist_path = str(Path(persist_path).resolve())
+        self._check_count = 0
         self._load()
+        self._cleanup_expired()
 
     def project_root(self) -> str:
         """获取项目根目录"""
@@ -75,8 +90,17 @@ class FilePermissionManager:
         if abs_path.startswith(self._project_root):
             return True, ""
 
+        # 惰性过期清理（每 50 次检查触发一次）
+        self._check_count += 1
+        if self._check_count % 50 == 0:
+            self._cleanup_expired()
+
         # 2. 先检查是否有父目录在白名单中（子路径继承全权限）
         for whitelisted_path in sorted(self._whitelist.keys(), reverse=True):
+            entry = self._whitelist[whitelisted_path]
+            # 跳过已过期条目
+            if self._is_expired(entry):
+                continue
             # 精确匹配 → 交给第 3 步处理
             if abs_path == whitelisted_path:
                 break
@@ -86,7 +110,7 @@ class FilePermissionManager:
 
         # 3. 精确白名单匹配
         entry = self._whitelist.get(abs_path)
-        if entry:
+        if entry and not self._is_expired(entry):
             if self._mode_allows(entry["mode"], mode):
                 return True, ""
             return False, f"路径已在白名单中，但仅有 {entry['mode']} 权限，需要 {mode} 权限"
@@ -115,8 +139,26 @@ class FilePermissionManager:
             return True
         return False
 
+    def _is_expired(self, entry: dict) -> bool:
+        """检查权限条目是否已过期"""
+        expires_at = entry.get("expires_at")
+        if expires_at is not None and expires_at > 0:
+            if time.time() > expires_at:
+                return True
+        return False
+
+    def _cleanup_expired(self):
+        """清理已过期的权限条目"""
+        expired = [p for p, e in self._whitelist.items() if self._is_expired(e)]
+        for p in expired:
+            del self._whitelist[p]
+            logger.info(f"过期权限已清理: {p}")
+        if expired:
+            self._save()
+
     def authorize(self, path: str, mode: str = "read",
-                  perm_type: str = "temporary") -> dict:
+                  perm_type: str = "temporary",
+                  duration: str = None) -> dict:
         """
         授权访问外部路径。
 
@@ -138,8 +180,22 @@ class FilePermissionManager:
         if abs_path.startswith(self._project_root):
             return {"success": False, "message": f"{abs_path} 已在项目目录内，无需授权"}
 
-        self._whitelist[abs_path] = {"mode": mode, "type": perm_type}
-        logger.info(f"文件授权: {abs_path} ({mode}, {perm_type})")
+        # 计算过期时间
+        expires_at = None
+        if duration and duration in DURATION_MAP:
+            secs = DURATION_MAP[duration]
+            if secs > 0:
+                expires_at = time.time() + secs
+            elif secs == -1:
+                expires_at = None  # permanent: 永不过期
+
+        entry = {"mode": mode, "type": perm_type}
+        if expires_at is not None:
+            entry["expires_at"] = expires_at
+        self._whitelist[abs_path] = entry
+
+        duration_label = f" ({duration})" if duration else ""
+        logger.info(f"文件授权: {abs_path} ({mode}, {perm_type}{duration_label})")
 
         if perm_type == "permanent":
             self._save()

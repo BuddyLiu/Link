@@ -1878,8 +1878,59 @@ class LINK:
                     self._report_progress("✅", f"执行完成: {tool_name}")
                 return result_str
             except PermissionError as e:
-                self._report_progress("❌", f"权限被拒绝: {tool_name}")
-                return f"权限被拒绝: {e}"
+                self._report_progress("🔒", f"需要授权: {tool_name}")
+                try:
+                    # 1. 检查自动授权默认规则
+                    resource = (kwargs.get("path") or kwargs.get("command") or
+                                kwargs.get("pattern") or "")
+                    is_command = tool_name == "execute_command"
+                    rtype = "command" if is_command else "file"
+                    mode = "write" if tool_name in ("write_file", "edit_file", "delete_file") else "read"
+                    if is_command:
+                        mode = "execute"
+
+                    from src.tools.permission_settings import PermissionSettings
+                    ps = PermissionSettings()
+                    auto_dur = ps.get_auto_auth_duration(rtype, mode)
+                    if auto_dur:
+                        self._report_progress("🔓", f"自动授权 {mode} {rtype}: {resource[:80]}")
+                        if auto_dur != "once":
+                            from src.tools.file_permissions import get_permission_manager
+                            pm = get_permission_manager()
+                            pm.authorize(resource, mode="read_write" if rtype == "file" else "read",
+                                        perm_type="permanent" if auto_dur == "permanent" else "temporary",
+                                        duration=auto_dur)
+                        # 重试（once 模式直接重试无需持久化）
+                        return self.tool_manager.execute_tool(tool_id, **kwargs)
+
+                    # 2. 向用户请求授权
+                    from src.tools.permission_request_manager import PermissionRequestManager, ResourceType
+                    prm = PermissionRequestManager.get_instance()
+                    req = prm.create_request(resource, mode,
+                                              ResourceType.COMMAND if is_command else ResourceType.FILE)
+                    self._report_progress("🔒", f"等待用户授权: {mode} {resource[:80]}")
+
+                    # 3. 阻塞等待（5分钟超时）
+                    response = prm.wait_for_response(req.id, timeout=300)
+
+                    # 4. 处理响应
+                    if response and response.get("approved"):
+                        dur = response.get("duration", "once")
+                        if dur != "once":
+                            from src.tools.file_permissions import get_permission_manager
+                            pm = get_permission_manager()
+                            pm.authorize(resource, mode="read_write" if rtype == "file" else "read",
+                                        perm_type="permanent" if dur == "permanent" else "temporary",
+                                        duration=dur)
+                        self._report_progress("✅", f"已授权 {mode} {resource[:80]}")
+                        return self.tool_manager.execute_tool(tool_id, **kwargs)
+                    else:
+                        reason = response.get("reason", "用户拒绝") if response else "用户拒绝"
+                        return f"权限被拒绝: {reason}"
+                except Exception as perm_flow_err:
+                    self._report_progress("❌", f"授权流程异常: {perm_flow_err}")
+                    self.logger.error(f"授权流程异常: {perm_flow_err}", exc_info=True)
+                    return f"权限被拒绝: {e}"
             except FileNotFoundError as e:
                 self._report_progress("❌", f"文件未找到: {tool_name}")
                 return f"文件未找到: {e}"
