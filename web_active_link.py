@@ -901,7 +901,7 @@ function send() {
   ws.send(JSON.stringify({type: 'user_input', text}));
 }
 
-input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) send(); });
 
 // ----- Helper: smart auto-scroll & copy -----
 function addThinking(reasoning, callback) {
