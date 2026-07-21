@@ -512,7 +512,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.user .time{text-align:right}
 /* Input area */
 .input-area{flex-shrink:0;padding:12px 20px;background:#0d0d14;border-top:1px solid #1a1a2e;display:flex;justify-content:center}
-.input-area input{flex:1;padding:10px 14px;background:#13131f;border:1px solid #1a1a2e;border-radius:8px;font-size:13px;outline:none;color:#e0e0e0;transition:border-color .2s}
+.input-area input{flex:1;padding:10px 14px;background:#13131f;border:1px solid rgba(255,255,255,.25);border-radius:8px;font-size:13px;outline:none;color:#e0e0e0;transition:border-color .2s}
 .input-area input::placeholder{color:#4a4a6a}
 .input-area input:focus{border-color:#6366f1}
 .input-area button{padding:10px 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
