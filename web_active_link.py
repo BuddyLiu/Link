@@ -498,10 +498,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #chat-box::-webkit-scrollbar-track{background:transparent}
 #chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
 /* Floating scroll buttons */
-#scroll-nav{position:fixed;right:max(8px,calc(50% - 380px));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;z-index:100}
-#scroll-nav button{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(13,13,20,.8);color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;backdrop-filter:blur(4px)}
-#scroll-nav button:hover{transform:scale(1.2);border-color:rgba(255,255,255,.6);color:#fff;background:rgba(13,13,20,.95)}
-#scroll-nav button.scroll-hidden{opacity:0;pointer-events:none}
+#scroll-nav{position:fixed;z-index:100;cursor:grab;user-select:none}
+#scroll-nav.dragging{cursor:grabbing}
+#scroll-nav .nav-toggle{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25);background:rgba(13,13,20,.8);color:rgba(255,255,255,.6);font-size:14px;cursor:grab;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:all .2s}
+#scroll-nav .nav-toggle:hover{transform:scale(1.15);border-color:rgba(255,255,255,.5)}
+#scroll-nav .nav-content{display:flex;flex-direction:column;gap:8px;opacity:0;pointer-events:none;transition:opacity .2s}
+#scroll-nav.expanded .nav-content{opacity:1;pointer-events:auto}
+#scroll-nav.expanded .nav-toggle{display:none}
+#scroll-nav .nav-content button{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(13,13,20,.8);color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;backdrop-filter:blur(4px)}
+#scroll-nav .nav-content button:hover{transform:scale(1.2);border-color:rgba(255,255,255,.6);background:rgba(99,102,241,.2)}
+#scroll-nav .nav-content button.scroll-hidden{opacity:0;pointer-events:none}
 .msg{margin-bottom:20px;display:flex;flex-direction:column;max-width:85%}
 .msg.user{align-self:flex-end;align-items:flex-end}
 .msg.assistant{align-self:flex-start;align-items:flex-start}
@@ -619,11 +625,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </details>
 </div>
 <div id="chat-box"></div>
-<div id="scroll-nav">
-<button id="scroll-top" onclick="scrollToTop()" title="&#x21E7; 顶部" class="scroll-hidden">&#x2191;</button>
-<button id="scroll-up" onclick="scrollUpScreen()" title="&#x25B2; 上一屏">&#x25B2;</button>
-<button id="scroll-down" onclick="scrollDownScreen()" title="&#x25BC; 下一屏">&#x25BC;</button>
-<button id="scroll-bottom" onclick="scrollToBottomBtn()" title="&#x21E9; 底部" class="scroll-hidden">&#x2193;</button>
+<div id="scroll-nav" class="collapsed" style="right:8px;top:50%">
+  <div class="nav-content">
+    <button id="scroll-top" onclick="scrollToTop()" title="&#x21E7; 顶部" class="scroll-hidden">&#x2191;</button>
+    <button id="scroll-up" onclick="scrollUpScreen()" title="&#x25B2; 上一屏">&#x25B2;</button>
+    <button id="scroll-down" onclick="scrollDownScreen()" title="&#x25BC; 下一屏">&#x25BC;</button>
+    <button id="scroll-bottom" onclick="scrollToBottomBtn()" title="&#x21E9; 底部" class="scroll-hidden">&#x2193;</button>
+  </div>
+  <div class="nav-toggle">&#x2195;</div>
 </div>
 <div class="input-area">
 <div style="width:100%;max-width:820px;display:flex;gap:8px;margin:0 auto">
@@ -962,6 +971,75 @@ function updateScrollButtons() {
 }
 chatBox.addEventListener('scroll', updateScrollButtons);
 setTimeout(updateScrollButtons, 500);
+
+// Scroll Nav: drag + snap + expand/collapse
+(function() {
+  var nav = document.getElementById('scroll-nav');
+  if (!nav) return;
+  var toggle = nav.querySelector('.nav-toggle');
+  var isDragging = false, startX, startY, startLeft, startTop;
+  
+  // Collapsed by default (already set via class)
+  // Expand on hover
+  nav.addEventListener('mouseenter', function() {
+    nav.classList.remove('collapsed');
+    nav.classList.add('expanded');
+  });
+  nav.addEventListener('mouseleave', function() {
+    if (!isDragging) {
+      nav.classList.remove('expanded');
+      nav.classList.add('collapsed');
+    }
+  });
+  
+  // Drag on toggle mousedown
+  if (toggle) {
+    toggle.addEventListener('mousedown', function(e) {
+      isDragging = true;
+      var rect = nav.getBoundingClientRect();
+      startX = e.clientX; startY = e.clientY;
+      startLeft = rect.left; startTop = rect.top;
+      nav.classList.add('dragging');
+      nav.style.transition = 'none';
+      e.preventDefault();
+    });
+  }
+  
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    var dx = e.clientX - startX, dy = e.clientY - startY;
+    nav.style.left = (startLeft + dx) + 'px';
+    nav.style.top = (startTop + dy) + 'px';
+    nav.style.right = 'auto';
+    nav.style.transform = 'none';
+  });
+  
+  document.addEventListener('mouseup', function() {
+    if (!isDragging) return;
+    isDragging = false;
+    nav.classList.remove('dragging');
+    nav.style.transition = 'left .3s, top .3s';
+    // Snap to nearest edge
+    var winW = window.innerWidth;
+    var rect = nav.getBoundingClientRect();
+    var centerX = rect.left + rect.width / 2;
+    var top = parseInt(nav.style.top) || 0;
+    if (top < 0) top = 0;
+    if (top + rect.height > window.innerHeight)
+      top = window.innerHeight - rect.height;
+    if (centerX < winW / 2) {
+      nav.style.left = '8px';
+      nav.style.right = 'auto';
+    } else {
+      nav.style.left = 'auto';
+      nav.style.right = 'max(8px, calc(50% - 380px))';
+    }
+    nav.style.top = top + 'px';
+    setTimeout(function() {
+      nav.style.transition = '';
+    }, 300);
+  });
+})();
 
 async function copyText(text, btn) {
   try {
