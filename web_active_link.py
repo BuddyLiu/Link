@@ -530,8 +530,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.system{align-self:center;align-items:center;max-width:100%}
 .msg.system .bubble{background:transparent;color:#4a4a6a;font-size:11px;text-align:center;border:none;padding:4px}
 /* Copy buttons */
-.copy-btn{font-size:10px;cursor:pointer;opacity:0;transition:opacity .2s;border:1px solid transparent;background:transparent;padding:2px 8px;border-radius:4px;color:#6366f1;margin-top:6px;align-self:flex-end}
-.copy-btn:hover{border-color:#6366f1}
+.copy-btn{font-size:10px;cursor:pointer;opacity:0;transition:opacity .2s;border:1px solid transparent;background:transparent;padding:2px 8px;border-radius:4px;color:rgba(255,255,255,.6);margin-top:6px;align-self:flex-end}
+.copy-btn:hover{border-color:rgba(255,255,255,.4)}
 .copy-btn.visible{opacity:1}
 .msg:hover .copy-btn{opacity:0.8}
 /* Feedback buttons */
@@ -598,6 +598,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .modal-duration button{padding:6px 8px;background:#0d0d14;border:1px solid #1a1a2e;border-radius:6px;color:#9ca3af;font-size:11px;cursor:pointer;transition:all .15s}
 .modal-duration button:hover{border-color:#6366f1;color:#e0e0e0}
 .modal-duration button.active{background:rgba(99,102,241,.15);border-color:#6366f1;color:#a5b4fc}
+
+/* Toast */
+#toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2000;background:#13131f;border:1px solid #1a1a2e;border-radius:10px;padding:10px 20px;color:#e0e0e0;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .modal-actions{display:flex;gap:8px;margin-top:18px}
 .modal-btn{padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .15s;flex:1}
 .modal-btn.confirm{background:#6366f1;color:#fff}
@@ -781,8 +785,7 @@ ws.onmessage = e => {
       copyBtn.textContent = '复制';
       copyBtn.onclick = function() {
         navigator.clipboard.writeText(result).then(function() {
-          copyBtn.textContent = '已' + String.fromCharCode(10003);
-          setTimeout(function(){ copyBtn.textContent = '复制'; }, 2000);
+          showToast('已复制');
         });
       };
       streamEl.appendChild(copyBtn);
@@ -1278,6 +1281,7 @@ function denyPermission() {
   </div>
 </div>
 
+<div id="toast"></div>
 </body>
 </html>"""
 
