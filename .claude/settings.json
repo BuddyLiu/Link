@@ -218,7 +218,11 @@
       "Bash(python3 -m pytest test/test_tools.py -v --tb=short)",
       "Bash(python3 -m pytest test/test_tools.py::TestGlobFilesTool::test_pattern test/test_tools.py::TestToolDefs::test_parameter_descriptions -v --tb=long)",
       "Bash(python3 -m pytest test/test_tools.py::TestToolDefs::test_parameter_descriptions -v --tb=long)",
-      "Bash(python3 -c \"from tools import tool_manager; from tools.system_tools import initialize_system_tools; initialize_system_tools\\(\\); print\\('✅ 工具系统导入正常, 已注册', len\\(tool_manager.get_tool_names\\(\\)\\), '个工具'\\)\")"
+      "Bash(python3 -c \"from tools import tool_manager; from tools.system_tools import initialize_system_tools; initialize_system_tools\\(\\); print\\('✅ 工具系统导入正常, 已注册', len\\(tool_manager.get_tool_names\\(\\)\\), '个工具'\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_link.py', doraise=True\\); print\\('✅ Syntax OK'\\)\")",
+      "Bash(sed -i '' 's/calc\\(50% - 410px\\)/calc\\(50% - 320px\\)/g' web_active_link.py)",
+      "Bash(sed -i '' 's/calc\\(50% - 470px\\)/calc\\(50% - 380px\\)/g' web_active_link.py)",
+      "Bash(sed -i '' 's/padding:0 max\\(20px, calc\\(50% - 410px\\)\\)/padding:0 max\\(20px, calc\\(50% - 320px\\)\\)/g' web_active_link.py)"
     ],
     "additionalDirectories": [
       "/private/tmp",
