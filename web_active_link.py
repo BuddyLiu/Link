@@ -320,6 +320,96 @@ class LearningEventHandler(EventHandler):
             return f"❌ 用户偏好学习失败: {e}"
 
 
+# ── 任务队列（支持非阻塞、排队、状态追踪） ──
+
+@dataclass
+class TaskItem:
+    """单个用户消息处理任务"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    text: str = ""
+    status: str = "pending"  # pending / processing / done / error / cancelled
+    created_at: float = field(default_factory=time.time)
+    result: Optional[str] = None
+    reasoning: Optional[str] = None
+
+
+class TaskManager:
+    """任务队列管理器，串行处理，支持状态查询"""
+
+    def __init__(self):
+        self._queue: asyncio.Queue[TaskItem] = asyncio.Queue()
+        self._tasks: Dict[str, TaskItem] = {}
+        self._current: Optional[TaskItem] = None
+        self._worker_task: Optional[asyncio.Task] = None
+        self._status_callbacks: List[Callable] = []
+
+    def on_status_change(self, cb: Callable):
+        """注册任务状态变化回调"""
+        self._status_callbacks.append(cb)
+
+    def _notify(self, task: TaskItem, total: int):
+        for cb in self._status_callbacks:
+            try:
+                cb(task, total)
+            except Exception:
+                pass
+
+    async def submit(self, text: str) -> TaskItem:
+        """提交新任务，放入队列，返回 TaskItem"""
+        task = TaskItem(text=text)
+        self._tasks[task.id] = task
+        await self._queue.put(task)
+        self._notify(task, self._queue.qsize())
+        return task
+
+    def get_task(self, task_id: str) -> Optional[TaskItem]:
+        return self._tasks.get(task_id)
+
+    def list_tasks(self, limit: int = 20) -> List[TaskItem]:
+        pending = [t for t in self._tasks.values() if t.status in ("pending", "processing")]
+        done = [t for t in self._tasks.values() if t.status == "done"]
+        return (pending + done[-limit:])[::-1]
+
+    async def worker(self, process_fn):
+        """后台工作者：不断从队列消费任务并调用 process_fn 处理"""
+        self._worker_task = asyncio.current_task()
+        while True:
+            task = await self._queue.get()
+            if task.status == "cancelled":
+                continue
+            self._current = task
+            task.status = "processing"
+            total = self._queue.qsize() + 1
+            self._notify(task, total)
+
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, process_fn, task.text
+                )
+                task.result = result.get("result") if isinstance(result, dict) else str(result)
+                task.reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""
+                task.status = "done"
+            except Exception as e:
+                task.result = f"❌ 处理出错: {e}"
+                task.status = "error"
+
+            self._current = None
+            self._notify(task, self._queue.qsize())
+
+    def cancel_current(self):
+        """取消当前处理中的任务（标记为 cancelled，不中断执行）"""
+        if self._current and self._current.status == "processing":
+            self._current.status = "cancelled"
+
+    @property
+    def pending_count(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def current_task(self) -> Optional[TaskItem]:
+        return self._current
+
+
 class WebActiveLINK:
     """Web版本的主动运行模式LINK"""
     
@@ -345,6 +435,7 @@ class WebActiveLINK:
         self.app = FastAPI(title="LINK主动模式Web界面")
         self.websocket_clients = []
         self.event_history = []
+        self.task_manager = TaskManager()
         self.max_history = 100
         
         # 统计
@@ -909,7 +1000,6 @@ function send() {
   input.value = '';
   addMessage('user', text);
   showTyping();
-  sendBtn.disabled = true;
   ws.send(JSON.stringify({type: 'user_input', text}));
 }
 
@@ -1413,7 +1503,7 @@ function denyPermission() {
 
             # 并行运行两个任务
             try:
-                await asyncio.gather(receive_task(), process_task())
+                await asyncio.gather(receive_task(), process_task(), worker_task())
             except Exception as e:
                 print(f"WebSocket 处理器异常: {e}")
             finally:
