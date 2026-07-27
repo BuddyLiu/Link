@@ -583,11 +583,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .header a:hover{border-color:#6366f1;background:rgba(99,102,241,.1)}
 .header div{display:flex;gap:8px}
 /* Chat box */
-#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 320px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
-#chat-box.instant-scroll{scroll-behavior:auto}
-#chat-box::-webkit-scrollbar{width:4px}
-#chat-box::-webkit-scrollbar-track{background:transparent}
-#chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+#chat-container{flex:1;display:flex;overflow:hidden;position:relative}
+.chat-column{overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.chat-column::-webkit-scrollbar{width:4px}
+.chat-column::-webkit-scrollbar-track{background:transparent}
+.chat-column::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+#user-column{background:#0a0a0f}
+#assistant-column{background:#0d0d18}
+#column-divider{width:6px;cursor:col-resize;background:#1a1a2e;flex-shrink:0;transition:background .15s}
+#column-divider:hover{background:#6366f1}
+#column-divider.active,#column-divider.dragging{background:#6366f1}
 /* Floating scroll buttons */
 #scroll-nav{position:fixed;z-index:100;cursor:grab;user-select:none}
 #scroll-nav.dragging{cursor:grabbing}
@@ -715,11 +720,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <div id="status-content">
 <div id="status-model">模型: 加载中...</div>
 <div id="status-memory">记忆: 加载中...</div>
-<div id="status-session">会话: 加载中...</div>
+<div id="status-session">会话: 加载中...</div><div id="queue-status"></div>
 </div>
 </details>
 </div>
-<div id="chat-box"></div>
+<div id="chat-container">
+<div id="user-column" class="chat-column"></div>
+<div id="column-divider"></div>
+<div id="assistant-column" class="chat-column"></div>
+</div>
 <div id="scroll-nav" class="collapsed" style="right:8px;top:50%">
   <div class="nav-content">
     <button id="scroll-top" onclick="scrollToTop()" title="&#x21E7; 顶部" class="scroll-hidden">&#x2191;</button>
@@ -738,7 +747,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <script>
 const ws = new WebSocket('ws://' + location.host + '/ws');
-const chatBox = document.getElementById('chat-box');
+const chatBox = document.getElementById('chat-container');
+const userColumn = document.getElementById('user-column');
+const assistantColumn = document.getElementById('assistant-column');
+const columnDivider = document.getElementById('column-divider');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const TYPE_SPEED = 30; // ms per character
@@ -794,6 +806,25 @@ ws.onmessage = e => {
   const d = JSON.parse(e.data);
 
   // 权限请求弹窗
+
+  // 任务队列状态更新
+  if (d.type === 'event' && d.data.event_type === 'TASK_UPDATE') {
+    var qs = document.getElementById('queue-status');
+    if (qs) {
+      var status = d.data.status;
+      var pos = d.data.position || 0;
+      if (status === 'pending') {
+        qs.textContent = '\u23f3 排队中 (第' + pos + '个)';
+        qs.style.color = '#eab308';
+      } else if (status === 'processing') {
+        qs.textContent = '\u23f3 处理中';
+        qs.style.color = '#6366f1';
+      } else if (status === 'done' || status === 'error') {
+        qs.textContent = '';
+      }
+    }
+    return;
+  }
   if (d.type === 'permission_request') {
     _pendingPermRequestId = d.request_id;
     document.getElementById('perm-resource-type').textContent =
@@ -823,9 +854,9 @@ ws.onmessage = e => {
       con.id = 'stream-reasoning-content';
       con.style.cssText = 'color:#6b7280;line-height:1.5;padding:4px 8px;white-space:pre-wrap;font-size:11px';
       det.appendChild(sum); det.appendChild(con);
-      var typingEl = chatBox.querySelector('.typing');
-      if (typingEl) chatBox.insertBefore(det, typingEl);
-      else chatBox.appendChild(det);
+      var typingEl = assistantColumn.querySelector('.typing');
+      if (typingEl) assistantColumn.insertBefore(det, typingEl);
+      else assistantColumn.appendChild(det);
     }
     var rc = document.getElementById('stream-reasoning-content');
     if (rc) rc.textContent += d.data;
@@ -845,7 +876,7 @@ ws.onmessage = e => {
       bubble.className = 'bubble';
       bubble.id = 'stream-bubble';
       div.appendChild(bubble);
-      chatBox.appendChild(div);
+      assistantColumn.appendChild(div);
       chatBox.scrollTop = chatBox.scrollHeight;
       streamContentId = 'stream-msg';
     }
@@ -853,7 +884,7 @@ ws.onmessage = e => {
     var sb = document.getElementById('stream-bubble');
     if (sb) {
       sb.innerHTML = renderMarkdown(streamContentBuf) + '<span class="cursor"></span>';
-      chatBox.scrollTop = chatBox.scrollHeight;
+      assistantColumn.scrollTop = assistantColumn.scrollHeight;
     }
     return;
   }
@@ -958,13 +989,17 @@ async function loadHistory(page) {
     if (page === 1) {
       // 第一页追加到底部（最新的在最下面）
       for (var i = 0; i < d.messages.length; i++) {
-        chatBox.appendChild(createMsgDiv(d.messages[i]));
+        var _m = d.messages[i];
+        var _col = _m.role === 'user' ? userColumn : (_m.role === 'assistant' ? assistantColumn : userColumn);
+        _col.appendChild(createMsgDiv(_m));
       }
     } else {
       // 更早的页面插到顶部（反向遍历保持顺序）
-      var firstMsg = chatBox.querySelector('.msg');
       for (var i = d.messages.length - 1; i >= 0; i--) {
-        chatBox.insertBefore(createMsgDiv(d.messages[i]), firstMsg);
+        var _m = d.messages[i];
+        var _col = _m.role === 'user' ? userColumn : (_m.role === 'assistant' ? assistantColumn : userColumn);
+        var _firstMsg = _col.querySelector('.msg');
+        _col.insertBefore(createMsgDiv(_m), _firstMsg);
       }
     }
 
@@ -977,7 +1012,7 @@ async function loadHistory(page) {
       btn.style.cssText = 'padding:6px 16px;background:#f0f2f5;color:#666;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:12px';
       btn.onclick = function() { historyPage++; loadHistory(historyPage); };
       btnDiv.appendChild(btn);
-      chatBox.insertBefore(btnDiv, chatBox.firstChild || null);
+      assistantColumn.insertBefore(btnDiv, assistantColumn.firstChild || null);\n      userColumn.insertBefore(btnDiv.cloneNode(true), userColumn.firstChild || null);
     } else {
       historyEnd = true;
     }
@@ -985,9 +1020,10 @@ async function loadHistory(page) {
 
     // 首次加载滚到底部；翻页不滚动
     if (page === 1) {
-        chatBox.classList.add('instant-scroll');
-        chatBox.scrollTop = chatBox.scrollHeight;
-        setTimeout(function(){ chatBox.classList.remove('instant-scroll'); }, 50);
+        assistantColumn.classList.add('instant-scroll');
+        assistantColumn.scrollTop = assistantColumn.scrollHeight;
+        userColumn.scrollTop = userColumn.scrollHeight;
+        setTimeout(function(){ assistantColumn.classList.remove('instant-scroll'); }, 50);
         setTimeout(updateScrollButtons, 100);
       }
   } catch(e) { console.error('History load failed:', e); }
@@ -1018,9 +1054,10 @@ function addThinking(reasoning, callback) {
   details.appendChild(summary);
   details.appendChild(content);
   div.appendChild(details);
-  const typing = chatBox.querySelector('.typing');
-  if (typing) chatBox.insertBefore(div, typing);
-  else chatBox.appendChild(div);
+  var targetCol = role === 'user' ? userColumn : assistantColumn;
+  const typing = targetCol.querySelector('.typing');
+  if (typing) targetCol.insertBefore(div, typing);
+  else targetCol.appendChild(div);
   scrollToBottom();
 
   var pos = 0;
@@ -1039,30 +1076,33 @@ function addThinking(reasoning, callback) {
 }
 
 function isNearBottom() {
-  return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 120;
+  return assistantColumn.scrollHeight - assistantColumn.scrollTop - assistantColumn.clientHeight < 120;
 }
 function scrollToBottom() {
-  if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+  if (isNearBottom()) assistantColumn.scrollTop = assistantColumn.scrollHeight;
+  userColumn.scrollTop = userColumn.scrollHeight;
 }
 function scrollToTop() {
-  chatBox.scrollTop = 0;
+  assistantColumn.scrollTop = 0;
+  userColumn.scrollTop = 0;
 }
 function scrollUpScreen() {
-  chatBox.scrollTop -= chatBox.clientHeight * 0.85;
+  assistantColumn.scrollTop -= assistantColumn.clientHeight * 0.85;
 }
 function scrollDownScreen() {
-  chatBox.scrollTop += chatBox.clientHeight * 0.85;
+  assistantColumn.scrollTop += assistantColumn.clientHeight * 0.85;
 }
 function scrollToBottomBtn() {
-  chatBox.scrollTop = chatBox.scrollHeight;
+  assistantColumn.scrollTop = assistantColumn.scrollHeight;
+  userColumn.scrollTop = userColumn.scrollHeight;
 }
 function updateScrollButtons() {
   var st = document.getElementById('scroll-top');
   var sb = document.getElementById('scroll-bottom');
-  if (st) st.classList.toggle('scroll-hidden', chatBox.scrollTop <= 10);
-  if (sb) sb.classList.toggle('scroll-hidden', chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight <= 20);
+  if (st) st.classList.toggle('scroll-hidden', assistantColumn.scrollTop <= 10);
+  if (sb) sb.classList.toggle('scroll-hidden', assistantColumn.scrollHeight - assistantColumn.scrollTop - assistantColumn.clientHeight <= 20);
 }
-chatBox.addEventListener('scroll', updateScrollButtons);
+assistantColumn.addEventListener('scroll', updateScrollButtons);
 setTimeout(updateScrollButtons, 500);
 
 // Scroll Nav: drag + snap + expand/collapse
@@ -1134,6 +1174,50 @@ setTimeout(updateScrollButtons, 500);
   });
 })();
 
+// Column divider drag
+(function() {
+  var divider = document.getElementById('column-divider');
+  var userCol = document.getElementById('user-column');
+  var container = document.getElementById('chat-container');
+  if (!divider || !userCol || !container) return;
+  var isDragging = false, startX, startWidth;
+
+  divider.addEventListener('mousedown', function(e) {
+    isDragging = true;
+    startX = e.clientX;
+    startWidth = userCol.offsetWidth;
+    divider.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    var delta = e.clientX - startX;
+    var totalWidth = container.offsetWidth - divider.offsetWidth;
+    var newWidth = Math.max(200, Math.min(totalWidth * 0.8, startWidth + delta));
+    userCol.style.width = newWidth + 'px';
+    userCol.style.flex = 'none';
+    document.getElementById('assistant-column').style.flex = '1';
+  });
+
+  document.addEventListener('mouseup', function() {
+    if (!isDragging) return;
+    isDragging = false;
+    divider.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    // Persist width
+    try { localStorage.setItem('split_user_width', userCol.style.width); } catch(e) {}
+  });
+
+  // Restore saved width
+  try {
+    var saved = localStorage.getItem('split_user_width');
+    if (saved) { userCol.style.width = saved; userCol.style.flex = 'none'; }
+  } catch(e) {}
+})();
 async function copyText(text, btn) {
   try {
     await navigator.clipboard.writeText(text);
@@ -1183,7 +1267,7 @@ function typewriteMessage(role, fullText) {
 
   var div = document.createElement('div');
   div.className = 'msg ' + role;
-  chatBox.appendChild(div);
+  assistantColumn.appendChild(div);
   scrollToBottom();
 
   var bubble = document.createElement('div');
@@ -1236,9 +1320,9 @@ function addMessage(role, content) {
     timeEl.textContent = time;
     div.appendChild(timeEl);
   }
-  const typing = chatBox.querySelector('.typing');
-  if (typing) chatBox.insertBefore(div, typing);
-  else chatBox.appendChild(div);
+  const typing = assistantColumn.querySelector('.typing');
+  if (typing) assistantColumn.insertBefore(div, typing);
+  else assistantColumn.appendChild(div);
   scrollToBottom();
 }
 
