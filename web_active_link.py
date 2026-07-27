@@ -860,7 +860,7 @@ ws.onmessage = e => {
     }
     var rc = document.getElementById('stream-reasoning-content');
     if (rc) rc.textContent += d.data;
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollToBottom();
     return;
   }
 
@@ -877,7 +877,7 @@ ws.onmessage = e => {
       bubble.id = 'stream-bubble';
       div.appendChild(bubble);
       assistantColumn.appendChild(div);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      assistantColumn.scrollTop = assistantColumn.scrollHeight;
       streamContentId = 'stream-msg';
     }
     streamContentBuf += d.data;
@@ -900,7 +900,7 @@ ws.onmessage = e => {
       var finalBubble = streamEl.querySelector('.bubble');
       if (finalBubble) {
         finalBubble.innerHTML = renderMarkdown(result);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        assistantColumn.scrollTop = assistantColumn.scrollHeight;
       }
       var copyBtn = document.createElement('button');
       copyBtn.className = 'copy-btn visible';
@@ -1337,7 +1337,7 @@ const STATUS_STEPS = [
 ];
 
 function showTyping() {
-  const existing = chatBox.querySelector('.typing');
+  var existing = assistantColumn.querySelector('.typing');
   if (existing) return;
   const div = document.createElement('div');
   div.className = 'msg assistant typing';
@@ -1345,7 +1345,7 @@ function showTyping() {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   div.appendChild(bubble);
-  chatBox.appendChild(div);
+  assistantColumn.appendChild(div);
   scrollToBottom();
   typingStep = 0;
   nextTypingStep();
@@ -1373,7 +1373,7 @@ function nextTypingStep() {
 
 function removeTyping() {
   if (typingTimer) { clearTimeout(typingTimer); typingTimer = null; }
-  const el = chatBox.querySelector('.typing');
+  var el = assistantColumn.querySelector('.typing');
   if (el) el.remove();
 }
 
