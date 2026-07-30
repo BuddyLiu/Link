@@ -2847,7 +2847,7 @@ async function loadModels() {
 async function loadSettings() {
   try {
     var r = await fetch("/api/settings"); var s = await r.json();
-    var radio = document.querySelector("input[name=mode][value=\"\"+s.mode+\"\"]");
+    var radio = document.querySelector("input[name=mode][value=\\""+s.mode+"\\"]");
     if (radio) radio.checked = true;
     if (s.provider) document.getElementById("provider").value = s.provider;
     if (s.api_base) {
