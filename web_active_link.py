@@ -2677,266 +2677,261 @@ SETTINGS_HTML = """<!DOCTYPE html>
 <title>LINK 设置</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;padding:20px;max-width:700px;margin:0 auto}
-h1{font-size:22px;margin-bottom:16px;color:#1a1a2e}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;display:flex;height:100vh}
+.sidebar{width:200px;background:#fff;border-right:1px solid #e0e0e0;padding:20px 0;flex-shrink:0;display:flex;flex-direction:column}
+.sidebar h1{font-size:18px;padding:0 20px 20px;color:#1a1a2e;border-bottom:1px solid #eee;margin-bottom:8px}
+.nav-item{padding:12px 20px;cursor:pointer;font-size:14px;color:#555;display:flex;align-items:center;gap:8px;transition:all .15s;border:none;background:none;width:100%;text-align:left}
+.nav-item:hover{background:#f5f5f5;color:#1a73e8}
+.nav-item.active{background:#e8f0fe;color:#1a73e8;font-weight:500;border-right:3px solid #1a73e8}
+.content{flex:1;padding:24px 32px;overflow-y:auto;max-width:700px}
+.tab{display:none}
+.tab.active{display:block}
 .card{background:#fff;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 .card h2{font-size:15px;margin-bottom:12px;color:#1a73e8}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:13px;color:#555;margin-bottom:4px;font-weight:500}
+.field .value-display{background:#f5f5f5;padding:10px 12px;border-radius:8px;font-size:13px;color:#333;word-break:break-all}
 .field input,.field select{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;transition:border-color .2s}
 .field input:focus,.field select:focus{border-color:#1a73e8}
-.field input[type=radio]{width:auto;margin-right:4px}
 .radio-group{display:flex;gap:24px;margin-bottom:4px}
 .radio-group label{font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#333;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px;transition:all .2s}
 .radio-group label:has(input:checked){border-color:#1a73e8;background:#e8f0fe}
-.btn{padding:12px 24px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;transition:all .2s}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
 .btn-primary{background:#1a73e8;color:#fff}
 .btn-primary:hover{background:#1557b0}
 .btn-primary:disabled{background:#ccc;cursor:not-allowed}
 .btn-secondary{background:#e8eaed;color:#333}
 .btn-secondary:hover{background:#d2d5d9}
-.status{display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px}
+.action-bar{display:flex;gap:10px;margin-top:16px;align-items:center}
+.status{display:none;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px}
 .status.success{display:block;background:#e8f5e9;color:#2e7d32;border:1px solid #c8e6c9}
 .status.error{display:block;background:#fce8e8;color:#d93025;border:1px solid #f5c6cb}
 .hidden{display:none}
 .model-info{font-size:12px;color:#888;margin-top:6px}
+.status-preview{margin-top:8px;font-size:13px;color:#555;padding:10px 14px;background:#f9f9f9;border-radius:8px;border:1px solid #eee}
+.status-preview strong{color:#1a73e8}
 </style>
 </head>
 <body>
-<h1>&#x2699;&#xFE0F; LINK 设置</h1>
+
+<div class="sidebar">
+  <h1>&#x2699;&#xFE0F; LINK 设置</h1>
+  <button class="nav-item active" data-tab="api" onclick="switchTab('api')">&#x1F310; API 配置</button>
+  <button class="nav-item" data-tab="perm" onclick="switchTab('perm')">&#x1F512; 授权规则</button>
+  <div style="flex:1"></div>
+  <a href="/" style="padding:12px 20px;color:#888;text-decoration:none;font-size:13px;border-top:1px solid #eee">&#x2190; 返回聊天</a>
+</div>
+
+<div class="content">
 <div id="status" class="status"></div>
 
-<div class="card">
-  <h2>&#x1F916; 模型提供者</h2>
-  <div class="field">
-    <div class="radio-group">
-      <label><input type="radio" name="mode" value="online" checked onchange="toggleMode()"> &#x1F310; 在线模式（API）</label>
-      <label><input type="radio" name="mode" value="offline" onchange="toggleMode()"> &#x1F4BB; 离线模式（本地模型）</label>
+<div id="tab-api" class="tab active">
+  <div class="card">
+    <h2>&#x1F916; 模型提供者</h2>
+    <div class="field">
+      <div class="radio-group">
+        <label><input type="radio" name="mode" value="online" checked> &#x1F310; 在线模式（API）</label>
+        <label><input type="radio" name="mode" value="offline"> &#x1F4BB; 离线模式（本地模型）</label>
+      </div>
     </div>
   </div>
-</div>
-
-<div id="online-settings" class="card">
-  <h2>&#x1F310; 在线 API 配置</h2>
-  <div class="field">
-    <label>服务商</label>
-    <select id="provider" onchange="updateBaseUrl()">
-      <option value="deepseek">DeepSeek</option>
-      <option value="openai">OpenAI</option>
-      <option value="custom">自定义（OpenAI 兼容）</option>
-    </select>
+  <div id="online-settings" class="card">
+    <h2>&#x1F310; 在线 API 配置</h2>
+    <div class="field">
+      <label>服务商</label>
+      <select id="provider" onchange="updateBaseUrl()">
+        <option value="deepseek">DeepSeek</option>
+        <option value="openai">OpenAI</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>API 地址</label>
+      <input id="api-base" placeholder="https://api.deepseek.com">
+      <div id="api-base-preview" class="status-preview"></div>
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input id="api-key" type="password" placeholder="sk-...">
+      <div id="api-key-preview" class="status-preview"></div>
+    </div>
+    <div class="field">
+      <label>模型</label>
+      <input id="model-name" placeholder="deepseek-chat">
+    </div>
+    <div class="field">
+      <label>Temperature</label>
+      <input id="temperature" type="number" step="0.1" min="0" max="2" value="0.7">
+    </div>
   </div>
-  <div class="field">
-    <label>API 地址</label>
-    <input id="api-base" placeholder="https://api.deepseek.com">
+  <div id="offline-settings" class="card hidden">
+    <h2>&#x1F4BB; 本地模型</h2>
+    <div class="field">
+      <label>选择模型</label>
+      <select id="offline-model"></select>
+    </div>
+    <div class="model-info" id="model-info"></div>
   </div>
-  <div class="field">
-    <label>API Key</label>
-    <input id="api-key" type="password" placeholder="sk-...">
-  </div>
-  <div class="field">
-    <label>模型</label>
-    <input id="model-name" placeholder="deepseek-chat">
-  </div>
-  <div class="field">
-    <label>Temperature</label>
-    <input id="temperature" type="number" step="0.1" min="0" max="2" value="0.7">
-  </div>
-</div>
-
-<div id="offline-settings" class="card hidden">
-  <h2>&#x1F4BB; 本地模型</h2>
-  <div class="field">
-    <label>选择模型</label>
-    <select id="offline-model"></select>
-  </div>
-  <div class="model-info" id="model-info"></div>
-</div>
-
-<!-- Permission Defaults -->
-<div class="card">
-  <h2>&#x1F512; 默认授权规则</h2>
-  <div class="field">
-    <label>文件读取权限</label>
-    <select id="perm-file-read">
-      <option value="ask">每次询问</option>
-      <option value="once">仅本次</option>
-      <option value="1h">授权1小时</option>
-      <option value="24h">授权24小时</option>
-      <option value="permanent">永久授权</option>
-    </select>
-  </div>
-  <div class="field">
-    <label>文件写入权限</label>
-    <select id="perm-file-write">
-      <option value="ask">每次询问</option>
-      <option value="once">仅本次</option>
-      <option value="1h">授权1小时</option>
-      <option value="24h">授权24小时</option>
-      <option value="permanent">永久授权</option>
-    </select>
-  </div>
-  <div class="field">
-    <label>命令执行权限</label>
-    <select id="perm-command-exec">
-      <option value="ask">每次询问</option>
-      <option value="once">仅本次</option>
-      <option value="1h">授权1小时</option>
-      <option value="24h">授权24小时</option>
-      <option value="permanent">永久授权</option>
-    </select>
+  <div class="action-bar">
+    <button class="btn btn-primary" onclick="saveApiSettings()">保存 API 设置</button>
+    <button class="btn btn-secondary" onclick="testConnection()">测试连接</button>
   </div>
 </div>
 
-<div style="display:flex;gap:10px;margin-top:8px">
-  <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
-  <button class="btn btn-secondary" onclick="testConnection()">测试连接</button>
-  <a href="/" style="margin-left:auto;color:#888;text-decoration:none;font-size:13px;padding:12px 0">&#x2190; 返回聊天</a>
+<div id="tab-perm" class="tab">
+  <div class="card">
+    <h2>&#x1F512; 默认授权规则</h2>
+    <div class="field">
+      <label>文件读取权限</label>
+      <select id="perm-file-read">
+        <option value="ask">每次询问</option>
+        <option value="once">仅本次</option>
+        <option value="1h">授权1小时</option>
+        <option value="24h">授权24小时</option>
+        <option value="permanent">永久授权</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>文件写入权限</label>
+      <select id="perm-file-write">
+        <option value="ask">每次询问</option>
+        <option value="once">仅本次</option>
+        <option value="1h">授权1小时</option>
+        <option value="24h">授权24小时</option>
+        <option value="permanent">永久授权</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>命令执行权限</label>
+      <select id="perm-command-exec">
+        <option value="ask">每次询问</option>
+        <option value="once">仅本次</option>
+        <option value="1h">授权1小时</option>
+        <option value="24h">授权24小时</option>
+        <option value="permanent">永久授权</option>
+      </select>
+    </div>
+  </div>
+  <div class="action-bar">
+    <button class="btn btn-primary" onclick="savePermSettings()">保存授权规则</button>
+  </div>
+</div>
 </div>
 
 <script>
-// Load available Ollama models
-async function loadModels() {
-  const sel = document.getElementById("offline-model");
-  sel.innerHTML = '<option value="加载中...</option>';
-  try {
-    const r = await fetch("/api/models");
-    const d = await r.json();
-    if (d.models && d.models.length > 0) {
-      var embedModels = ["bge-m3", "nomic-embed-text", "all-MiniLM"];
-      sel.innerHTML = d.models.map(function(m) {
-        var note = "";
-        for (var i = 0; i < embedModels.length; i++) {
-          if (m.indexOf(embedModels[i]) === 0) { note = " (仅嵌入)"; break; }
-        }
-        return '<option value="' + m + '">' + m + note + '</option>';
-      }).join("");
-    } else {
-      sel.innerHTML = '<option value="">未发现本地模型（Ollama 未运行）</option>';
-    }
-  } catch(e) {
-    sel.innerHTML = "<option value='>加载失败</option>";
-  }
+function showStatus(msg, type) {
+  var el = document.getElementById("status");
+  el.textContent = msg; el.className = "status " + (type || "success");
+  setTimeout(function(){ el.className = "status"; }, 4000);
 }
-
-// Load current settings
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(function(t){ t.classList.remove("active"); });
+  document.querySelectorAll(".nav-item").forEach(function(n){ n.classList.remove("active"); });
+  document.getElementById("tab-"+name).classList.add("active");
+  document.querySelector(\'[data-tab="\'+name+\'"]\').classList.add("active");
+}
+async function loadModels() {
+  var sel = document.getElementById("offline-model");
+  sel.innerHTML = \'<option value="">加载中...</option>\';
+  try {
+    var r = await fetch("/api/models"); var d = await r.json();
+    if (d.models && d.models.length > 0) {
+      var em = ["bge-m3","nomic-embed-text","all-MiniLM"];
+      sel.innerHTML = d.models.map(function(m){
+        for(var i=0;i<em.length;i++){if(m.indexOf(em[i])===0) return \'<option value="\'+m+\'">\'+m+\' (仅嵌入)</option>\';}
+        return \'<option value="\'+m+\'">\'+m+\'</option>\';
+      }).join("");
+    } else { sel.innerHTML = \'<option value="">未发现本地模型</option>\'; }
+  } catch(e) { sel.innerHTML = \'<option value="">加载失败</option>\'; }
+}
 async function loadSettings() {
   try {
-    const r = await fetch("/api/settings");
-    const s = await r.json();
-    // Select the correct mode radio
-    var radio = document.querySelector("input[name=mode][value=\\"" + s.mode + "\\"]");
+    var r = await fetch("/api/settings"); var s = await r.json();
+    var radio = document.querySelector("input[name=mode][value=\"\"+s.mode+\"\"]");
     if (radio) radio.checked = true;
-    // Fill in fields
     if (s.provider) document.getElementById("provider").value = s.provider;
-    if (s.api_base) document.getElementById("api-base").value = s.api_base;
-    if (s.api_key_display) document.getElementById("api-key").placeholder = s.api_key_display;
+    if (s.api_base) {
+      document.getElementById("api-base").value = s.api_base;
+      document.getElementById("api-base-preview").innerHTML = \'<strong>当前:</strong> \'+s.api_base;
+    }
+    if (s.api_key_display) {
+      document.getElementById("api-key").placeholder = s.api_key_display;
+      document.getElementById("api-key-preview").innerHTML = \'<strong>当前:</strong> \'+s.api_key_display+\' <span style="color:#999">(已保存)</span>\';
+    }
     if (s.model) document.getElementById("model-name").value = s.model;
     if (s.temperature) document.getElementById("temperature").value = s.temperature;
-    // Select offline model
     if (s.offline_model) {
       var sel = document.getElementById("offline-model");
-      for (var i = 0; i < sel.options.length; i++) {
-        if (sel.options[i].value === s.offline_model) {
-          sel.options[i].selected = true;
-          break;
-        }
-      }
+      for(var i=0;i<sel.options.length;i++){if(sel.options[i].value===s.offline_model){sel.options[i].selected=true;break;}}
     }
-    toggleMode();
-  } catch(e) {
-    showStatus("加载设置失败: " + e.message, "error");
-  }
+  } catch(e) { showStatus("加载失败: "+e.message, "error"); }
 }
-
-function toggleMode() {
-  var modeEl = document.querySelector("input[name=mode]:checked");
-  if (!modeEl) return;
-  var mode = modeEl.value;
-  document.getElementById("online-settings").classList.toggle("hidden", mode !== "online");
-  document.getElementById("offline-settings").classList.toggle("hidden", mode !== "offline");
-}
-
-function updateBaseUrl() {
-  var p = document.getElementById("provider").value;
-  var urls = { deepseek: "https://api.deepseek.com", openai: "https://api.openai.com" };
-  if (p !== "custom") {
-    document.getElementById("api-base").value = urls[p] || "";
-  }
-  var models = { deepseek: "deepseek-chat", openai: "gpt-4o" };
-  if (p !== "custom") {
-    document.getElementById("model-name").value = models[p] || "";
-  }
-  // Load permission settings
-  try {
-    const pr = await fetch("/api/permission-settings");
-    const ps = await pr.json();
-    if (ps.file_read) document.getElementById("perm-file-read").value = ps.file_read;
-    if (ps.file_write) document.getElementById("perm-file-write").value = ps.file_write;
-    if (ps.command_exec) document.getElementById("perm-command-exec").value = ps.command_exec;
-  } catch(e) { console.log("perm settings load:", e); }
-}
-
-async function saveSettings() {
-  var btn = document.querySelector(".btn-primary");
+async function saveApiSettings() {
+  var btn = document.querySelector("#tab-api .btn-primary");
   btn.disabled = true; btn.textContent = "保存中...";
   var data = {
-    mode: (document.querySelector("input[name=mode]:checked") || {}).value || "offline",
+    mode: (document.querySelector("input[name=mode]:checked")||{}).value||"offline",
     provider: document.getElementById("provider").value,
-    file_read: document.getElementById("perm-file-read").value,
-    file_write: document.getElementById("perm-file-write").value,
-    command_exec: document.getElementById("perm-command-exec").value,
     api_base: document.getElementById("api-base").value,
     api_key: document.getElementById("api-key").value,
     model: document.getElementById("model-name").value,
     offline_model: document.getElementById("offline-model").value,
-    temperature: parseFloat(document.getElementById("temperature").value) || 0.7,
+    temperature: parseFloat(document.getElementById("temperature").value)||0.7,
   };
   try {
-    var r = await fetch("/api/settings", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(data)
-    });
+    var r = await fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
     var d = await r.json();
-    showStatus(d.message || "已保存", d.success ? "success" : "error");
-  } catch(e) {
-    showStatus("保存失败: " + e.message, "error");
-  }
-  btn.disabled = false; btn.textContent = "保存设置";
+    showStatus(d.message||"已保存", d.success?"success":"error");
+    await loadSettings();
+  } catch(e) { showStatus("保存失败: "+e.message, "error"); }
+  btn.disabled = false; btn.textContent = "保存 API 设置";
 }
-
+async function savePermSettings() {
+  var btn = document.querySelector("#tab-perm .btn-primary");
+  btn.disabled = true; btn.textContent = "保存中...";
+  try {
+    var r = await fetch("/api/permission-settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file_read:document.getElementById("perm-file-read").value,file_write:document.getElementById("perm-file-write").value,command_exec:document.getElementById("perm-command-exec").value})});
+    await r.json();
+    showStatus("授权规则已保存","success");
+  } catch(e) { showStatus("保存失败: "+e.message, "error"); }
+  btn.disabled = false; btn.textContent = "保存授权规则";
+}
+async function loadPermSettings() {
+  try {
+    var r = await fetch("/api/permission-settings"); var ps = await r.json();
+    if (ps.file_read) document.getElementById("perm-file-read").value = ps.file_read;
+    if (ps.file_write) document.getElementById("perm-file-write").value = ps.file_write;
+    if (ps.command_exec) document.getElementById("perm-command-exec").value = ps.command_exec;
+  } catch(e) {}
+}
 async function testConnection() {
   var modeEl = document.querySelector("input[name=mode]:checked");
   if (!modeEl) return;
   if (modeEl.value === "offline") {
-    try {
-      var r = await fetch("/api/models");
-      var d = await r.json();
-      showStatus("Ollama \u8fde\u63a5\u6b63\u5e38\uff0c\u53d1\u73b0 " + d.models.length + " \u4e2a\u6a21\u578b", "success");
-    } catch(e) {
-      showStatus("Ollama \u8fde\u63a5\u5931\u8d25", "error");
-    }
+    try { var r=await fetch("/api/models");var d=await r.json();showStatus(d.models&&d.models.length?"Ollama OK, "+d.models.length+" 个模型":"Ollama 正常","success");}catch(e){showStatus("连接失败","error");}
     return;
   }
-  showStatus("\u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5...", "success");
-  try {
-    var r = await fetch("/api/settings/test", {method:"POST"});
-    var d = await r.json();
-    showStatus(d.message, d.success ? "success" : "error");
-  } catch(e) {
-    showStatus("\u8bf7\u6c42\u5931\u8d25: " + e.message, "error");
+  try { var r=await fetch("/api/settings/test",{method:"POST"});var d=await r.json();showStatus(d.message||"测试完成",d.success?"success":"error");}catch(e){showStatus("测试失败","error");}
+}
+function updateBaseUrl() {
+  var p=document.getElementById("provider").value;
+  var urls={deepseek:"https://api.deepseek.com",openai:"https://api.openai.com"};
+  if(p!=="custom"){
+    document.getElementById("api-base").value=urls[p]||"";
+    document.getElementById("api-base-preview").innerHTML=\'<strong>默认:</strong> \'+(urls[p]||"");
   }
+  var models={deepseek:"deepseek-chat",openai:"gpt-4o"};
+  if(p!=="custom") document.getElementById("model-name").value=models[p]||"";
 }
-
-function showStatus(msg, type) {
-  var el = document.getElementById("status");
-  el.textContent = msg;
-  el.className = "status " + type;
-}
-
-loadSettings();
-loadModels();
+loadModels(); loadSettings(); loadPermSettings();
+document.getElementById("api-base").addEventListener("input",function(){
+  this.value&&(document.getElementById("api-base-preview").innerHTML=\'<strong>待保存:</strong> \'+this.value);
+});
+document.getElementById("api-key").addEventListener("input",function(){
+  if(this.value) document.getElementById("api-key-preview").innerHTML=\'<strong>待保存:</strong> 新密钥 (\'+this.value.length+\' 字符)\';
+  else document.getElementById("api-key-preview").innerHTML=\'\';
+});
 </script>
 </body>
 </html>"""
