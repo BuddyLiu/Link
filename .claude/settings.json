@@ -222,7 +222,11 @@
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_link.py', doraise=True\\); print\\('✅ Syntax OK'\\)\")",
       "Bash(sed -i '' 's/calc\\(50% - 410px\\)/calc\\(50% - 320px\\)/g' web_active_link.py)",
       "Bash(sed -i '' 's/calc\\(50% - 470px\\)/calc\\(50% - 380px\\)/g' web_active_link.py)",
-      "Bash(sed -i '' 's/padding:0 max\\(20px, calc\\(50% - 410px\\)\\)/padding:0 max\\(20px, calc\\(50% - 320px\\)\\)/g' web_active_link.py)"
+      "Bash(sed -i '' 's/padding:0 max\\(20px, calc\\(50% - 410px\\)\\)/padding:0 max\\(20px, calc\\(50% - 320px\\)\\)/g' web_active_link.py)",
+      "Bash(exit 1)",
+      "Bash(lsof -ti:8899)",
+      "Bash(rm -f data/logs/*.log data/logs/*.err)",
+      "Bash(rm -f data/pids/*)"
     ],
     "additionalDirectories": [
       "/private/tmp",

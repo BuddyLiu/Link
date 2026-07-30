@@ -1522,70 +1522,88 @@ function denyPermission() {
                     PRM.get_instance().cancel_all()
 
             async def process_task():
-                """处理任务：消费用户输入并执行 LLM 调用"""
+                """将用户输入提交到 TaskManager，非阻塞"""
                 try:
                     while True:
                         data = await input_queue.get()
                         text = data.get("text", "")
                         if not text:
                             continue
-
                         self.add_user_input(text, client_id)
                         await self._broadcast_event({
                             "event_type": "USER_INPUT",
-                            "message": f"📝 收到用户输入: {text}",
+                            "message": f"\U0001f4dd 收到用户输入: {text}",
                             "source": f"user_{client_id}"
                         })
-
-                        # 注册权限请求回调（通知前端弹窗）
-                        prm = PRM.get_instance()
-                        def _perm_cb(req):
-                            asyncio.run_coroutine_threadsafe(
-                                websocket.send_json({
-                                    "type": "permission_request",
-                                    "request_id": req.id,
-                                    "resource": req.resource,
-                                    "mode": req.mode,
-                                    "resource_type": req.resource_type.value,
-                                }),
-                                loop
-                            )
-                        prm.register_callback(_perm_cb)
-
-                        # 创建流式回调
-                        _stream_content_buf = ['']
-                        def _stream_cb(ctype, content):
-                            if ctype == "reasoning" and content.strip():
-                                asyncio.run_coroutine_threadsafe(
-                                    websocket.send_json({"type": "reasoning_chunk", "data": content}), loop
-                                )
-                            elif ctype == "content" and content:
-                                _stream_content_buf[0] += content
-                                asyncio.run_coroutine_threadsafe(
-                                    websocket.send_json({"type": "content_chunk", "data": content}), loop
-                                )
-                        # CPU 密集/阻塞任务放到线程池
-                        from functools import partial
-                        _task = partial(self._process_input_direct, text, stream_callback=_stream_cb)
-                        brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task)
-
-                        # 取消注册权限回调
-                        prm.unregister_callback(_perm_cb)
-
-                        if brain_resp and brain_resp.get("result"):
-                            await self._broadcast_event({
-                                "event_type": "ASSISTANT",
-                                "result": brain_resp["result"],
-                                "reasoning": brain_resp.get("reasoning", ""),
-                                "source": "link_brain",
-                                "timestamp": time.time()
-                            })
+                        task = await self.task_manager.submit(text)
+                        await self._broadcast_event({
+                            "event_type": "TASK_UPDATE",
+                            "task_id": task.id, "status": task.status,
+                            "position": self.task_manager.pending_count,
+                            "message": f"\U0001f4e5 任务已入队 (第{self.task_manager.pending_count}个)"
+                        })
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
                     print(f"process_task 异常: {e}")
 
-            # 并行运行两个任务
+            async def worker_task():
+                """后台工作者：从队列取任务，做 LLM 调用并广播结果"""
+                prm = PRM.get_instance()
+                try:
+                    while True:
+                        task = await self.task_manager._queue.get()
+                        if task.status == "cancelled":
+                            continue
+                        task.status = "processing"
+                        self.task_manager._current = task
+                        await self._broadcast_event({
+                            "event_type": "TASK_UPDATE", "task_id": task.id,
+                            "status": "processing", "message": "⏳ 正在处理..."
+                        })
+                        def _perm_cb(req):
+                            asyncio.run_coroutine_threadsafe(websocket.send_json({
+                                "type": "permission_request", "request_id": req.id,
+                                "resource": req.resource, "mode": req.mode,
+                                "resource_type": req.resource_type.value,
+                            }), loop)
+                        prm.register_callback(_perm_cb)
+                        _stream_content_buf = ['']
+                        def _stream_cb(ctype, content):
+                            if ctype == "reasoning" and content.strip():
+                                asyncio.run_coroutine_threadsafe(
+                                    websocket.send_json({"type":"reasoning_chunk","data":content}), loop)
+                            elif ctype == "content" and content:
+                                _stream_content_buf[0] += content
+                                asyncio.run_coroutine_threadsafe(
+                                    websocket.send_json({"type":"content_chunk","data":content}), loop)
+                        from functools import partial
+                        _task_fn = partial(self._process_input_direct, task.text, stream_callback=_stream_cb)
+                        brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task_fn)
+                        prm.unregister_callback(_perm_cb)
+                        if brain_resp and brain_resp.get("result"):
+                            task.result = brain_resp["result"]
+                            task.reasoning = brain_resp.get("reasoning", "")
+                            task.status = "done"
+                            await self._broadcast_event({
+                                "event_type": "ASSISTANT", "result": brain_resp["result"],
+                                "reasoning": brain_resp.get("reasoning", ""),
+                                "source": "link_brain", "timestamp": time.time()
+                            })
+                        else:
+                            task.status = "error"
+                        self.task_manager._current = None
+                        await self._broadcast_event({
+                            "event_type": "TASK_UPDATE", "task_id": task.id,
+                            "status": task.status,
+                            "message": "✅ 任务完成" if task.status == "done" else "❌ 任务失败"
+                        })
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    print(f"worker_task 异常: {e}")
+
+            # 并行运行三个任务
             try:
                 await asyncio.gather(receive_task(), process_task(), worker_task())
             except Exception as e:
@@ -1593,6 +1611,7 @@ function denyPermission() {
             finally:
                 self.websocket_clients = [c for c in self.websocket_clients if c["id"] != client_id]
                 await self._broadcast_stats()
+
     
         @self.app.get("/debug")
         async def get_debug_page():
