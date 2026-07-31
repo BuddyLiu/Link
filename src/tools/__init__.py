@@ -26,42 +26,45 @@ class Tool(ABC):
         """执行工具"""
         pass
     
-    def validate_parameters(self, **kwargs) -> bool:
-        """验证参数（原地修改 kwargs 以纠正类型）"""
+    def validate_parameters(self, params: Dict) -> Any:
+        """验证参数并原地修改 params（纠正类型），成功返回修改后的 dict，失败返回 False
+
+        注意: 接收 dict 引用而非 **kwargs，确保类型转换能传回调用方。
+        """
         for param_name, param_info in self.parameters.items():
-            if param_info.get("required", False) and param_name not in kwargs:
+            if param_info.get("required", False) and param_name not in params:
                 self._logger.error(f"Missing required parameter: {param_name}")
                 return False
-            
-            # 类型检查和转换
-            if param_name in kwargs and "type" in param_info:
+
+            # 类型检查和转换（原地修改 params）
+            if param_name in params and "type" in param_info:
                 expected_type = param_info["type"]
-                value = kwargs[param_name]
-                
+                value = params[param_name]
+
                 try:
                     if expected_type == "string":
                         if not isinstance(value, str):
-                            kwargs[param_name] = str(value)
+                            params[param_name] = str(value)
                     elif expected_type == "integer":
                         if value == "" or value is None:
                             if "default" in param_info:
-                                kwargs[param_name] = param_info["default"]
+                                params[param_name] = param_info["default"]
                             else:
                                 raise ValueError("空值且无默认值")
                         else:
-                            kwargs[param_name] = int(value)
+                            params[param_name] = int(value)
                     elif expected_type == "number":
-                        kwargs[param_name] = float(value)
+                        params[param_name] = float(value)
                     elif expected_type == "boolean":
                         if isinstance(value, str):
-                            kwargs[param_name] = value.lower() in ("true", "1", "yes")
+                            params[param_name] = value.lower() in ("true", "1", "yes")
                         else:
-                            kwargs[param_name] = bool(value)
+                            params[param_name] = bool(value)
                 except (ValueError, TypeError) as e:
                     self._logger.error(f"Invalid type for parameter {param_name}: {e}")
                     return False
-        
-        return True
+
+        return params
     
     def get_schema(self) -> Dict:
         """获取工具schema（OpenAI格式）"""
@@ -120,17 +123,18 @@ class ToolManager(LoggerMixin):
         if tool_name not in self._tools:
             self.logger.error(f"Tool not found: {tool_name}")
             raise ValueError(f"Tool not found: {tool_name}")
-        
+
         tool = self._tools[tool_name]
-        
-        # 验证参数
-        if not tool.validate_parameters(**kwargs):
+
+        # 验证参数（返回转换后的 kwargs，如 int/boolean 类型纠正）
+        validated = tool.validate_parameters(kwargs)
+        if validated is False:
             raise ValueError(f"Invalid parameters for tool: {tool_name}")
-        
-        self.logger.info(f"Executing tool: {tool_name} with args: {kwargs}")
-        
+
+        self.logger.info(f"Executing tool: {tool_name} with args: {validated}")
+
         try:
-            result = tool.execute(**kwargs)
+            result = tool.execute(**validated)
             self.logger.info(f"Tool {tool_name} executed successfully")
             return result
         except Exception as e:

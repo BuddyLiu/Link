@@ -327,7 +327,12 @@ class ExecuteCommandTool(SystemTool):
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         command = kwargs["command"]
-        timeout = min(kwargs.get("timeout", 30), 60)  # 上限 60s
+        # 防御性类型转换：timeout 可能是空串或字符串（避免直接调用时崩溃）
+        try:
+            timeout = int(kwargs.get("timeout", 30) or 30)
+        except (ValueError, TypeError):
+            timeout = 30
+        timeout = min(timeout, 60)  # 上限 60s
 
         # ── Layer 1：命令分类 ──
         classification = self._classify_command(command)
@@ -532,7 +537,10 @@ class GrepFilesTool(SystemTool):
         pattern = kwargs["pattern"]
         search_path = self._safe_path(kwargs.get("path", "."))
         include = kwargs.get("include", "")
-        max_results = int(kwargs.get("max_results", 20))
+        try:
+            max_results = int(kwargs.get("max_results", 20) or 20)
+        except (ValueError, TypeError):
+            max_results = 20
 
         if not search_path.exists():
             raise FileNotFoundError(f"路径不存在: {search_path}")
@@ -590,7 +598,10 @@ class GlobFilesTool(SystemTool):
         import glob
         pattern = kwargs["pattern"]
         root = kwargs.get("path", ".")
-        max_results = int(kwargs.get("max_results", 30))
+        try:
+            max_results = int(kwargs.get("max_results", 30) or 30)
+        except (ValueError, TypeError):
+            max_results = 30
 
         search_path = Path(root).resolve()
         # 使用统一的权限管理器检查路径
@@ -672,7 +683,10 @@ class SearchWebTool(SystemTool):
     def execute(self, **kwargs) -> str:
         import urllib.request, urllib.parse, re, time
         query = kwargs["query"]
-        max_results = int(kwargs.get("max_results", 5))
+        try:
+            max_results = int(kwargs.get("max_results", 5) or 5)
+        except (ValueError, TypeError):
+            max_results = 5
         source = kwargs.get("source", "web")
 
         logger.info(f"搜索网络: {query}")

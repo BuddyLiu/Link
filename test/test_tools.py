@@ -60,16 +60,24 @@ class TestToolBase:
         from tools.system_tools import ListFilesTool
         t = ListFilesTool()
         # 直接测试 bool 值转换：参数进入后应保持 False
-        assert t.validate_parameters(recursive="false")
-        assert t.validate_parameters(recursive="False")
-        assert t.validate_parameters(recursive=False)
+        p1 = {"recursive": "false"}
+        assert t.validate_parameters(p1) is not False
+        assert p1["recursive"] is False
+        p2 = {"recursive": "False"}
+        assert t.validate_parameters(p2) is not False
+        assert p2["recursive"] is False
+        p3 = {"recursive": False}
+        assert t.validate_parameters(p3) is not False
+        assert p3["recursive"] is False
 
     def test_validate_parameters_bool_true(self):
         """bool("true") / "1" / "yes" 应返回 True"""
         from tools.system_tools import ListFilesTool
         t = ListFilesTool()
         for val in ["true", "True", "TRUE", "1", "yes", True]:
-            assert t.validate_parameters(recursive=val)
+            p = {"recursive": val}
+            assert t.validate_parameters(p) is not False
+            assert p["recursive"] is True
 
     def test_validate_parameters_missing_required(self):
         """缺少 required 参数应返回 False"""
@@ -79,15 +87,23 @@ class TestToolBase:
         t = TestTool("test", "test", {
             "name": {"type": "string", "required": True}
         })
-        assert not t.validate_parameters()
+        assert t.validate_parameters({}) is False
 
     def test_validate_parameters_type_coercion(self):
         """字符串到整数的自动转换"""
         from tools.system_tools import ExecuteCommandTool
         t = ExecuteCommandTool()
         # timeout="30" 应转为整数 30
-        assert t.validate_parameters(command="echo hi", timeout="30")
-        assert t.validate_parameters(command="echo hi", timeout=30)
+        p1 = {"command": "echo hi", "timeout": "30"}
+        assert t.validate_parameters(p1) is not False
+        assert p1["timeout"] == 30
+        p2 = {"command": "echo hi", "timeout": 30}
+        assert t.validate_parameters(p2) is not False
+        assert p2["timeout"] == 30
+        # 空字符串应回退到默认值
+        p3 = {"command": "echo hi", "timeout": ""}
+        assert t.validate_parameters(p3) is not False
+        assert p3["timeout"] == 30
 
     def test_get_schema_format(self):
         """get_schema() 返回标准 OpenAI function calling 格式"""
