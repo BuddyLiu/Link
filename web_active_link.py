@@ -502,8 +502,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #scroll-nav.dragging{cursor:grabbing}
 #scroll-nav .nav-toggle{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25);background:rgba(13,13,20,.8);color:rgba(255,255,255,.6);font-size:14px;cursor:grab;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:all .2s}
 #scroll-nav .nav-toggle:hover{transform:scale(1.15);border-color:rgba(255,255,255,.5)}
-#scroll-nav .nav-content{display:flex;flex-direction:column;gap:8px;opacity:0;pointer-events:none;transition:opacity .2s}
-#scroll-nav.expanded .nav-content{opacity:1;pointer-events:auto}
+#scroll-nav.collapsed .nav-content{height:0;overflow:hidden;opacity:0;pointer-events:none}
+#scroll-nav .nav-content{display:flex;flex-direction:column;gap:8px;opacity:0;pointer-events:none;transition:opacity .2s,height .2s}
+#scroll-nav.expanded .nav-content{opacity:1;pointer-events:auto;height:auto}
 #scroll-nav.expanded .nav-toggle{display:none}
 #scroll-nav .nav-content button{width:36px;height:36px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(13,13,20,.8);color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;backdrop-filter:blur(4px)}
 #scroll-nav .nav-content button:hover{transform:scale(1.2);border-color:rgba(255,255,255,.6);background:rgba(99,102,241,.2)}
@@ -984,17 +985,20 @@ setTimeout(updateScrollButtons, 500);
   var toggle = nav.querySelector('.nav-toggle');
   var isDragging = false, startX, startY, startLeft, startTop;
   
-  // Collapsed by default (already set via class)
-  // Expand on hover
+  // State machine: collapsed (default) ↔ expanded (on hover)
+  // Use a debounce-like approach: ensure stable state transitions
+  var _navOpen = false;
   nav.addEventListener('mouseenter', function() {
+    if (_navOpen) return;
+    _navOpen = true;
     nav.classList.remove('collapsed');
     nav.classList.add('expanded');
   });
   nav.addEventListener('mouseleave', function() {
-    if (!isDragging) {
-      nav.classList.remove('expanded');
-      nav.classList.add('collapsed');
-    }
+    if (!_navOpen || isDragging) return;
+    _navOpen = false;
+    nav.classList.remove('expanded');
+    nav.classList.add('collapsed');
   });
   
   // Drag on toggle mousedown
