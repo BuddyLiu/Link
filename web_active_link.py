@@ -780,15 +780,17 @@ ws.onmessage = e => {
         finalBubble.innerHTML = renderMarkdown(result);
         chatBox.scrollTop = chatBox.scrollHeight;
       }
-      var copyBtn = document.createElement('button');
-      copyBtn.className = 'copy-btn visible';
-      copyBtn.textContent = '复制';
-      copyBtn.onclick = function() {
-        navigator.clipboard.writeText(result).then(function() {
-          showToast('已复制');
-        });
-      };
-      streamEl.appendChild(copyBtn);
+      if (!streamEl.querySelector('.copy-btn')) {
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn visible';
+        copyBtn.textContent = '复制';
+        copyBtn.onclick = function() {
+          navigator.clipboard.writeText(result).then(function() {
+            showToast('已复制');
+          });
+        };
+        streamEl.appendChild(copyBtn);
+      }
       streamContentId = null;
       return;
     }
@@ -1109,11 +1111,13 @@ function typewriteMessage(role, fullText) {
       setTimeout(type, 50);
     } else {
       scrollToBottom();
-      var copyBtn = document.createElement('button');
-      copyBtn.className = 'copy-btn visible';
-      copyBtn.textContent = '复制';
-      copyBtn.onclick = function() { copyText(fullText, copyBtn); };
-      div.appendChild(copyBtn);
+      if (!div.querySelector('.copy-btn')) {
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn visible';
+        copyBtn.textContent = '复制';
+        copyBtn.onclick = function() { copyText(fullText, copyBtn); };
+        div.appendChild(copyBtn);
+      }
       sendBtn.disabled = false;
       input.focus();
     }
