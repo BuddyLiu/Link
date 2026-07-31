@@ -983,28 +983,20 @@ setTimeout(updateScrollButtons, 500);
   var nav = document.getElementById('scroll-nav');
   if (!nav) return;
   var toggle = nav.querySelector('.nav-toggle');
-  var isDragging = false, startX, startY, startLeft, startTop;
+  var isDragging = false, wasDragged = false, startX, startY, startLeft, startTop;
   
-  // State machine: collapsed (default) ↔ expanded (on hover)
-  // Use a debounce-like approach: ensure stable state transitions
-  var _navOpen = false;
-  nav.addEventListener('mouseenter', function() {
-    if (_navOpen) return;
-    _navOpen = true;
-    nav.classList.remove('collapsed');
-    nav.classList.add('expanded');
-  });
-  nav.addEventListener('mouseleave', function() {
-    if (!_navOpen || isDragging) return;
-    _navOpen = false;
-    nav.classList.remove('expanded');
-    nav.classList.add('collapsed');
+  // Click to expand/collapse (no drag conflict)
+  nav.addEventListener('click', function() {
+    if (wasDragged) { wasDragged = false; return; }
+    var isExpanded = nav.classList.contains('expanded');
+    nav.classList.toggle('expanded', !isExpanded);
+    nav.classList.toggle('collapsed', isExpanded);
   });
   
   // Drag on toggle mousedown
   if (toggle) {
     toggle.addEventListener('mousedown', function(e) {
-      isDragging = true;
+      isDragging = true; wasDragged = false;
       var rect = nav.getBoundingClientRect();
       startX = e.clientX; startY = e.clientY;
       startLeft = rect.left; startTop = rect.top;
@@ -1016,6 +1008,7 @@ setTimeout(updateScrollButtons, 500);
   
   document.addEventListener('mousemove', function(e) {
     if (!isDragging) return;
+    wasDragged = true;
     var dx = e.clientX - startX, dy = e.clientY - startY;
     nav.style.left = (startLeft + dx) + 'px';
     nav.style.top = (startTop + dy) + 'px';
