@@ -34,6 +34,8 @@ app = FastAPI(title="LINK 管理控制台")
 _process: Optional[subprocess.Popen] = None
 _log_clients: list[WebSocket] = []
 _process_start_time: Optional[float] = None
+_log_buffer: list[dict] = []  # 日志环形缓冲，供新连接回放
+_MAX_BUFFER = 500             # 最多保留 500 条
 
 
 # ── 进程管理 ──
@@ -69,6 +71,11 @@ async def _pipe_stdout(stream):
                 "m": line,
                 "type": "heartbeat" if is_heartbeat else "",
             }
+
+            # 追加到环形缓冲（供新连接回放）
+            _log_buffer.append(entry)
+            if len(_log_buffer) > _MAX_BUFFER:
+                del _log_buffer[:len(_log_buffer) - _MAX_BUFFER]
 
             dead = []
             for ws in _log_clients[:]:
@@ -270,6 +277,10 @@ function addLog(time, msg, type) {
   ms.textContent = msg;
   div.appendChild(ms);
   logBox.appendChild(div);
+  // 限制 DOM 节点数，防止长时间运行卡顿
+  while (logBox.children.length > 500) {
+    logBox.removeChild(logBox.firstChild);
+  }
   logTotal++;
   logCount.textContent = logTotal + ' 条日志';
   logBox.scrollTop = logBox.scrollHeight;
@@ -467,10 +478,13 @@ async def health():
 
 @app.websocket("/ws/logs")
 async def log_websocket(websocket: WebSocket):
-    """日志流 WebSocket"""
+    """日志流 WebSocket（连接时回放缓冲历史）"""
     await websocket.accept()
     _log_clients.append(websocket)
     try:
+        # 回放历史日志（避免刷新丢日志）
+        for entry in _log_buffer:
+            await websocket.send_json(entry)
         while True:
             # 保持连接（接收心跳 ping）
             await websocket.receive_text()
