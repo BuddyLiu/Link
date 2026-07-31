@@ -36,6 +36,7 @@ _log_clients: list[WebSocket] = []
 _process_start_time: Optional[float] = None
 _log_buffer: list[dict] = []  # 日志环形缓冲，供新连接回放
 _MAX_BUFFER = 500             # 最多保留 500 条
+_pipe_tasks: list = []        # 日志管道 asyncio.Task 列表（重启时清理）
 
 
 # ── 进程管理 ──
@@ -85,6 +86,7 @@ async def _pipe_stdout(stream):
                     dead.append(ws)
             for ws in dead:
                 _log_clients.remove(ws)
+            await asyncio.sleep(0)  # 让出事件循环，避免阻塞其他任务
     except Exception:
         pass
 
@@ -369,8 +371,15 @@ async def api_start():
         )
         _process_start_time = time.time()
 
+        # 清理旧日志管道任务（防止重启后旧任务残留阻塞新日志）
+        for t in _pipe_tasks[:]:
+            if not t.done():
+                t.cancel()
+        _pipe_tasks.clear()
+
         # 启动日志管道
-        asyncio.create_task(_pipe_stdout(_process.stdout))
+        task = asyncio.create_task(_pipe_stdout(_process.stdout))
+        _pipe_tasks.append(task)
         # 启动进程监控
         asyncio.create_task(_watch_process())
 
@@ -420,6 +429,12 @@ async def api_stop():
 
         _process = None
         _process_start_time = None
+
+        # 取消日志管道任务
+        for t in _pipe_tasks[:]:
+            if not t.done():
+                t.cancel()
+        _pipe_tasks.clear()
 
         for ws in _log_clients[:]:
             try:
