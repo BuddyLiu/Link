@@ -792,6 +792,14 @@ ws.onmessage = e => {
         };
         streamEl.appendChild(copyBtn);
       }
+      // 清除 ID，防止下一条消息 getElementById 命中旧元素
+      streamEl.removeAttribute('id');
+      var _bub = streamEl.querySelector('.bubble');
+      if (_bub) _bub.removeAttribute('id');
+      var _rs = document.getElementById('stream-reasoning');
+      if (_rs) _rs.removeAttribute('id');
+      var _rc = document.getElementById('stream-reasoning-content');
+      if (_rc) _rc.removeAttribute('id');
       streamContentId = null;
       return;
     }
