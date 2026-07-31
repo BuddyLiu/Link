@@ -95,7 +95,7 @@ class ReminderSettings(BaseSettings):
     reminder_check_interval: int = Field(default=60, description="提醒检查间隔（秒）")
     max_reminders_per_user: int = Field(default=100, description="每个用户最大提醒数")
     reminder_types_enabled: List[str] = Field(default=["time", "condition"], description="启用的提醒类型")
-    notification_channels: List[str] = Field(default=["cli"], description="通知渠道：cli, desktop, mobile")
+    notification_channels: List[str] = Field(default=["cli", "desktop"], description="通知渠道：cli, desktop, mobile")
     
     class Config:
         env_prefix = "REMINDER_"

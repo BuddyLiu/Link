@@ -233,6 +233,11 @@ class LINK:
         if any(w in t for w in time_words):
             return {"type": "simple_query", "sub_intent": "time", "confidence": 0.9}
 
+        reminder_words = ["提醒", "设置提醒", "提醒我", "定时", "到时提醒",
+                          "提醒一下", "记得提醒"]
+        if any(w in t for w in reminder_words):
+            return {"type": "reminder", "confidence": 0.9}
+
         help_words = ["帮助", "你能做什么", "你会什么", "功能", "help", "commands",
                       "你可以做什么", "你有什么功能"]
         if any(w in t for w in help_words):
@@ -284,6 +289,150 @@ class LINK:
             return self._get_help_text()
         return ""
 
+    def _get_reminder_manager(self):
+        """获取提醒管理器（优先从 web 实例，其次从当前实例）"""
+        rm = getattr(self, "reminder_manager", None)
+        if rm is None:
+            try:
+                from src.reminders.reminder_manager import create_reminder_manager
+                rm = create_reminder_manager({
+                    "enable_active_reminders": True,
+                    "reminder_check_interval": 60,
+                    "notification_channels": ["cli", "desktop"],
+                    "storage_type": "sqlite",
+                    "database_path": "./data/reminders/reminders.db",
+                })
+                self.reminder_manager = rm
+            except Exception as e:
+                self.logger.error(f"提醒管理器初始化失败: {e}")
+                return None
+        return rm
+
+    def _parse_reminder_time(self, text: str):
+        """解析提醒时间，返回 (content, trigger_config, repeat_pattern)
+
+        支持格式:
+          - 每天9点 / 每天9:30 → repeat=daily
+          - 明天9点 / 明天下午3点 → 一次性明天
+          - N分钟后 / N小时后 / N分钟后 → 相对时间
+          - 9点 / 9:30 / 下午3点 → 今天指定时间
+        """
+        import re
+        from datetime import datetime, timedelta
+        now = datetime.now()
+
+        # 每天 HH 点
+        m = re.search(r'每天\s*(\d{1,2})(?::(\d{2}))?\s*点?', text)
+        if m:
+            hour = int(m.group(1)); minute = int(m.group(2) or 0)
+            nxt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            content = re.sub(r'每天\s*\d{1,2}(?::\d{2})?\s*点?', '', text).strip()
+            return content, {"datetime": nxt.isoformat(), "time": f"{hour:02d}:{minute:02d}"}, "daily"
+
+        # 明天 HH 点（支持 下午/晚上）
+        m = re.search(r'明天\s*(?:上午|下午|晚上|中午)?\s*(\d{1,2})(?::(\d{2}))?\s*点?', text)
+        if m:
+            hour = int(m.group(1)); minute = int(m.group(2) or 0)
+            # 下午/晚上 → +12
+            if re.search(r'明天\s*(?:下午|晚上)', text) and hour < 12:
+                hour += 12
+            nxt = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+            content = re.sub(r'明天\s*(?:上午|下午|晚上|中午)?\s*\d{1,2}(?::\d{2})?\s*点?', '', text).strip()
+            return content, {"datetime": nxt.isoformat()}, "once"
+
+        # N 分钟后 / N 小时后 / N 小时后
+        m = re.search(r'(\d+)\s*(分|分钟|小时|天|周)(?:钟)?后', text)
+        if m:
+            num = int(m.group(1)); unit = m.group(2)
+            if "分" in unit: delta = timedelta(minutes=num)
+            elif "小时" in unit: delta = timedelta(hours=num)
+            elif "天" in unit: delta = timedelta(days=num)
+            elif "周" in unit: delta = timedelta(weeks=num)
+            else: delta = timedelta(minutes=num)
+            nxt = now + delta
+            content = re.sub(r'\d+\s*(?:分|分钟|小时|天|周)(?:钟)?后', '', text).strip()
+            return content, {"datetime": nxt.isoformat()}, "once"
+
+        # 今天/现在 HH 点（含下午/晚上）
+        m = re.search(r'(?:下午|晚上|上午|中午)?\s*(\d{1,2})(?::(\d{2}))?\s*点?', text)
+        if m:
+            hour = int(m.group(1)); minute = int(m.group(2) or 0)
+            if re.search(r'(?:下午|晚上)', text) and hour < 12:
+                hour += 12
+            nxt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            content = re.sub(r'(?:下午|晚上|上午|中午)?\s*\d{1,2}(?::\d{2})?\s*点?', '', text).strip()
+            return content, {"datetime": nxt.isoformat()}, "once"
+
+        # 无法解析 → 默认 1 小时后
+        return text, {"datetime": (now + timedelta(hours=1)).isoformat()}, "once"
+
+    def _create_reminder(self, text: str) -> str:
+        """创建提醒，返回确认信息"""
+        rm = self._get_reminder_manager()
+        if not rm:
+            return "❌ 提醒系统未就绪"
+
+        try:
+            from src.reminders.reminder_manager import ReminderTrigger
+            content, trigger_config, repeat = self._parse_reminder_time(text)
+
+            # 去掉内容前的"提醒/提醒我/设置提醒"等前缀
+            import re as _re
+            content = _re.sub(r'^(提醒|设置提醒|提醒我|提醒一下|记得提醒|定时)\s*', '', content or "").strip()
+
+            if not content:
+                return "❌ 请说明提醒内容和时间，例如：\"提醒 每天9点 喝水\""
+
+            title = content[:30] if content else "提醒"
+            reminder = rm.add_reminder(
+                user_id="default",
+                title=title,
+                content=content,
+                trigger_type=ReminderTrigger.TIME,
+                trigger_config=trigger_config,
+                repeat_pattern=repeat,
+            )
+            if reminder:
+                nxt = trigger_config.get("datetime", "")
+                if nxt:
+                    try:
+                        from datetime import datetime as dt
+                        nxt_dt = dt.fromisoformat(nxt)
+                        nxt_str = nxt_dt.strftime("%m月%d日 %H:%M")
+                    except Exception:
+                        nxt_str = nxt
+                else:
+                    nxt_str = "指定时间"
+                return f"✅ 已设置提醒：{content}\n⏰ 触发时间：{nxt_str}" + ("（每天重复）" if repeat == "daily" else "")
+            return "❌ 提醒创建失败（请检查配置）"
+        except Exception as e:
+            self.logger.error(f"创建提醒失败: {e}")
+            return f"❌ 创建提醒失败: {e}"
+
+    def _list_reminders(self) -> str:
+        """列出当前所有提醒"""
+        rm = self._get_reminder_manager()
+        if not rm:
+            return "❌ 提醒系统未就绪"
+        try:
+            reminders = rm.get_user_reminders("default")
+            if not reminders:
+                return "📭 当前没有提醒"
+            lines = ["📋 我的提醒："]
+            for r in reminders:
+                nxt = getattr(r, "next_trigger_time", None)
+                nxt_str = nxt.strftime("%m-%d %H:%M") if nxt else "?"
+                status = getattr(r, "status", "")
+                lines.append(f"  • [{status}] {r.content} ({nxt_str})")
+            return "\n".join(lines)
+        except Exception as e:
+            self.logger.error(f"列出提醒失败: {e}")
+            return f"❌ 列出提醒失败: {e}"
+
     def process_input(self, input_text: str,
                       stream_callback: callable = None,
                       progress_callback: callable = None,
@@ -331,6 +480,22 @@ class LINK:
                 self._conversation_history.append({"role": "assistant", "content": reply})
                 self._save_to_memory(input_text, reply, "conversation")
                 return reply
+
+        # 提醒意图 → 创建提醒（本地处理，不调 LLM）
+        if intent["type"] == "reminder":
+            reply = self._create_reminder(input_text)
+            self._conversation_history.append({"role": "user", "content": input_text})
+            self._conversation_history.append({"role": "assistant", "content": reply})
+            self._save_to_memory(input_text, reply, "conversation")
+            return reply
+
+        # 查看提醒列表
+        if input_text.strip() in ("我的提醒", "查看提醒", "提醒列表", "有哪些提醒"):
+            reply = self._list_reminders()
+            self._conversation_history.append({"role": "user", "content": input_text})
+            self._conversation_history.append({"role": "assistant", "content": reply})
+            self._save_to_memory(input_text, reply, "conversation")
+            return reply
 
         # 复杂任务 → 先显示"正在分析"
         self._report_progress("📋", "正在分析任务，请稍候...")

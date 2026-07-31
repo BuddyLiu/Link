@@ -200,8 +200,8 @@ class ReminderManager:
             return
         
         cursor = self.db_conn.cursor()
-        
-        # 创建提醒表
+
+        # 创建提醒表（索引需单独 CREATE INDEX，不能写在列定义中）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS reminders (
                 id TEXT PRIMARY KEY,
@@ -217,13 +217,13 @@ class ReminderManager:
                 next_trigger_time TEXT,
                 last_triggered_at TEXT,
                 triggered_count INTEGER DEFAULT 0,
-                metadata TEXT,
-                INDEX idx_user_id (user_id),
-                INDEX idx_status (status),
-                INDEX idx_next_trigger_time (next_trigger_time)
+                metadata TEXT
             )
         """)
-        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON reminders(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON reminders(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_next_trigger_time ON reminders(next_trigger_time)")
+
         self.db_conn.commit()
     
     @contextmanager
@@ -765,9 +765,9 @@ class ReminderManager:
             if not reminder.next_trigger_time:
                 return False
             
-            # 检查是否到达触发时间（允许1秒的误差）
+            # 检查是否到达触发时间（到期即触发，防止60s轮询漏掉1s窗口）
             time_diff = (current_time - reminder.next_trigger_time).total_seconds()
-            return 0 <= time_diff <= 1
+            return time_diff >= 0
         
         # 其他类型的触发器由相应的检查器处理
         elif self.trigger_checker:

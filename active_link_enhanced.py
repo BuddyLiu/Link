@@ -573,9 +573,32 @@ class ActiveLINK:
         except Exception as e:
             print(f"⚠️  记忆更新源初始化失败: {e}")
         
+        # 初始化提醒系统（ReminderManager + TriggerChecker + NotificationSender）
+        self.reminder_manager = None
+        try:
+            from src.reminders.reminder_manager import create_reminder_manager
+            from src.reminders.trigger_checker import create_trigger_checker
+            from src.reminders.notification_sender import create_notification_sender
+            rem_config = {
+                "enable_active_reminders": True,
+                "reminder_check_interval": 60,
+                "notification_channels": ["cli", "desktop"],
+                "storage_type": "sqlite",
+                "database_path": "./data/reminders/reminders.db",
+            }
+            self.reminder_manager = create_reminder_manager(rem_config)
+            self.reminder_manager.set_components(
+                trigger_checker=create_trigger_checker(rem_config),
+                notification_sender=create_notification_sender(rem_config)
+            )
+            print("✅ 提醒系统已初始化")
+        except Exception as e:
+            print(f"⚠️  提醒系统初始化失败: {e}")
+
         # 初始化事件处理器（传入 self 引用以支持重启/关闭操作）
         self.event_handlers["task"] = TaskEventHandler(self.legacy_link)
-        self.event_handlers["reminder"] = ReminderEventHandler()
+        self.event_handlers["reminder"] = ReminderEventHandler(
+            reminder_manager=self.reminder_manager)
         self.event_handlers["system"] = SystemEventHandler(link_ref=self)
         
         # 尝试初始化学习处理器

@@ -36,7 +36,7 @@ class NotificationSender:
         self.config = {
             "default_channels": ["cli"],
             "cli_enabled": True,
-            "desktop_enabled": False,
+            "desktop_enabled": True,
             "email_enabled": False,
             "sms_enabled": False,
             "mobile_app_enabled": False,

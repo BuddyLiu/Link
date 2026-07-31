@@ -320,6 +320,48 @@ class LearningEventHandler(EventHandler):
             return f"❌ 用户偏好学习失败: {e}"
 
 
+class ReminderEventHandler(EventHandler):
+    """提醒事件处理器（Web 版：触发时广播到 WebSocket 客户端）"""
+
+    def __init__(self, reminder_manager=None, broadcast_cb=None):
+        super().__init__("reminder_handler")
+        self.reminder_manager = reminder_manager
+        self.broadcast_cb = broadcast_cb
+
+    def can_handle(self, event: Event) -> bool:
+        return event.event_type == EventType.TIMER
+
+    def handle(self, event: Event) -> Any:
+        if not self.reminder_manager:
+            return "提醒管理器未初始化"
+        try:
+            triggered = self.reminder_manager.check_triggers()
+            if not triggered:
+                return None
+            results = []
+            for reminder in triggered:
+                title = getattr(reminder, "title", "提醒")
+                content = getattr(reminder, "content", "")
+                results.append(f"⏰ {title}: {content}")
+                # 广播到 WebSocket 客户端
+                if self.broadcast_cb:
+                    try:
+                        self.broadcast_cb({
+                            "event_type": "REMINDER",
+                            "message": f"⏰ {title}: {content}",
+                        })
+                    except Exception:
+                        pass
+            # 发送桌面/CLI 通知
+            try:
+                self.reminder_manager.send_notifications(triggered)
+            except Exception as e:
+                results.append(f"(通知发送失败: {e})")
+            return "\n".join(results)
+        except Exception as e:
+            return f"提醒检查错误: {e}"
+
+
 class WebActiveLINK:
     """Web版本的主动运行模式LINK"""
     
@@ -398,10 +440,35 @@ class WebActiveLINK:
         self.event_sources["user_input"] = UserInputSource()
         self.event_sources["timer"] = TimerSource()
         
+        # 初始化提醒系统
+        self.reminder_manager = None
+        try:
+            from src.reminders.reminder_manager import create_reminder_manager
+            from src.reminders.trigger_checker import create_trigger_checker
+            from src.reminders.notification_sender import create_notification_sender
+            rem_config = {
+                "enable_active_reminders": True,
+                "reminder_check_interval": 60,
+                "notification_channels": ["cli", "desktop"],
+                "storage_type": "sqlite",
+                "database_path": "./data/reminders/reminders.db",
+            }
+            self.reminder_manager = create_reminder_manager(rem_config)
+            self.reminder_manager.set_components(
+                trigger_checker=create_trigger_checker(rem_config),
+                notification_sender=create_notification_sender(rem_config)
+            )
+        except Exception as e:
+            print(f"⚠️  提醒系统初始化失败: {e}")
+
         # 初始化事件处理器
         self.event_handlers["task"] = TaskEventHandler(self)
         self.event_handlers["system"] = SystemEventHandler()
         self.event_handlers["learning"] = LearningEventHandler(self)
+        self.event_handlers["reminder"] = ReminderEventHandler(
+            reminder_manager=self.reminder_manager,
+            broadcast_cb=self._broadcast_reminder
+        )
         
         # 设置周期性任务
         if self.config["enable_periodic_tasks"]:
@@ -431,6 +498,21 @@ class WebActiveLINK:
                 name="heartbeat"
             )
         
+        # 提醒检查任务
+        if tasks_config.get("reminder_check", {}).get("enabled"):
+            def reminder_check_generator():
+                return Event(
+                    event_type=EventType.TIMER,
+                    data={"action": "check_reminders", "timestamp": time.time()},
+                    priority=EventPriority.MEDIUM,
+                    source="reminder_check"
+                )
+            timer_source.add_periodic_task(
+                interval_seconds=tasks_config["reminder_check"]["interval"],
+                event_generator=reminder_check_generator,
+                name="reminder_check"
+            )
+
         # 任务监控任务
         if tasks_config.get("task_monitor", {}).get("enabled"):
             def task_monitor_generator():
@@ -1909,6 +1991,17 @@ function denyPermission() {
             }
         })
     
+    def _broadcast_reminder(self, reminder_data: Dict[str, Any]):
+        """广播提醒到所有 WebSocket 客户端（由事件循环线程调用）"""
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_event(reminder_data), loop
+            )
+        except Exception:
+            pass
+
     async def _broadcast_event(self, event_data: Dict[str, Any]):
         """广播事件给所有客户端"""
         for client in self.websocket_clients[:]:  # 使用副本遍历
