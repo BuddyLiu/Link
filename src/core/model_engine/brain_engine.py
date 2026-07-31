@@ -619,6 +619,25 @@ class BrainEngine:
                             self._log("info", f"  → 工具结果 ({func_name}): {str(result)[:120]}")
                         else:
                             result = f"未知工具: {func_name}"
+                    except json.JSONDecodeError as e:
+                        # JSON 解析失败：给出明确的格式提示，帮助模型自纠
+                        self._log("error", f"  → 参数 JSON 解析失败 ({func_name}): {e}")
+                        # 从工具定义中提取期望的参数结构
+                        schema_hint = ""
+                        for t_def in (tools or []):
+                            if t_def.get("function", {}).get("name") == func_name:
+                                props = t_def["function"].get("parameters", {}).get("properties", {})
+                                schema_hint = ", ".join(
+                                    f"{k} ({v.get('type','string')})" for k, v in props.items()
+                                )
+                                break
+                        result = (
+                            f"参数格式错误: 传给 {func_name} 的 arguments 不是合法的 JSON。\n"
+                            f"期望的参数: {schema_hint or '参考工具定义'}\n"
+                            f"解析错误: {e}\n"
+                            f"请重新生成工具调用，确保 arguments 是合法 JSON 字符串，"
+                            f"字符串值内的引号/反斜杠/换行需正确转义（用 \\\" 和 \\\\ 和 \\n）"
+                        )
                     except Exception as e:
                         self._log("error", f"  → 工具执行异常: {e}")
                         result = f"执行出错: {e}"
