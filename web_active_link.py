@@ -2730,8 +2730,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <h2>&#x1F916; 模型提供者</h2>
     <div class="field">
       <div class="radio-group">
-        <label><input type="radio" name="mode" value="online" checked> &#x1F310; 在线模式（API）</label>
-        <label><input type="radio" name="mode" value="offline"> &#x1F4BB; 离线模式（本地模型）</label>
+        <label><input type="radio" name="mode" value="online" checked onchange="toggleMode()"> &#x1F310; 在线模式（API）</label>
+        <label><input type="radio" name="mode" value="offline" onchange="toggleMode()"> &#x1F4BB; 离线模式（本地模型）</label>
       </div>
     </div>
   </div>
@@ -2830,6 +2830,13 @@ function switchTab(name) {
   document.getElementById("tab-"+name).classList.add("active");
   document.querySelector(\'[data-tab="\'+name+\'"]\').classList.add("active");
 }
+function toggleMode() {
+  var el = document.querySelector("input[name=mode]:checked");
+  if (!el) return;
+  var m = el.value;
+  document.getElementById("online-settings").classList.toggle("hidden", m !== "online");
+  document.getElementById("offline-settings").classList.toggle("hidden", m !== "offline");
+}
 async function loadModels() {
   var sel = document.getElementById("offline-model");
   sel.innerHTML = \'<option value="">加载中...</option>\';
@@ -2860,6 +2867,7 @@ async function loadSettings() {
     }
     if (s.model) document.getElementById("model-name").value = s.model;
     if (s.temperature) document.getElementById("temperature").value = s.temperature;
+    toggleMode();
     if (s.offline_model) {
       var sel = document.getElementById("offline-model");
       for(var i=0;i<sel.options.length;i++){if(sel.options[i].value===s.offline_model){sel.options[i].selected=true;break;}}
