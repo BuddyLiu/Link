@@ -504,6 +504,10 @@ class BrainEngine:
         if not self.model_adapter:
             return "模型适配器未初始化"
 
+        # 重置循环检测状态（防止跨对话残留导致误判）
+        self._last_tool_sigs = []
+        self._loop_count = 0
+
         for round_num in range(max_rounds):
             self._log("info", f"LLM 调用轮次 #{round_num + 1}, 消息数: {len(messages)}")
             try:
@@ -559,14 +563,19 @@ class BrainEngine:
                     asst_msg["reasoning_content"] = reasoning
                 messages.append(asst_msg)
 
-                # 检测重复工具调用（跨轮次比较）
-                self._last_tool_sigs = getattr(self, '_last_tool_sigs', [])
+                # 检测重复工具调用（连续 3 轮相同才判定循环，降低误杀）
                 current_sigs = sorted([
                     f"{tc['function']['name']}({tc['function']['arguments'][:50]})"
                     for tc in tool_calls
                 ])
                 if self._last_tool_sigs and current_sigs == self._last_tool_sigs:
-                    self._log("warning", "检测到工具调用循环（连续两轮相同），强制退出")
+                    self._loop_count = getattr(self, '_loop_count', 0) + 1
+                else:
+                    self._loop_count = 0
+                self._last_tool_sigs = current_sigs
+
+                if self._loop_count >= 2:  # 连续 3 轮相同（本轮+前2轮）才中断
+                    self._log("warning", f"检测到工具调用循环（连续{self._loop_count + 1}轮相同），强制退出")
                     sig_detail = current_sigs[0][:100] if current_sigs else ""
                     last_text = ""
                     if len(messages) >= 2 and messages[-2].get("role") == "assistant":
