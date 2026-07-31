@@ -364,14 +364,8 @@ class LINK:
                                            stream_callback=stream_callback,
                                            plan_callback=plan_callback)
         else:
-            response = self._simple_response(input_text, memory_context)
-            action_result = self._execute_llm_action(response, input_text)
-            if action_result:
-                response = action_result
-            else:
-                nl_action = self._detect_natural_language_action(response, input_text)
-                if nl_action:
-                    response = nl_action
+            response = self._process_action_response(
+                self._simple_response(input_text, memory_context), input_text)
 
 
         # 存储到对话历史（给下一轮 LLM 调用做上下文）
@@ -397,6 +391,18 @@ class LINK:
         self.logger.info(f"生成响应: {response[:50]}...")
         return response
     
+    def _process_action_response(self, response: str, original_input: str) -> str:
+        """处理 LLM 响应中的 [[ACTION:xxx]] 标记，处理失败则返回原文"""
+        if not response:
+            return response
+        action_result = self._execute_llm_action(response, original_input)
+        if action_result:
+            return action_result
+        nl_action = self._detect_natural_language_action(response, original_input)
+        if nl_action:
+            return nl_action
+        return response
+
     def _execute_llm_action(self, response: str, original_input: str) -> str:
         """解析 LLM 响应中的 [[ACTION:xxx]] 标记并执行系统操作"""
         import re
@@ -2001,10 +2007,12 @@ class LINK:
             self._last_reasoning = reasoning if len(reasoning) > 20 else ""
             if text and "查询失败" not in text:
                 return text.strip()
-            return self._simple_response(input_text, memory_context)
+            return self._process_action_response(
+                self._simple_response(input_text, memory_context), input_text)
         except Exception as e:
             self.logger.error(f"工具对话失败: {e}")
-            return self._simple_response(input_text, memory_context)
+            return self._process_action_response(
+                self._simple_response(input_text, memory_context), input_text)
 
     def _handle_learning_request(self, input_text: str) -> str:
         """处理主动学习请求 — 让LLM学习主题并存入记忆"""
