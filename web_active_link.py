@@ -492,7 +492,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .header a:hover{border-color:#6366f1;background:rgba(99,102,241,.1)}
 .header div{display:flex;gap:8px}
 /* Chat box */
-#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 320px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
+#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 180px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
 #chat-box.instant-scroll{scroll-behavior:auto}
 #chat-box::-webkit-scrollbar{width:4px}
 #chat-box::-webkit-scrollbar-track{background:transparent}
@@ -510,13 +510,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #scroll-nav .nav-content button:hover{transform:scale(1.2);border-color:rgba(255,255,255,.6);background:rgba(99,102,241,.2)}
 #scroll-nav .nav-content button.scroll-hidden{opacity:0;pointer-events:none}
 .msg{margin-bottom:20px;display:flex;flex-direction:column;max-width:85%}
-.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.user{align-self:flex-start;align-items:flex-start}
 .msg.assistant{align-self:flex-start;align-items:flex-start}
 .msg .bubble{width:100%;padding:10px 16px;border-radius:12px;font-size:14px;line-height:1.5;word-break:break-word;position:relative}
-.msg.user .bubble{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-bottom-right-radius:4px}
+.msg.user .bubble{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-bottom-left-radius:4px}
 .msg.assistant .bubble{background:#13131f;color:#d4d4e6;border:1px solid #1a1a2e;border-bottom-left-radius:4px}
 .msg .time{font-size:10px;color:#6366f1;opacity:.5;margin-top:4px;padding:0 4px;letter-spacing:.5px}
-.msg.user .time{text-align:right}
+.msg.user .time{text-align:left}
 /* Input area */
 .input-area{flex-shrink:0;padding:12px 20px;background:#0d0d14;border-top:1px solid #1a1a2e;display:flex;justify-content:center}
 .input-area input{flex:1;padding:10px 14px;background:#13131f;border:1px solid rgba(255,255,255,.25);border-radius:8px;font-size:13px;outline:none;color:#e0e0e0;transition:border-color .2s}
@@ -581,7 +581,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.thinking summary:hover{background:rgba(99,102,241,.05)}
 .msg.thinking .think-content{font-size:11px;color:#6b7280;line-height:1.6;padding:4px 10px 8px;white-space:pre-wrap}
 /* Status bar */
-#status-bar{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:0 max(20px, calc(50% - 320px));font-size:11px}
+#status-bar{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:0 max(20px, calc(50% - 180px));font-size:11px}
 #status-bar details{max-width:820px;margin:0 auto}
 #status-bar summary{cursor:pointer;color:#6366f1;padding:6px 0;user-select:none;font-size:11px}
 #status-bar summary:hover{opacity:.8}
