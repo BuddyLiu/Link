@@ -985,12 +985,26 @@ setTimeout(updateScrollButtons, 500);
   var toggle = nav.querySelector('.nav-toggle');
   var isDragging = false, wasDragged = false, startX, startY, startLeft, startTop;
   
-  // Click to expand/collapse (no drag conflict)
-  nav.addEventListener('click', function() {
-    if (wasDragged) { wasDragged = false; return; }
-    var isExpanded = nav.classList.contains('expanded');
-    nav.classList.toggle('expanded', !isExpanded);
-    nav.classList.toggle('collapsed', isExpanded);
+  // Hover to expand, 3s stabilization prevents flicker
+  // 状态机: 展开后 3s 内忽略鼠标进出事件, 保持展开
+  var _stab = false, _stabTimer = null;
+  function _stabilize() {
+    _stab = true;
+    if (_stabTimer) clearTimeout(_stabTimer);
+    _stabTimer = setTimeout(function() { _stab = false; _stabTimer = null; }, 3000);
+  }
+  nav.addEventListener('mouseenter', function() {
+    if (!nav.classList.contains('expanded')) {
+      nav.classList.remove('collapsed');
+      nav.classList.add('expanded');
+    }
+    _stabilize();  // 每次进入重置 3s 稳定窗口
+  });
+  nav.addEventListener('mouseleave', function() {
+    if (isDragging) return;
+    if (_stab) return;  // 3s 稳定期内: 不折叠
+    nav.classList.remove('expanded');
+    nav.classList.add('collapsed');
   });
   
   // Drag on toggle mousedown
