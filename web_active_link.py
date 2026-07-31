@@ -492,7 +492,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .header a:hover{border-color:#6366f1;background:rgba(99,102,241,.1)}
 .header div{display:flex;gap:8px}
 /* Chat box */
-#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 180px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
+#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 420px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
 #chat-box.instant-scroll{scroll-behavior:auto}
 #chat-box::-webkit-scrollbar{width:4px}
 #chat-box::-webkit-scrollbar-track{background:transparent}
@@ -581,7 +581,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.thinking summary:hover{background:rgba(99,102,241,.05)}
 .msg.thinking .think-content{font-size:11px;color:#6b7280;line-height:1.6;padding:4px 10px 8px;white-space:pre-wrap}
 /* Status bar */
-#status-bar{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:0 max(20px, calc(50% - 180px));font-size:11px}
+#status-bar{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:0 max(20px, calc(50% - 420px));font-size:11px}
 #status-bar details{max-width:820px;margin:0 auto}
 #status-bar summary{cursor:pointer;color:#6366f1;padding:6px 0;user-select:none;font-size:11px}
 #status-bar summary:hover{opacity:.8}
