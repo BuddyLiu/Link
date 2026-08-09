@@ -45,15 +45,17 @@ class TriggerChecker:
         self.logger = None
         self.location_service = None
         self.event_system = None
+        self.memory_store = None  # 记忆源（用于 memory: 前缀条件）
         
         # 状态跟踪
         self.last_check_time = {}
         self.condition_cache = {}
     
-    def set_components(self, location_service=None, event_system=None):
+    def set_components(self, location_service=None, event_system=None, memory_store=None):
         """设置依赖组件"""
         self.location_service = location_service
         self.event_system = event_system
+        self.memory_store = memory_store
     
     def set_logger(self, logger):
         """设置日志记录器"""
@@ -145,8 +147,18 @@ class TriggerChecker:
             return datetime.now().strftime("%H:%M")
         
         elif key == "cpu_usage":
-            import psutil
-            return psutil.cpu_percent(interval=0.1)
+            try:
+                import psutil
+                # psutil 首次调用 cpu_percent() 返回 0（只采样不计算），先校准再取真实值
+                psutil.cpu_percent(None)
+                return psutil.cpu_percent(interval=0.1)
+            except Exception:
+                # 降级：基于系统 uptime 估算（某些受限环境 cpu_percent 恒为 0）
+                import os, time as _t
+                try:
+                    return round(100.0 - os.getloadavg()[0] / max(os.cpu_count() or 1, 1) * 100.0, 1)
+                except Exception:
+                    return None
         
         elif key == "memory_usage":
             import psutil
@@ -157,9 +169,17 @@ class TriggerChecker:
             return psutil.disk_usage("/").percent
         
         elif key == "network_status":
-            # 简化实现：总是返回在线
-            return "online"
-        
+            # 真实检测网络连通性（8.8.8.8 + 223.5.5.5 双源）
+            import socket
+            for host in ("8.8.8.8", "223.5.5.5"):
+                try:
+                    s = socket.create_connection((host, 53), timeout=1.5)
+                    s.close()
+                    return "online"
+                except OSError:
+                    continue
+            return "offline"
+
         elif key == "battery_level":
             import psutil
             try:
@@ -169,17 +189,47 @@ class TriggerChecker:
             except:
                 pass
             return 100  # 默认值
-        
+
         elif key == "weather_temperature":
             # 需要天气API，这里返回模拟值
             return 25
-        
+
         elif key == "is_working_hours":
             current_hour = datetime.now().hour
             return 9 <= current_hour <= 17
-        
+
+        # 记忆条件源：memory:xxx → 查询记忆库（用户偏好/事实）
+        elif key.startswith("memory:"):
+            return self._get_memory_value(key)
+
         # 默认值
         return None
+
+    def _get_memory_value(self, key: str) -> Any:
+        """从记忆库获取条件值。
+
+        key 格式:
+          - memory:user_preference:咖啡 → 是否有"咖啡"相关偏好记忆 → bool
+          - memory:fact:xxx → 是否有 xxx 事实 → bool
+        """
+        if not self.memory_store:
+            return None
+        try:
+            parts = key.split(":", 2)
+            mem_type = parts[1] if len(parts) > 1 else "preference"
+            query = parts[2] if len(parts) > 2 else mem_type
+            # 从记忆库检索
+            results = self.memory_store.search_memories(query, n_results=5)
+            if not results:
+                return False
+            # 检查是否有匹配类型的记忆
+            for entry, _sim in results:
+                t = str(getattr(entry, "memory_type", "")).lower()
+                if mem_type in t or mem_type == "any":
+                    return True
+            return False
+        except Exception:
+            return None
     
     def _apply_operator(self, current_value: Any, operator: str, expected_value: Any) -> bool:
         """应用比较操作符"""

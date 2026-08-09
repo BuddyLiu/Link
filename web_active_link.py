@@ -288,34 +288,120 @@ class LearningEventHandler(EventHandler):
         
         return f"学习操作: {action}"
     
+    def _get_brain(self):
+        """获取 LINK 主实例（含反思/学习引擎）"""
+        return getattr(self.link, "brain_link", None) if self.link else None
+
     def _analyze_memory_patterns(self) -> str:
-        """分析记忆模式"""
+        """分析记忆模式，并触发一次周期反思（Periodic Review）"""
         try:
-            return "⚡ 记忆模式分析完成：系统运行正常"
+            brain = self._get_brain()
+            memory = getattr(brain, "memory_engine", None) if brain else None
+            stats = {}
+            if memory and memory.store:
+                try:
+                    stats = memory.store.get_stats()
+                except Exception:
+                    pass
+            mem_count = stats.get("total_memories", 0)
+
+            # 触发一次周期反思，沉淀失败经验到知识库
+            reflect_msg = ""
+            refl_engine = getattr(brain, "reflection_engine", None) if brain else None
+            if refl_engine is not None:
+                try:
+                    import time as _t
+                    task_id = f"periodic_{int(_t.time())}"
+                    from src.reflection.reflection_engine import ReflectionTrigger
+                    result = refl_engine.reflect(
+                        task_id,
+                        {"status": "success", "note": "periodic review"},
+                        ReflectionTrigger.PERIODIC_REVIEW,
+                        context={"memory_count": mem_count},
+                    )
+                    if result is not None:
+                        reflect_msg = f"，沉淀 {len(getattr(result, 'suggestions', []))} 条改进建议"
+                except Exception:
+                    pass
+
+            # 用知识库统计展示学习成果
+            stats_msg = ""
+            ku = getattr(brain, "knowledge_updater", None) if brain else None
+            if ku is not None:
+                try:
+                    kstats = ku.get_knowledge_stats()
+                    n = kstats.get("total_entries", 0) if isinstance(kstats, dict) else 0
+                    stats_msg = f"，知识库 {n} 条"
+                except Exception:
+                    pass
+
+            return f"⚡ 记忆模式分析完成：记忆 {mem_count} 条{stats_msg}{reflect_msg}"
         except Exception as e:
             return f"❌ 记忆分析失败: {e}"
-    
+
     def _learn_new_skill(self, skill_name: str) -> str:
-        """学习新技能"""
+        """学习新技能（交给 LINK 大脑引擎，结果存入记忆）"""
         if not skill_name:
             skill_name = "通用任务处理"
-        
         try:
+            brain = self._get_brain()
+            if brain is not None:
+                result = brain._handle_learning_request(skill_name)
+                return f"🎓 学习技能: {skill_name}\n{result[:200]}"
             return f"🎓 开始学习新技能: {skill_name}"
         except Exception as e:
             return f"❌ 技能学习失败: {e}"
-    
+
     def _optimize_performance(self) -> str:
-        """优化性能"""
+        """优化性能：基于反思统计输出学习/改进概览"""
         try:
-            return "⚡ 性能优化完成"
+            brain = self._get_brain()
+            lm = getattr(brain, "learning_module", None) if brain else None
+            refl = getattr(brain, "reflection_engine", None) if brain else None
+            learn_stats = {}
+            if lm is not None:
+                try:
+                    learn_stats = lm.get_learning_stats()
+                except Exception:
+                    pass
+            refl_stats = {}
+            if refl is not None:
+                try:
+                    refl_stats = refl.get_reflection_stats()
+                except Exception:
+                    pass
+            n_learn = learn_stats.get("total_learnings", 0) if isinstance(learn_stats, dict) else 0
+            n_refl = refl_stats.get("total_reflections", 0) if isinstance(refl_stats, dict) else 0
+            return f"⚡ 性能优化完成：学习 {n_learn} 条，反思 {n_refl} 次"
         except Exception as e:
             return f"❌ 性能优化失败: {e}"
-    
+
     def _learn_user_preferences(self) -> str:
-        """学习用户偏好"""
+        """学习用户偏好：从记忆中检索偏好类记忆"""
         try:
-            return "👤 用户偏好学习完成"
+            brain = self._get_brain()
+            memory = getattr(brain, "memory_engine", None) if brain else None
+            prefs = []
+            if memory and memory.store:
+                try:
+                    from src.memory.memory_entry import MemoryType
+                    all_mem = memory.store.get_all_memories(limit=200) or []
+                    for m in all_mem:
+                        if getattr(m, "memory_type", None) == MemoryType.PREFERENCE:
+                            prefs.append(getattr(m, "content", ""))
+                        elif getattr(m, "memory_type", None) is not None and "preference" in str(getattr(m, "memory_type", "")).lower():
+                            prefs.append(getattr(m, "content", ""))
+                    if not prefs and all_mem:
+                        # 退化：从 type_counts 判断
+                        stats = memory.store.get_stats()
+                        tc = stats.get("type_counts", {}) if isinstance(stats, dict) else {}
+                        if isinstance(tc, dict):
+                            prefs.append(f"偏好记忆 {tc.get('preference', 0)} 条")
+                except Exception:
+                    pass
+            if prefs:
+                return f"👤 用户偏好学习完成：发现 {len(prefs)} 条偏好\n" + "\n".join(f"- {p[:60]}" for p in prefs[:5])
+            return "👤 用户偏好学习完成：暂无明确偏好记忆"
         except Exception as e:
             return f"❌ 用户偏好学习失败: {e}"
 
@@ -454,8 +540,17 @@ class WebActiveLINK:
                 "database_path": "./data/reminders/reminders.db",
             }
             self.reminder_manager = create_reminder_manager(rem_config)
+            trigger_checker = create_trigger_checker(rem_config)
+            # 注入记忆源（供条件触发查询用户偏好/事实）
+            try:
+                mem_engine = getattr(self.brain_link, "memory_engine", None)
+                mem_store = getattr(mem_engine, "store", None) if mem_engine else None
+                if mem_store:
+                    trigger_checker.set_components(memory_store=mem_store)
+            except Exception:
+                pass
             self.reminder_manager.set_components(
-                trigger_checker=create_trigger_checker(rem_config),
+                trigger_checker=trigger_checker,
                 notification_sender=create_notification_sender(rem_config)
             )
         except Exception as e:
@@ -662,6 +757,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.thinking summary{font-size:11px;color:#6366f1;padding:6px 10px;cursor:pointer;user-select:none}
 .msg.thinking summary:hover{background:rgba(99,102,241,.05)}
 .msg.thinking .think-content{font-size:11px;color:#6b7280;line-height:1.6;padding:4px 10px 8px;white-space:pre-wrap}
+/* 思考内容滚动视图：max 200px，超出自动滚动吸附底部 */
+.think-scroll-wrap{position:relative;max-height:200px;overflow-y:auto;overscroll-behavior:contain}
+.think-scroll-wrap .think-content{padding:4px 10px 8px}
+/* 思考字数统计 + 展开按钮 */
+.think-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 10px 6px;font-size:10px;color:#6b7280;border-top:1px dashed rgba(99,102,241,.15);margin-top:2px}
+.think-count{user-select:none}
+.think-expand-btn{background:none;border:1px solid rgba(99,102,241,.3);color:#6366f1;border-radius:4px;padding:1px 8px;font-size:10px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.think-expand-btn:hover{background:rgba(99,102,241,.1);border-color:#6366f1}
+.think-expand-btn:active{transform:scale(.96)}
+/* 展开模式：按真实高度展示 */
+.think-scroll-wrap.expanded{max-height:none}
 /* Status bar */
 #status-bar{background:#0d0d14;border-bottom:1px solid #1a1a2e;padding:0 max(20px, calc(50% - 420px));font-size:11px}
 #status-bar details{max-width:820px;margin:0 auto}
@@ -681,6 +787,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .modal-duration button{padding:6px 8px;background:#0d0d14;border:1px solid #1a1a2e;border-radius:6px;color:#9ca3af;font-size:11px;cursor:pointer;transition:all .15s}
 .modal-duration button:hover{border-color:#6366f1;color:#e0e0e0}
 .modal-duration button.active{background:rgba(99,102,241,.15);border-color:#6366f1;color:#a5b4fc}
+.perm-grant-row{display:flex;align-items:center;cursor:pointer;color:#a5b4fc !important;font-size:12px !important;text-transform:none !important;letter-spacing:0 !important;padding:8px 0}
+.perm-grant-row:hover{color:#c7d2fe !important}
+#perm-grant-dir{margin-top:4px;background:rgba(99,102,241,.08) !important;border-color:rgba(99,102,241,.4) !important;color:#a5b4fc !important}
 
 /* Toast */
 #toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2000;background:#13131f;border:1px solid #1a1a2e;border-radius:10px;padding:10px 20px;color:#e0e0e0;font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.5);opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
@@ -691,12 +800,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .modal-btn.confirm:hover{background:#4f46e5}
 .modal-btn.deny{background:#0d0d14;color:#9ca3af;border:1px solid #1a1a2e}
 .modal-btn.deny:hover{color:#ef4444;border-color:#ef4444}
+/* 问卷弹窗 */
+.ob-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:3000}
+.ob-modal.show{display:flex}
+.ob-box{background:#13131f;border:1px solid #1a1a2e;border-radius:14px;width:min(640px,92vw);max-height:86vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.ob-head{padding:18px 24px;border-bottom:1px solid #1a1a2e}
+.ob-head h3{margin:0;font-size:17px;color:#e0e0e0}
+.ob-head p{margin:4px 0 0;font-size:12px;color:#6b7280}
+.ob-body{flex:1;overflow-y:auto;padding:20px 24px}
+.ob-step{display:none}
+.ob-step.active{display:block}
+.ob-q{margin-bottom:14px}
+.ob-q label{display:block;font-size:13px;color:#c0c0c0;margin-bottom:6px}
+.ob-q label .ob-desc{display:block;font-size:11px;color:#6b7280;margin-top:2px}
+.ob-q input[type=text],.ob-q textarea{width:100%;background:#0d0d14;border:1px solid #1a1a2e;border-radius:8px;color:#e0e0e0;padding:10px 12px;font-size:13px;box-sizing:border-box;outline:none;transition:border-color .15s}
+.ob-q input[type=text]:focus,.ob-q textarea:focus{border-color:#6366f1}
+.ob-q textarea{min-height:70px;resize:vertical}
+.ob-q .ob-chips{display:flex;flex-wrap:wrap;gap:8px}
+.ob-chip{border:1px solid #1a1a2e;border-radius:20px;padding:6px 14px;font-size:12px;color:#9ca3af;cursor:pointer;background:#0d0d14;transition:all .15s;user-select:none}
+.ob-chip:hover{border-color:#6366f1;color:#e0e0e0}
+.ob-chip.sel{background:rgba(99,102,241,.15);border-color:#6366f1;color:#a5b4fc}
+.ob-nav{display:flex;justify-content:space-between;padding:14px 24px;border-top:1px solid #1a1a2e;gap:8px}
+.ob-btn{background:#0d0d14;border:1px solid #1a1a2e;border-radius:8px;color:#9ca3af;padding:9px 20px;font-size:13px;cursor:pointer;transition:all .15s}
+.ob-btn:hover{border-color:#6366f1;color:#e0e0e0}
+.ob-btn.primary{background:#6366f1;border-color:#6366f1;color:#fff}
+.ob-btn.primary:hover{background:#4f46e5}
+.ob-btn:disabled{opacity:.4;cursor:not-allowed}
+.ob-dots{display:flex;gap:5px;justify-content:center;padding:10px 0 0}
+.ob-dot{width:6px;height:6px;border-radius:50%;background:#1a1a2e;transition:background .2s}
+.ob-dot.cur{background:#6366f1}
+.ob-opt{margin-bottom:12px}
+.ob-opt label{display:flex;gap:10px;align-items:flex-start;cursor:pointer;padding:10px 12px;border:1px solid #1a1a2e;border-radius:8px;background:#0d0d14;transition:all .15s}
+.ob-opt label:hover{border-color:#6366f1}
+.ob-opt input{accent-color:#6366f1;margin-top:2px}
+.ob-opt label.sel{border-color:#6366f1;background:rgba(99,102,241,.08)}
+.ob-progress{height:3px;background:#1a1a2e}
+.ob-progress-inner{height:100%;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .3s;width:0}
 </style>
 </head>
 <body>
 <div class="header">
 <h1>LINK</h1>
 <div>
+<a href="javascript:void(0)" id="mode-btn" onclick="toggleExecMode()" title="任务执行模式">&#x2696;&#xFE0F; 手动</a>
+<a href="javascript:void(0)" onclick="showTasks()" title="查看任务">&#x1F4CB; 任务</a>
+<a href="javascript:void(0)" onclick="openOnboarding()" title="填写问卷，让LINK更了解你">&#x1F4DD; 问卷</a>
 <a href="/settings">&#x2699; 设置</a>
 <a href="/debug">&#x1F50D; 调试</a>
 </div>
@@ -760,6 +908,54 @@ async function updateStatus() {
   } catch(e) { /* ignore */ }
 }
 setInterval(updateStatus, 10000);
+
+// ── 任务执行模式切换 ──
+async function loadExecMode() {
+  try {
+    var r = await fetch('/api/execution-mode');
+    var d = await r.json();
+    var mode = d.mode || 'manual';
+    var btn = document.getElementById('mode-btn');
+    if (btn) {
+      btn.textContent = mode === 'auto' ? '⚙️ 自动' : '⚙️ 手动';
+      btn.style.color = mode === 'auto' ? '#22c55e' : '';
+    }
+  } catch(e) { /* ignore */ }
+}
+async function toggleExecMode() {
+  var btn = document.getElementById('mode-btn');
+  var cur = (btn && btn.textContent.indexOf('自动') >= 0) ? 'auto' : 'manual';
+  var next = cur === 'auto' ? 'manual' : 'auto';
+  try {
+    var r = await fetch('/api/execution-mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: next})
+    });
+    var d = await r.json();
+    addMessage('system', d.message || '已切换');
+    loadExecMode();
+  } catch(e) { addMessage('system', '切换失败: ' + e); }
+}
+// ── 任务监控 ──
+async function showTasks() {
+  try {
+    var r = await fetch('/api/tasks');
+    var d = await r.json();
+    var tasks = d.tasks || [];
+    if (!tasks.length) { addMessage('system', '📭 当前没有任务'); return; }
+    var lines = ['📋 任务列表：'];
+    tasks.forEach(function(t, i) {
+      var bar = '▓'.repeat(Math.round(t.progress / 20)) + '░'.repeat(5 - Math.round(t.progress / 20));
+      lines.push((i+1) + '. [' + t.status + '] ' + t.goal);
+      lines.push('   ' + bar + ' ' + t.progress + '% (' + t.completed_steps + '/' + t.total_steps + ' 步)');
+    });
+    addMessage('system', lines.join('\\n'));
+  } catch(e) { addMessage('system', '任务查询失败: ' + e); }
+}
+loadExecMode();
+checkOnboarding();
+
 // ── marked + highlight.js 配置 ──
 marked.setOptions({
   breaks: true,       // 支持 markdown 内换行 → <br>
@@ -781,6 +977,58 @@ try {
 
 var streamContentId = null;
 var streamContentBuf = '';
+var _streamTyped = 0;      // 打字机已打出的字符数
+var _streamTimer = null;   // 打字机 tick 定时器
+var _reasoningSpeed = 0;   // 思考内容接收速率（字符/tick，用于联动打字速度）
+var _reasoningLastLen = 0; // 上次思考接收的字符数
+
+// ── 流式打字机：速度跟随生成节奏动态调节 ──
+// 核心：思考内容返回越快 → 答案打字越快；思考生成慢 → 答案打字慢（等思考）。
+// 用"积压量"和"思考接收速率"两个信号共同驱动。
+function streamTypeTick() {
+  _streamTimer = null;
+  var sb = document.getElementById('stream-bubble');
+  if (!sb) { _streamTyped = 0; return; }
+  var total = streamContentBuf.length;
+  var pending = total - _streamTyped;
+
+  if (pending <= 0) {
+    // 已打完但 LLM 还没返回更多 → 慢等（生成慢）
+    _streamTimer = setTimeout(streamTypeTick, 70);
+    return;
+  }
+
+  // 动态步长：积压越多，每 tick 打的字符越多
+  var step = 1;
+  if (pending > 600) step = 12;
+  else if (pending > 300) step = 6;
+  else if (pending > 120) step = 3;
+  else if (pending > 50) step = 2;
+
+  _streamTyped = Math.min(total, _streamTyped + step);
+  try { sb.innerHTML = renderMarkdown(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
+  catch(e) { sb.textContent = streamContentBuf.slice(0, _streamTyped) + '|'; }
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  // 动态间隔：
+  //   - 积压大（生成快跟上了）→ 间隔短，快速打
+  //   - 思考还在快速接收 → 间隔短（追赶思考节奏）
+  //   - 思考接收慢 → 间隔长（慢打，等思考/答案自然返回）
+  var delay;
+  if (pending > 300 || _reasoningSpeed > 3) delay = 8;
+  else if (pending > 80 || _reasoningSpeed > 1) delay = 14;
+  else delay = 26;
+  _streamTimer = setTimeout(streamTypeTick, delay);
+}
+
+// 记录思考接收速率（在 reasoning_chunk 中调用）
+function trackReasoningSpeed(rc) {
+  var len = (rc && rc.textContent) ? rc.textContent.length : _reasoningLastLen;
+  var delta = len - _reasoningLastLen;
+  // delta 大 → 思考生成快；delta 小 → 思考生成慢
+  _reasoningSpeed = delta > 50 ? 4 : (delta > 10 ? 2 : 0.5);
+  _reasoningLastLen = len;
+}
 
 ws.onmessage = e => {
   const d = JSON.parse(e.data);
@@ -788,14 +1036,30 @@ ws.onmessage = e => {
   // 权限请求弹窗
   if (d.type === 'permission_request') {
     _pendingPermRequestId = d.request_id;
+    _pendingPermDir = d.suggest_dir || null;
+    var isCmd = d.resource_type === 'command';
     document.getElementById('perm-resource-type').textContent =
-      d.resource_type === 'command' ? '命令执行' : '文件操作';
+      isCmd ? '命令执行' : '文件操作';
     document.getElementById('perm-resource').textContent = d.resource;
     var modeMap = {'read':'读取','write':'写入','execute':'执行','read_write':'读写'};
     document.getElementById('perm-mode').textContent = modeMap[d.mode] || d.mode;
     document.getElementById('perm-duration').querySelectorAll('button').forEach(function(btn) {
       btn.classList.toggle('active', btn.dataset.duration === 'once');
     });
+    // 目录授权区：仅文件请求显示，且始终显示（目录继承是修复重点）
+    var grantRow = document.getElementById('perm-grant-dir');
+    var grantCb = document.getElementById('perm-grant-dir-cb');
+    var grantLabel = document.getElementById('perm-grant-dir-label');
+    if (!isCmd && _pendingPermDir) {
+      grantCb.checked = false;
+      grantRow.style.display = 'none';
+      grantLabel.textContent = _pendingPermDir;
+      document.querySelector('.perm-grant-row').style.display = 'block';
+    } else {
+      grantCb.checked = false;
+      grantRow.style.display = 'none';
+      document.querySelector('.perm-grant-row').style.display = 'none';
+    }
     document.getElementById('permission-modal').style.display = 'flex';
     return;
   }
@@ -807,29 +1071,66 @@ ws.onmessage = e => {
       var det = document.createElement('details');
       det.id = 'stream-reasoning';
       det.open = true;
-      det.style.cssText = 'margin:2px 0 4px';
+      det.className = 'thinking';
+      det.style.cssText = 'margin:2px 0 4px;background:#0d0d14;border:1px solid #1a1a2e;border-radius:8px;overflow:hidden';
       var sum = document.createElement('summary');
       sum.textContent = '思考过程';
-      sum.style.cssText = 'cursor:pointer;color:#6366f1;padding:2px 0;font-size:11px';
+      sum.style.cssText = 'cursor:pointer;color:#6366f1;padding:6px 10px;font-size:11px;user-select:none';
+      var wrap = document.createElement('div');
+      wrap.className = 'think-scroll-wrap';
+      wrap.id = 'stream-reasoning-wrap';
       var con = document.createElement('div');
+      con.className = 'think-content';
       con.id = 'stream-reasoning-content';
-      con.style.cssText = 'color:#6b7280;line-height:1.5;padding:4px 8px;white-space:pre-wrap;font-size:11px';
-      det.appendChild(sum); det.appendChild(con);
+      con.style.cssText = 'color:#6b7280;line-height:1.6;white-space:pre-wrap;font-size:11px';
+      wrap.appendChild(con);
+      var meta = document.createElement('div');
+      meta.className = 'think-meta';
+      var countEl = document.createElement('span');
+      countEl.className = 'think-count';
+      countEl.id = 'stream-reasoning-count';
+      countEl.textContent = '0 字';
+      var expandBtn = document.createElement('button');
+      expandBtn.className = 'think-expand-btn';
+      expandBtn.textContent = '展开全部';
+      expandBtn.style.display = 'none';
+      expandBtn.id = 'stream-reasoning-expand';
+      expandBtn.onclick = function() {
+        var isExpanded = wrap.classList.toggle('expanded');
+        expandBtn.textContent = isExpanded ? '收起' : '展开全部';
+        if (!isExpanded) wrap.scrollTop = wrap.scrollHeight;
+      };
+      meta.appendChild(countEl);
+      meta.appendChild(expandBtn);
+      det.appendChild(sum); det.appendChild(wrap); det.appendChild(meta);
       var typingEl = chatBox.querySelector('.typing');
       if (typingEl) chatBox.insertBefore(det, typingEl);
       else chatBox.appendChild(det);
     }
     var rc = document.getElementById('stream-reasoning-content');
     if (rc) rc.textContent += d.data;
+    var rw = document.getElementById('stream-reasoning-wrap');
+    if (rw) {
+      if (!rw.classList.contains('expanded')) rw.scrollTop = rw.scrollHeight;
+      var _rcEl = rw.querySelector('.think-content');
+      var _cnt = document.getElementById('stream-reasoning-count');
+      if (_cnt && _rcEl) _cnt.textContent = _rcEl.textContent.length + ' 字';
+      var _ex = document.getElementById('stream-reasoning-expand');
+      if (_ex && rw.scrollHeight > rw.clientHeight + 4) _ex.style.display = '';
+    }
+    // 记录思考接收速率 → 驱动答案打字速度联动
+    trackReasoningSpeed(rc);
     chatBox.scrollTop = chatBox.scrollHeight;
     return;
   }
 
-  // 生成内容流式到达（实时打字）
+  // 生成内容流式到达（打字机显示，速度随生成节奏动态调节）
   if (d.type === 'content_chunk') {
     removeTyping();
     if (!streamContentId) {
       streamContentBuf = '';
+      _streamTyped = 0;
+      if (_streamTimer) { clearTimeout(_streamTimer); _streamTimer = null; }
       var div = document.createElement('div');
       div.className = 'msg assistant';
       div.id = 'stream-msg';
@@ -842,11 +1143,8 @@ ws.onmessage = e => {
       streamContentId = 'stream-msg';
     }
     streamContentBuf += d.data;
-    var sb = document.getElementById('stream-bubble');
-    if (sb) {
-      sb.innerHTML = renderMarkdown(streamContentBuf) + '<span class="cursor"></span>';
-      chatBox.scrollTop = chatBox.scrollHeight;
-    }
+    // 启动/继续打字机（积压会驱动 tick）
+    if (!_streamTimer) _streamTimer = setTimeout(streamTypeTick, 10);
     return;
   }
 
@@ -855,6 +1153,9 @@ ws.onmessage = e => {
     removeTyping();
     var reasoning = d.data.reasoning || '';
     var result = d.data.result || '';
+
+    // 停止流式打字机，补全未打出的剩余内容
+    if (_streamTimer) { clearTimeout(_streamTimer); _streamTimer = null; }
 
     var streamEl = document.getElementById('stream-msg');
     if (streamEl) {
@@ -883,6 +1184,7 @@ ws.onmessage = e => {
       var _rc = document.getElementById('stream-reasoning-content');
       if (_rc) _rc.removeAttribute('id');
       streamContentId = null;
+      _streamTyped = 0;
       return;
     }
 
@@ -917,15 +1219,40 @@ async function loadHistory(page) {
       if (msg.reasoning) {
         var det = document.createElement('details');
         det.open = true;
-        det.style.cssText = 'margin:2px 0 4px;font-size:11px';
+        det.className = 'thinking';
+        det.style.cssText = 'margin:2px 0 4px;background:#0d0d14;border:1px solid #1a1a2e;border-radius:8px;overflow:hidden;font-size:11px';
         var sum = document.createElement('summary');
         sum.textContent = '思考过程';
-        sum.style.cssText = 'cursor:pointer;color:#6366f1;padding:2px 0';
+        sum.style.cssText = 'cursor:pointer;color:#6366f1;padding:6px 10px;user-select:none';
+        var wrap = document.createElement('div');
+        wrap.className = 'think-scroll-wrap';
         var con = document.createElement('div');
+        con.className = 'think-content';
         con.textContent = msg.reasoning;
-        con.style.cssText = 'color:#6b7280;line-height:1.5;padding:4px 8px;white-space:pre-wrap;font-size:11px';
-        det.appendChild(sum); det.appendChild(con);
+        con.style.cssText = 'color:#6b7280;line-height:1.6;white-space:pre-wrap';
+        wrap.appendChild(con);
+        var meta = document.createElement('div');
+        meta.className = 'think-meta';
+        var countEl = document.createElement('span');
+        countEl.className = 'think-count';
+        countEl.textContent = msg.reasoning.length + ' 字';
+        var expandBtn = document.createElement('button');
+        expandBtn.className = 'think-expand-btn';
+        expandBtn.textContent = '展开全部';
+        expandBtn.style.display = 'none';
+        expandBtn.onclick = function() {
+          var isExpanded = wrap.classList.toggle('expanded');
+          expandBtn.textContent = isExpanded ? '收起' : '展开全部';
+          if (!isExpanded) wrap.scrollTop = wrap.scrollHeight;
+        };
+        meta.appendChild(countEl);
+        meta.appendChild(expandBtn);
+        det.appendChild(sum); det.appendChild(wrap); det.appendChild(meta);
         div.appendChild(det);
+        // 内容超高时显示展开按钮（延迟到布局完成）
+        requestAnimationFrame(function() {
+          if (wrap.scrollHeight > wrap.clientHeight + 4) expandBtn.style.display = '';
+        });
         fullContent = msg.reasoning + '\\n\\n' + msg.content;
       }
       var bubble = document.createElement('div');
@@ -1016,10 +1343,32 @@ function addThinking(reasoning, callback) {
   details.open = true;
   const summary = document.createElement('summary');
   summary.textContent = '思考过程';
+  // 滚动视图容器（max 200px，自动吸附底部）
+  const scrollWrap = document.createElement('div');
+  scrollWrap.className = 'think-scroll-wrap';
   const content = document.createElement('div');
   content.className = 'think-content';
+  scrollWrap.appendChild(content);
+  // 底部元信息：字数统计 + 展开按钮
+  const meta = document.createElement('div');
+  meta.className = 'think-meta';
+  const countEl = document.createElement('span');
+  countEl.className = 'think-count';
+  countEl.textContent = '0 字';
+  const expandBtn = document.createElement('button');
+  expandBtn.className = 'think-expand-btn';
+  expandBtn.textContent = '展开全部';
+  expandBtn.style.display = 'none';  // 仅在内容超高时显示
+  expandBtn.onclick = function() {
+    const isExpanded = scrollWrap.classList.toggle('expanded');
+    expandBtn.textContent = isExpanded ? '收起' : '展开全部';
+    if (!isExpanded) scrollWrap.scrollTop = scrollWrap.scrollHeight;
+  };
+  meta.appendChild(countEl);
+  meta.appendChild(expandBtn);
   details.appendChild(summary);
-  details.appendChild(content);
+  details.appendChild(scrollWrap);
+  details.appendChild(meta);
   div.appendChild(details);
   const typing = chatBox.querySelector('.typing');
   if (typing) chatBox.insertBefore(div, typing);
@@ -1032,9 +1381,24 @@ function addThinking(reasoning, callback) {
     if (pos < reasoning.length) {
       content.textContent += reasoning[pos];
       pos++;
+      // 字数统计
+      countEl.textContent = pos + ' 字';
+      // 内容超高后自动吸附底部（仅在未展开时）
+      if (!scrollWrap.classList.contains('expanded')) {
+        scrollWrap.scrollTop = scrollWrap.scrollHeight;
+      }
+      // 判断是否需要显示展开按钮（内容超出现有高度时）
+      if (scrollWrap.scrollHeight > scrollWrap.clientHeight + 4) {
+        expandBtn.style.display = '';
+      }
       scrollToBottom();
       setTimeout(typeThink, THINK_SPEED);
     } else {
+      // 完成：最终字数
+      countEl.textContent = reasoning.length + ' 字';
+      if (scrollWrap.scrollHeight > scrollWrap.clientHeight + 4) {
+        expandBtn.style.display = '';
+      }
       if (callback) callback();
     }
   }
@@ -1200,13 +1564,36 @@ function typewriteMessage(role, fullText) {
   bubble.className = 'bubble';
   div.appendChild(bubble);
 
+  // ── 动态打字速度调节 ──
+  // 基础间隔 50ms；根据"已打字量 / 总量"自适应：
+  //   - 内容少（总时长短）→ 保持基础速度
+  //   - 内容多 → 逐步加速（前 30% 用基础速度，之后线性加快），
+  //     避免长回复让用户干等
+  // 若后续有 reasoning_chunk 仍在返回（思考还没结束），则减速等待。
+  var totalTokens = tokens.length;
+  var startTime = Date.now();
+  var lastTickTime = startTime;
+
+  function calcInterval() {
+    var progress = totalTokens > 0 ? idx / totalTokens : 0;
+    // 内容越往后越快：前 30% 基础 50ms，后 70% 线性降到 12ms
+    var base = 50;
+    var min = 12;
+    if (progress < 0.3) return base;
+    var t = (progress - 0.3) / 0.7;  // 0→1
+    return Math.max(min, base - t * (base - min));
+  }
+
   function type() {
     if (idx < tokens.length) {
+      var now = Date.now();
+      var elapsed = now - lastTickTime;
+      lastTickTime = now;
       try { bubble.innerHTML = marked.parser(tokens.slice(0, idx + 1)); }
       catch(e) { bubble.innerHTML = '<p>' + fullText.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
       scrollToBottom();
       idx++;
-      setTimeout(type, 50);
+      setTimeout(type, calcInterval());
     } else {
       scrollToBottom();
       if (!div.querySelector('.copy-btn')) {
@@ -1311,8 +1698,123 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+// ── 问卷（Onboarding） ──
+var _obStep = 0;
+var _obTotal = 4;
+var _obAns = {};
+
+function openOnboarding() {
+  _obStep = 0;
+  document.getElementById('ob-modal').classList.add('show');
+  obRender();
+}
+function closeOnboarding() {
+  document.getElementById('ob-modal').classList.remove('show');
+}
+function obRender() {
+  document.querySelectorAll('.ob-step').forEach(function(s) {
+    s.classList.toggle('active', parseInt(s.dataset.step) === _obStep);
+  });
+  var prev = document.getElementById('ob-prev');
+  var next = document.getElementById('ob-next');
+  var sub = document.getElementById('ob-submit');
+  prev.style.display = _obStep === 0 ? 'none' : '';
+  next.style.display = _obStep === _obTotal - 1 ? 'none' : '';
+  sub.style.display = _obStep === _obTotal - 1 ? '' : 'none';
+  // 进度条
+  var bar = document.getElementById('ob-progress-bar');
+  bar.style.width = ((_obStep + 1) / _obTotal * 100) + '%';
+  // dots
+  var dots = document.getElementById('ob-dots');
+  dots.innerHTML = '';
+  for (var i = 0; i < _obTotal; i++) {
+    var d = document.createElement('span');
+    d.className = 'ob-dot' + (i === _obStep ? ' cur' : '');
+    dots.appendChild(d);
+  }
+}
+function obNext() {
+  if (_obStep < _obTotal - 1) { _obStep++; obRender(); }
+}
+function obPrev() {
+  if (_obStep > 0) { _obStep--; obRender(); }
+}
+// Chip 选择器（单选式，可取消）
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('ob-chip')) {
+    e.target.classList.toggle('sel');
+  }
+});
+// 提交
+async function obSubmit() {
+  // 收集答案
+  _obAns.name = (document.getElementById('ob-name').value || '').trim();
+  var selChips = function(id) {
+    var out = [];
+    document.querySelectorAll('#' + id + ' .ob-chip.sel').forEach(function(c) {
+      out.push(c.dataset.v);
+    });
+    return out;
+  };
+  // chips 容器(div) + 自定义输入框分别读取：chips 取选中项，input 取文本
+  var chipText = function(chipsId, inputId) {
+    var chips = selChips(chipsId);
+    var inputEl = document.getElementById(inputId);
+    if (inputEl && inputEl.value) {
+      var v = String(inputEl.value).trim();
+      if (v) chips.push(v);
+    }
+    return chips.join('、');
+  };
+  _obAns.nickname = chipText('ob-nickname-chips', 'ob-nickname');
+  _obAns.job = chipText('ob-job-chips', 'ob-job');
+  _obAns.likes = chipText('ob-interest-chips', 'ob-interests');
+  _obAns.habits = chipText('ob-habit-chips', 'ob-habits');
+  _obAns.dislikes = (document.getElementById('ob-dislikes').value || '').trim();
+  _obAns.goals = (document.getElementById('ob-goals').value || '').trim();
+  _obAns.contact = (document.getElementById('ob-contact').value || '').trim();
+  _obAns.extra = (document.getElementById('ob-extra').value || '').trim();
+  var work = document.querySelector('input[name="ob-work"]:checked');
+  if (work) _obAns.habits = (_obAns.habits + '、' + work.value).replace(/^、/, '');
+  var style = selChips('ob-style-chips');
+  if (style.length) _obAns.likes = (_obAns.likes + '、回复风格偏好:' + style.join('、')).replace(/^、/, '');
+
+  var btn = document.getElementById('ob-submit');
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    var r = await fetch('/api/onboarding', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_obAns)
+    });
+    var d = await r.json();
+    addMessage('system', d.message || '已保存');
+    if (d.success) {
+      closeOnboarding();
+      loadExecMode();
+    } else {
+      btn.disabled = false; btn.textContent = '✅ 提交并保存';
+    }
+  } catch(e) {
+    addMessage('system', '问卷保存失败: ' + e.message);
+    btn.disabled = false; btn.textContent = '✅ 提交并保存';
+  }
+}
+// 检查是否已完成问卷（完成过则导航按钮标注）
+async function checkOnboarding() {
+  try {
+    var r = await fetch('/api/onboarding/status');
+    var d = await r.json();
+    if (d.completed) {
+      var nav = document.querySelector('.header a[onclick="openOnboarding()"]');
+      if (nav) nav.textContent = '📝 问卷 ✓';
+    }
+  } catch(e) {}
+}
+
 // Permission Modal
 var _pendingPermRequestId = null;
+var _pendingPermDir = null;
 
 // Duration selector
 document.addEventListener('click', function(e) {
@@ -1323,16 +1825,34 @@ document.addEventListener('click', function(e) {
   }
 });
 
+// 目录授权开关：勾选后授权整个目录
+function toggleGrantDir() {
+  var cb = document.getElementById('perm-grant-dir-cb');
+  var dirLabel = document.getElementById('perm-grant-dir-label');
+  if (!cb) return;
+  if (cb.checked) {
+    document.getElementById('perm-grant-dir').style.display = 'block';
+    dirLabel.textContent = '目录: ' + (_pendingPermDir || '');
+  } else {
+    document.getElementById('perm-grant-dir').style.display = 'none';
+  }
+}
+
 function confirmPermission() {
   var active = document.querySelector('#perm-duration .active');
+  var grantDir = false;
+  var cb = document.getElementById('perm-grant-dir-cb');
+  if (cb && cb.checked) grantDir = true;
   ws.send(JSON.stringify({
     type: 'permission_response',
     request_id: _pendingPermRequestId,
     approved: true,
-    duration: active ? active.dataset.duration : 'once'
+    duration: active ? active.dataset.duration : 'once',
+    grant_dir: grantDir
   }));
   document.getElementById('permission-modal').style.display = 'none';
   _pendingPermRequestId = null;
+  _pendingPermDir = null;
 }
 
 function denyPermission() {
@@ -1344,8 +1864,120 @@ function denyPermission() {
   }));
   document.getElementById('permission-modal').style.display = 'none';
   _pendingPermRequestId = null;
+  _pendingPermDir = null;
 }
 </script>
+
+<!-- Onboarding Questionnaire Modal -->
+<div id="ob-modal" class="ob-modal">
+  <div class="ob-box">
+    <div class="ob-progress"><div class="ob-progress-inner" id="ob-progress-bar"></div></div>
+    <div class="ob-head">
+      <h3>📝 让我更了解你</h3>
+      <p>填写这份问卷，LINK 会记住你的偏好和习惯，帮你更好地回答问题、完成任务。所有信息仅保存在本机记忆库。</p>
+    </div>
+    <div class="ob-body" id="ob-body">
+      <div class="ob-step active" data-step="0">
+        <div class="ob-q">
+          <label>你的名字或昵称？<span class="ob-desc">LINK 之后会用这个称呼你</span></label>
+          <input type="text" id="ob-name" placeholder="例如：小明">
+        </div>
+        <div class="ob-q">
+          <label>你希望 LINK 怎么称呼你？</label>
+          <div class="ob-chips" id="ob-nickname-chips">
+            <button class="ob-chip" data-v="直接叫名字">直接叫名字</button>
+            <button class="ob-chip" data-v="哥/姐">哥/姐</button>
+            <button class="ob-chip" data-v="老板">老板</button>
+            <button class="ob-chip" data-v="亲爱的">亲爱的</button>
+          </div>
+          <input type="text" id="ob-nickname" placeholder="或自定义称呼" style="margin-top:8px">
+        </div>
+      </div>
+      <div class="ob-step" data-step="1">
+        <div class="ob-q">
+          <label>你的职业/身份？</label>
+          <div class="ob-chips" id="ob-job-chips">
+            <button class="ob-chip" data-v="软件工程师">软件工程师</button>
+            <button class="ob-chip" data-v="产品经理">产品经理</button>
+            <button class="ob-chip" data-v="设计师">设计师</button>
+            <button class="ob-chip" data-v="学生">学生</button>
+            <button class="ob-chip" data-v="自由职业">自由职业</button>
+          </div>
+          <input type="text" id="ob-job" placeholder="或其他职业" style="margin-top:8px">
+        </div>
+        <div class="ob-q">
+          <label>你平时的技术/兴趣领域？<span class="ob-desc">选几个你常接触的领域</span></label>
+          <div class="ob-chips" id="ob-interest-chips">
+            <button class="ob-chip" data-v="编程">编程</button>
+            <button class="ob-chip" data-v="AI/人工智能">AI/人工智能</button>
+            <button class="ob-chip" data-v="设计">设计</button>
+            <button class="ob-chip" data-v="摄影">摄影</button>
+            <button class="ob-chip" data-v="阅读">阅读</button>
+            <button class="ob-chip" data-v="健身">健身</button>
+            <button class="ob-chip" data-v="美食">美食</button>
+            <button class="ob-chip" data-v="旅行">旅行</button>
+          </div>
+          <input type="text" id="ob-interests" placeholder="其他兴趣（用逗号分隔）" style="margin-top:8px">
+        </div>
+      </div>
+      <div class="ob-step" data-step="2">
+        <div class="ob-q">
+          <label>你的习惯？</label>
+          <div class="ob-chips" id="ob-habit-chips">
+            <button class="ob-chip" data-v="早起">早起</button>
+            <button class="ob-chip" data-v="夜猫子">夜猫子</button>
+            <button class="ob-chip" data-v="喜欢喝咖啡">喜欢喝咖啡</button>
+            <button class="ob-chip" data-v="喝茶">喝茶</button>
+            <button class="ob-chip" data-v="每天锻炼">每天锻炼</button>
+            <button class="ob-chip" data-v="午休">午休</button>
+          </div>
+          <input type="text" id="ob-habits" placeholder="其他习惯" style="margin-top:8px">
+        </div>
+        <div class="ob-q">
+          <label>你不喜欢/讨厌什么？<span class="ob-desc">LINK 会尽量避免这些</span></label>
+          <input type="text" id="ob-dislikes" placeholder="例如：打扰我午休、太长的回复">
+        </div>
+        <div class="ob-q">
+          <label>你最近的目标或想做的事？</label>
+          <input type="text" id="ob-goals" placeholder="例如：学完 Python、准备马拉松">
+        </div>
+      </div>
+      <div class="ob-step" data-step="3">
+        <div class="ob-q">
+          <label>你希望 LINK 怎么帮你工作？</label>
+          <div class="ob-opt" id="ob-work-opts">
+            <label><input type="radio" name="ob-work" value="让我确认每一步"><span>谨慎型：每个操作都先问我确认</span></label>
+            <label><input type="radio" name="ob-work" value="自动完成常规任务"><span>高效型：常规任务自动完成，重要操作再确认</span></label>
+            <label><input type="radio" name="ob-work" value="全力自动执行"><span>激进型：尽量自动执行所有任务</span></label>
+          </div>
+        </div>
+        <div class="ob-q">
+          <label>回复风格偏好？</label>
+          <div class="ob-chips" id="ob-style-chips">
+            <button class="ob-chip" data-v="简洁直接">简洁直接</button>
+            <button class="ob-chip" data-v="详细完整">详细完整</button>
+            <button class="ob-chip" data-v="轻松幽默">轻松幽默</button>
+            <button class="ob-chip" data-v="专业严谨">专业严谨</button>
+          </div>
+        </div>
+        <div class="ob-q">
+          <label>你的联系方式（选填）？<span class="ob-desc">用于需要联系你时的场景</span></label>
+          <input type="text" id="ob-contact" placeholder="邮箱 / 手机号 / 微信">
+        </div>
+        <div class="ob-q">
+          <label>其他想告诉 LINK 的？</label>
+          <textarea id="ob-extra" placeholder="任何关于你的信息..."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="ob-dots" id="ob-dots"></div>
+    <div class="ob-nav">
+      <button class="ob-btn" id="ob-prev" onclick="obPrev()">← 上一步</button>
+      <button class="ob-btn" id="ob-next" onclick="obNext()">下一步 →</button>
+      <button class="ob-btn primary" id="ob-submit" onclick="obSubmit()" style="display:none">✅ 提交并保存</button>
+    </div>
+  </div>
+</div>
 
 <!-- Permission Modal -->
 <div id="permission-modal" class="modal-overlay" style="display:none">
@@ -1363,6 +1995,15 @@ function denyPermission() {
     <div class="modal-section">
       <label>操作类型</label>
       <div class="value" id="perm-mode">读取</div>
+    </div>
+    <div class="modal-section">
+      <label class="perm-grant-row">
+        <input type="checkbox" id="perm-grant-dir-cb" onchange="toggleGrantDir()" style="accent-color:#6366f1;width:16px;height:16px;margin-right:6px">
+        授权整个目录（一次性授权目录下所有文件读写）
+      </label>
+      <div class="value" id="perm-grant-dir" style="display:none;color:#6366f1;word-break:break-all;font-size:12px">
+        目录: <span id="perm-grant-dir-label"></span>
+      </div>
     </div>
     <div class="modal-section">
       <label>授权时长</label>
@@ -1389,7 +2030,10 @@ function denyPermission() {
 
         
         # ── 权限请求管理器回调注册用（单例） ──
-        from tools.permission_request_manager import PermissionRequestManager as PRM
+        try:
+            from src.tools.permission_request_manager import PermissionRequestManager as PRM
+        except ImportError:
+            from tools.permission_request_manager import PermissionRequestManager as PRM
         _prm_registered = False
 
         @self.app.websocket("/ws")
@@ -1430,7 +2074,8 @@ function denyPermission() {
                             prm.respond(
                                 data.get("request_id", ""),
                                 data.get("approved", False),
-                                data.get("duration", "once")
+                                data.get("duration", "once"),
+                                grant_dir=bool(data.get("grant_dir", False))
                             )
                             await websocket.send_json({
                                 "type": "event",
@@ -1475,6 +2120,7 @@ function denyPermission() {
                                     "resource": req.resource,
                                     "mode": req.mode,
                                     "resource_type": req.resource_type.value,
+                                    "suggest_dir": getattr(req, "suggest_dir", None),
                                 }),
                                 loop
                             )
@@ -1565,6 +2211,77 @@ function denyPermission() {
         async def get_chat_history(page: int = 1, per_page: int = 10):
             return await self._get_chat_history(page, per_page)
 
+        # ── 任务执行模式 + 任务监控 ──
+
+        @self.app.get("/api/execution-mode")
+        async def get_execution_mode():
+            if not self.brain_link:
+                return {"mode": "manual", "auto_steps_limit": 3}
+            return self.brain_link.get_execution_mode()
+
+        @self.app.post("/api/execution-mode")
+        async def post_execution_mode(request_data: dict):
+            mode = request_data.get("mode", "manual")
+            if not self.brain_link:
+                return {"success": False, "message": "LINK 未就绪"}
+            ok = self.brain_link.set_execution_mode(mode)
+            return {"success": ok, "mode": mode,
+                    "message": "已切换为自动执行" if ok and mode == "auto" else
+                               "已切换为手动执行" if ok else "无效模式"}
+
+        @self.app.get("/api/tasks")
+        async def get_tasks():
+            if not self.brain_link:
+                return {"tasks": []}
+            return {"tasks": self.brain_link.get_task_status_summary()}
+
+        # ── 用户问卷（构建个人记忆库） ──
+
+        @self.app.post("/api/onboarding")
+        async def post_onboarding(data: dict):
+            """提交问卷答案 → 写入用户记忆库"""
+            if not self.brain_link:
+                return {"success": False, "message": "大脑引擎未就绪"}
+            result = self.brain_link.import_onboarding(data or {})
+            saved = result.get("saved", 0)
+            return {
+                "success": result.get("success", False),
+                "saved": saved,
+                "message": f"✅ 已保存 {saved} 条关于你的信息，LINK 已记住你的偏好和习惯" if saved
+                           else "未保存任何信息（答案为空？）",
+            }
+
+        @self.app.get("/api/onboarding/status")
+        async def get_onboarding_status():
+            """检查是否已完成问卷（是否有 onboarding 标签的记忆）"""
+            if not self.brain_link or not self.brain_link.memory_engine:
+                return {"completed": False}
+            try:
+                all_mem = self.brain_link.memory_engine.store.get_all_memories()
+                has = any(
+                    "onboarding" in (m.metadata.get("tags") or [])
+                    for m in all_mem
+                )
+                return {"completed": has}
+            except Exception:
+                return {"completed": False}
+
+        # ── 完全初始化（清空记忆与设置） ──
+
+        @self.app.post("/api/reset")
+        async def post_reset():
+            """完全初始化 LINK：清空记忆、重置设置、清空提醒和授权。"""
+            result = await self._full_reset()
+            return result
+
+        @self.app.get("/api/reset/progress")
+        async def get_reset_progress():
+            """查询初始化进度（前端进度条轮询）"""
+            p = getattr(self, "_reset_progress", None)
+            if not p:
+                return {"percent": 0, "step": "未开始", "done": False, "error": None}
+            return p
+
         # ── Provider 设置 ──
 
         @self.app.get("/settings", response_class=HTMLResponse)
@@ -1633,13 +2350,19 @@ function denyPermission() {
 
         @self.app.get("/api/permission-settings")
         async def get_permission_settings():
-            from tools.permission_settings import PermissionSettings
+            try:
+                from src.tools.permission_settings import PermissionSettings
+            except ImportError:
+                from tools.permission_settings import PermissionSettings
             ps = PermissionSettings()
             return ps.list_settings()
 
         @self.app.post("/api/permission-settings")
         async def save_permission_settings(data: dict):
-            from tools.permission_settings import PermissionSettings
+            try:
+                from src.tools.permission_settings import PermissionSettings
+            except ImportError:
+                from tools.permission_settings import PermissionSettings
             ps = PermissionSettings()
             return ps.update_settings(data)
 
@@ -1874,6 +2597,145 @@ function denyPermission() {
             return {"success": True, "cleared_count": count}
         except Exception as e:
             return {"error": str(e)}
+
+    async def _full_reset(self) -> dict:
+        """完全初始化：清空记忆、重置设置/授权/提醒、清空知识库与归档。
+
+        分阶段执行并更新 self._reset_progress（供前端进度条轮询）。
+
+        返回统计信息。
+        """
+        import os as _os
+
+        report = {}
+
+        # 进度定义：阶段名 → (说明, 权重)
+        self._reset_progress = {"percent": 0, "step": "准备中", "done": False,
+                                "error": None}
+        steps = [
+            ("memory", "清空记忆库", 30),
+            ("archive", "清空记忆归档", 10),
+            ("provider", "重置模型设置", 15),
+            ("perm_settings", "重置授权规则", 10),
+            ("perm", "清空外部授权", 15),
+            ("reminder", "清空提醒", 10),
+            ("knowledge", "清空知识库", 10),
+        ]
+        done_weight = 0
+        max_weight = sum(w for _, _, w in steps)
+
+        def _report(percent, label):
+            self._reset_progress = {"percent": percent, "step": label,
+                                    "done": False, "error": None}
+
+        # 1. 清空记忆库（json 记忆 + 嵌入 + 图谱）
+        mem_cleared = 0
+        _report(int(done_weight / max_weight * 100), "清空记忆库...")
+        await asyncio.sleep(0.05)
+        try:
+            if self.brain_link and self.brain_link.memory_engine:
+                store = self.brain_link.memory_engine.store
+                mem_cleared = store.get_stats().get("total_memories", 0)
+                store.reset_memory()
+                self.brain_link._user_profile = ""
+                self.brain_link._history_summary = ""
+                self.brain_link._conversation_history = []
+                self.brain_link._project_context = ""
+                self.brain_link._project_scanned = False
+        except Exception as e:
+            report["memory_error"] = str(e)
+        report["memories"] = mem_cleared
+        done_weight += 30
+
+        # 2. 清空记忆归档目录
+        _report(int(done_weight / max_weight * 100), "清空记忆归档...")
+        await asyncio.sleep(0.05)
+        try:
+            archives = _os.path.join("data", "memory", "json", "archives")
+            if _os.path.isdir(archives):
+                for f in _os.listdir(archives):
+                    _os.remove(_os.path.join(archives, f))
+        except Exception as e:
+            report["archive_error"] = str(e)
+        done_weight += 10
+
+        # 3. 重置模型提供者设置为默认（删除文件 → 下次加载走默认，含清空 API key）
+        _report(int(done_weight / max_weight * 100), "重置模型设置...")
+        await asyncio.sleep(0.05)
+        try:
+            provider_file = _os.path.join("data", "settings", "provider.json")
+            if _os.path.exists(provider_file):
+                _os.remove(provider_file)
+        except Exception as e:
+            report["provider_error"] = str(e)
+        done_weight += 15
+
+        # 4. 重置授权默认规则
+        _report(int(done_weight / max_weight * 100), "重置授权规则...")
+        await asyncio.sleep(0.05)
+        try:
+            from src.tools.permission_settings import PermissionSettings
+            ps = PermissionSettings()
+            ps.update_settings({
+                "file_read": "ask",
+                "file_write": "ask",
+                "command_exec": "ask",
+            })
+        except Exception as e:
+            report["perm_settings_error"] = str(e)
+        done_weight += 10
+
+        # 5. 清空外部文件授权
+        _report(int(done_weight / max_weight * 100), "清空外部授权...")
+        await asyncio.sleep(0.05)
+        try:
+            try:
+                from src.tools.file_permissions import (
+                    get_permission_manager, reset_permission_manager,
+                )
+            except ImportError:
+                from tools.file_permissions import (
+                    get_permission_manager, reset_permission_manager,
+                )
+            reset_permission_manager()  # 丢弃内存中的旧授权
+            perm_file = _os.path.join("data", "permissions.json")
+            if _os.path.exists(perm_file):
+                _os.remove(perm_file)
+        except Exception as e:
+            report["perm_error"] = str(e)
+        done_weight += 15
+
+        # 6. 清空提醒数据库与通知日志
+        _report(int(done_weight / max_weight * 100), "清空提醒...")
+        await asyncio.sleep(0.05)
+        try:
+            for f in ["data/reminders/reminders.db",
+                      "data/reminders/notifications.log"]:
+                if _os.path.exists(f):
+                    _os.remove(f)
+        except Exception as e:
+            report["reminder_error"] = str(e)
+        done_weight += 10
+
+        # 7. 清空项目知识库
+        _report(int(done_weight / max_weight * 100), "清空知识库...")
+        await asyncio.sleep(0.05)
+        try:
+            kb = _os.path.join("data", "knowledge", "knowledge_base.json")
+            if _os.path.exists(kb):
+                _os.remove(kb)
+        except Exception as e:
+            report["knowledge_error"] = str(e)
+        done_weight += 10
+
+        _report(100, "初始化完成")
+        import logging as _lg
+        _lg.getLogger("link").warning(f"LINK 已完全初始化: {report}")
+        return {
+            "success": True,
+            "message": f"✅ LINK 已完全初始化，清除 {mem_cleared} 条记忆，设置已重置",
+            "cleared": report,
+        }
 
     async def _get_chat_history(self, page: int, per_page: int) -> dict:
         """分页获取历史会话（仅 conversation 类型记忆）"""
@@ -2831,6 +3693,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <h1>&#x2699;&#xFE0F; LINK 设置</h1>
   <button class="nav-item active" data-tab="api" onclick="switchTab('api')">&#x1F310; API 配置</button>
   <button class="nav-item" data-tab="perm" onclick="switchTab('perm')">&#x1F512; 授权规则</button>
+  <button class="nav-item" data-tab="init" onclick="switchTab('init')" style="color:#d93025">&#x1F5D1;&#xFE0F; 初始化</button>
   <div style="flex:1"></div>
   <a href="/" style="padding:12px 20px;color:#888;text-decoration:none;font-size:13px;border-top:1px solid #eee">&#x2190; 返回聊天</a>
 </div>
@@ -2929,6 +3792,59 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <button class="btn btn-primary" onclick="savePermSettings()">保存授权规则</button>
   </div>
 </div>
+
+<div id="tab-init" class="tab">
+  <div class="card" style="border:1px solid #f5c6cb;background:#fffafa">
+    <h2 style="color:#d93025">&#x1F5D1;&#xFE0F; 完全初始化 LINK</h2>
+    <p style="font-size:13px;color:#666;line-height:1.7;margin-bottom:8px">
+      将 LINK 恢复为出厂初始状态，<strong style="color:#d93025">所有记忆与设置都会被清除</strong>，不可恢复。
+    </p>
+    <div style="background:#f5f5f5;border-radius:8px;padding:12px 14px;font-size:13px;color:#444;line-height:1.8;margin-bottom:16px">
+      <div style="font-weight:600;color:#d93025;margin-bottom:6px">&#x26A0;&#xFE0F; 以下数据将被清除：</div>
+      <div>&#x1F5C2;&#xFE0F; 全部记忆（对话历史、用户画像、问卷信息、项目知识）</div>
+      <div>&#x1F4BE; 记忆归档文件</div>
+      <div>&#x2699;&#xFE0F; 模型设置（在线/离线模式、API 地址、密钥、模型）</div>
+      <div>&#x1F512; 授权规则（文件读取/写入/命令执行默认权限）</div>
+      <div>&#x1F513; 所有外部文件/目录授权</div>
+      <div>&#x23F0; 所有提醒（提醒数据库与通知日志）</div>
+      <div>&#x1F4D6; 项目知识库</div>
+    </div>
+    <div class="action-bar">
+      <button class="btn btn-primary" id="btn-reset" onclick="confirmReset()" style="background:#d93025">&#x1F5D1;&#xFE0F; 初始化 LINK</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 初始化确认弹窗 -->
+<div id="reset-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;z-index:1000">
+  <div style="background:#fff;border-radius:12px;padding:24px;width:min(480px,92vw);box-shadow:0 8px 40px rgba(0,0,0,.3)">
+    <div style="font-size:16px;font-weight:600;color:#d93025;margin-bottom:12px">&#x26A0;&#xFE0F; 确认完全初始化？</div>
+    <div style="font-size:13px;color:#555;line-height:1.8;margin-bottom:8px">此操作将永久清除以下内容，<strong style="color:#d93025">无法恢复</strong>：</div>
+    <div style="background:#fce8e8;border:1px solid #f5c6cb;border-radius:8px;padding:12px 14px;font-size:13px;color:#444;line-height:1.9;margin-bottom:16px">
+      <div>&#x2022; 全部记忆：对话历史、用户画像、问卷信息、项目知识</div>
+      <div>&#x2022; 记忆归档文件</div>
+      <div>&#x2022; 模型设置：在线/离线模式、API 地址、密钥、模型</div>
+      <div>&#x2022; 授权规则与所有外部文件/目录授权</div>
+      <div>&#x2022; 所有提醒与通知日志</div>
+      <div>&#x2022; 项目知识库</div>
+    </div>
+    <!-- 确认短语输入 -->
+    <div style="font-size:13px;color:#555;margin-bottom:6px">请输入 <strong style="color:#d93025">"确认初始化"</strong> 以启用按钮：</div>
+    <input id="reset-confirm-input" type="text" placeholder="输入：确认初始化" oninput="checkResetConfirm()"
+      style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:16px">
+    <!-- 进度条（初始化时显示） -->
+    <div id="reset-progress-wrap" style="display:none;margin-bottom:16px">
+      <div style="font-size:13px;color:#555;margin-bottom:6px"><span id="reset-progress-label">初始化中...</span> <span id="reset-progress-pct" style="color:#d93025;font-weight:600">0%</span></div>
+      <div style="background:#eee;border-radius:6px;height:10px;overflow:hidden">
+        <div id="reset-progress-bar" style="height:100%;width:0;background:linear-gradient(90deg,#d93025,#ea4335);transition:width .4s ease"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeResetModal()">取消</button>
+      <button class="btn btn-primary" id="btn-reset-confirm" onclick="doReset()" style="background:#d93025" disabled>确认初始化</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -3034,6 +3950,70 @@ async function testConnection() {
     return;
   }
   try { var r=await fetch("/api/settings/test",{method:"POST"});var d=await r.json();showStatus(d.message||"测试完成",d.success?"success":"error");}catch(e){showStatus("测试失败","error");}
+}
+// ── 完全初始化 ──
+var _RESET_PHRASE = '确认初始化';
+function confirmReset() {
+  document.getElementById('reset-modal').style.display = 'flex';
+  document.getElementById('reset-confirm-input').value = '';
+  checkResetConfirm();
+  // 重置进度条显示
+  document.getElementById('reset-progress-wrap').style.display = 'none';
+  document.getElementById('btn-reset-confirm').style.display = '';
+}
+function closeResetModal() {
+  document.getElementById('reset-modal').style.display = 'none';
+  document.getElementById('reset-confirm-input').value = '';
+}
+function checkResetConfirm() {
+  // 输入完全匹配指定句子才启用确认按钮
+  var v = document.getElementById('reset-confirm-input').value.trim();
+  var btn = document.getElementById('btn-reset-confirm');
+  btn.disabled = v !== _RESET_PHRASE;
+}
+async function doReset() {
+  var btn = document.getElementById('btn-reset-confirm');
+  btn.disabled = true; btn.textContent = '初始化中...';
+  // 显示进度条
+  var pw = document.getElementById('reset-progress-wrap');
+  pw.style.display = 'block';
+  btn.style.display = 'none';
+  // 启动进度轮询
+  var pollTimer = setInterval(async function() {
+    try {
+      var pr = await fetch('/api/reset/progress');
+      var pd = await pr.json();
+      if (pd && typeof pd.percent === 'number') {
+        document.getElementById('reset-progress-bar').style.width = pd.percent + '%';
+        document.getElementById('reset-progress-pct').textContent = pd.percent + '%';
+        document.getElementById('reset-progress-label').textContent = pd.step || '初始化中...';
+      }
+    } catch(e) {}
+  }, 300);
+  try {
+    var r = await fetch('/api/reset', {method: 'POST'});
+    var d = await r.json();
+    clearInterval(pollTimer);
+    if (d.success) {
+      // 进度条满
+      document.getElementById('reset-progress-bar').style.width = '100%';
+      document.getElementById('reset-progress-pct').textContent = '100%';
+      document.getElementById('reset-progress-label').textContent = '初始化完成';
+      showStatus(d.message, 'success');
+      setTimeout(function(){ location.href = '/settings'; }, 1500);
+    } else {
+      pw.style.display = 'none';
+      btn.style.display = '';
+      showStatus(d.message || '初始化失败', 'error');
+      btn.disabled = false; btn.textContent = '确认初始化';
+    }
+  } catch(e) {
+    clearInterval(pollTimer);
+    pw.style.display = 'none';
+    btn.style.display = '';
+    showStatus('初始化失败: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '确认初始化';
+  }
 }
 function updateBaseUrl() {
   var p=document.getElementById("provider").value;

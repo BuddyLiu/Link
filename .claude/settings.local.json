@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '{print \\(NF-1\\) \" \" $0}')",
+      "Bash(sort -t' ' -k1n)"
+    ]
+  }
+}

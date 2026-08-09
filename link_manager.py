@@ -26,7 +26,7 @@ import uvicorn
 # ── 配置 ──
 MANAGER_PORT = 8899
 LINK_PORT = 8011
-LINK_CMD = ["python3", "run_link.py", "web", "--port", str(LINK_PORT)]
+LINK_CMD = [sys.executable, "run_link.py", "web", "--port", str(LINK_PORT)]
 
 app = FastAPI(title="LINK 管理控制台")
 
@@ -53,8 +53,21 @@ async def _pipe_stdout(stream):
         r'-\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS)\s+/.*?"\s+\d+'
     )
     try:
+        loop = asyncio.get_event_loop()
         while True:
-            line = await asyncio.get_event_loop().run_in_executor(None, stream.readline)
+            # 带超时的读取：取消任务时 wait_for 能抛 CancelledError，
+            # 避免 readline 永久阻塞导致旧管道任务残留
+            try:
+                line = await asyncio.wait_for(
+                    loop.run_in_executor(None, stream.readline), timeout=2.0)
+            except asyncio.TimeoutError:
+                # 2 秒无输出：检查是否被取消，未被取消则继续等待
+                task = asyncio.current_task()
+                if task and task.cancelling():
+                    break
+                continue
+            except asyncio.CancelledError:
+                break
             if not line:
                 break
             line = line.rstrip("\n\r")
@@ -248,21 +261,34 @@ function beatHeartbeat() {
 }
 
 // ── WebSocket 日志 ──
-var ws = new WebSocket('ws://' + location.host + '/ws/logs');
-ws.onmessage = function(e) {
-  var d = JSON.parse(e.data);
-  if (d.type === 'heartbeat') {
-    // 心跳日志→触发呼吸灯，不写入日志区
-    beatHeartbeat();
-  } else {
-    addLog(d.t, d.m, d.type || '');
+// 统一连接函数：每次（重）连都必须绑定全部事件处理器，
+// 否则重连后的新连接收不到日志（必须刷新页面才行的根因）。
+function connectLogs() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return ws;
   }
-};
-ws.onclose = function() {
-  setTimeout(function(){
-    ws = new WebSocket('ws://' + location.host + '/ws/logs');
-  }, 2000);
-};
+  ws = new WebSocket('ws://' + location.host + '/ws/logs');
+  ws.onmessage = function(e) {
+    var d = JSON.parse(e.data);
+    if (d.type === 'heartbeat') {
+      // 心跳日志→触发呼吸灯，不写入日志区
+      beatHeartbeat();
+    } else {
+      addLog(d.t, d.m, d.type || '');
+    }
+  };
+  ws.onclose = function() {
+    // 重连前把实例标记为已关闭，避免与 connectLogs 竞态
+    ws = null;
+    setTimeout(connectLogs, 1500);
+  };
+  ws.onerror = function() {
+    try { ws.close(); } catch(e) {}
+  };
+  return ws;
+}
+var ws = null;
+connectLogs();
 
 function addLog(time, msg, type) {
   var div = document.createElement('div');
@@ -430,11 +456,14 @@ async def api_stop():
         _process = None
         _process_start_time = None
 
-        # 取消日志管道任务
+        # 取消日志管道任务（可能阻塞在 readline，交由 _pipe_stdout 的 EOF 退出）
         for t in _pipe_tasks[:]:
             if not t.done():
                 t.cancel()
         _pipe_tasks.clear()
+
+        # 清空日志缓冲：停止后旧日志不应在新启动时回放混入
+        _log_buffer.clear()
 
         for ws in _log_clients[:]:
             try:

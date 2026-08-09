@@ -14,9 +14,13 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 # 修复导入路径问题
-from tools import Tool, SystemTool, tool_manager
+try:
+    from src.tools import Tool, SystemTool, tool_manager
+    from src.tools.file_permissions import get_permission_manager
+except ImportError:
+    from tools import Tool, SystemTool, tool_manager
+    from tools.file_permissions import get_permission_manager
 from utils.logger import logger
-from tools.file_permissions import get_permission_manager
 
 
 class GetTimeTool(SystemTool):
@@ -605,7 +609,10 @@ class GlobFilesTool(SystemTool):
 
         search_path = Path(root).resolve()
         # 使用统一的权限管理器检查路径
-        from tools.file_permissions import get_permission_manager
+        try:
+            from src.tools.file_permissions import get_permission_manager
+        except ImportError:
+            from tools.file_permissions import get_permission_manager
         pm = get_permission_manager()
         allowed = pm.project_root()  # 项目根目录
         allowed_path = Path(allowed)
@@ -950,3 +957,12 @@ __all__ = [
     'SearchWebTool',
     'CalculateTool',
 ]
+
+
+# ── 模块别名注册（消除双模块单例分裂） ──
+import sys as _sys
+_THIS_NAME = __name__
+_OTHER_NAME = ("src.tools.system_tools" if _THIS_NAME == "tools.system_tools"
+               else "tools.system_tools")
+if _OTHER_NAME not in _sys.modules:
+    _sys.modules[_OTHER_NAME] = _sys.modules[_THIS_NAME]

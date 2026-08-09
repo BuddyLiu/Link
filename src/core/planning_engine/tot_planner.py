@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 import time
 import random
+import copy
 from enum import Enum
 import math
 
@@ -228,7 +229,7 @@ class ToTPlanner:
         
         node = ThoughtNode(
             id=node_id,
-            state=state.copy(),
+            state=copy.deepcopy(state) if isinstance(state, dict) else state,
             parent_id=parent_id,
             depth=depth,
             action=action,
@@ -263,32 +264,30 @@ class ToTPlanner:
             # 利用：选择价值最高的节点
             best_node = None
             best_score = float('-inf')
-            
+
             for node in expandable_nodes:
-                # 计算UCT分数
-                if node.value is None:
-                    continue
-                
                 # 获取访问次数（简化版）
                 visit_count = len(node.children_ids)
-                
-                # UCT公式：value + C * sqrt(log(N) / (n + 1))
-                # 其中C是探索常数，N是父节点的访问次数，n是当前节点的访问次数
+
+                # 父节点访问次数
                 parent_visit_count = 0
                 if node.parent_id and node.parent_id in self.nodes:
                     parent_node = self.nodes[node.parent_id]
                     parent_visit_count = len(parent_node.children_ids)
-                
-                if visit_count == 0:
-                    uct_score = float('inf')  # 未访问过的节点有无限探索价值
+
+                # UCT公式：value + C * sqrt(log(N) / (n + 1))
+                # 未访问节点（value 为 None 或 visit_count==0）给予有限的高分，避免退化回随机
+                if node.value is None or visit_count == 0:
+                    uct_score = 100.0 + self.exploration_factor * math.sqrt(
+                        math.log(parent_visit_count + 2))
                 else:
                     exploration_term = math.sqrt(math.log(parent_visit_count + 1) / (visit_count + 1))
                     uct_score = node.value + self.exploration_factor * exploration_term
-                
+
                 if uct_score > best_score:
                     best_score = uct_score
                     best_node = node
-            
+
             return best_node or random.choice(expandable_nodes)
     
     def _should_expand_node(self, node: ThoughtNode) -> bool:
@@ -392,27 +391,40 @@ class ToTPlanner:
         else:
             actions.extend(generic_actions)
         
-        # 根据当前状态过滤不合适的动作
+        # 根据当前状态过滤不合适的动作（不截断，由 _expand_node 的宽度控制决定）
         filtered_actions = []
         for action in actions:
             if self._is_action_applicable(state, action, task):
                 filtered_actions.append(action)
-        
-        return filtered_actions[:self.max_width]  # 限制返回数量
+
+        # 若动作池为空，补充一个通用动作，避免扩展僵死
+        if not filtered_actions:
+            filtered_actions = ["推进下一步"]
+
+        return filtered_actions
     
     def _select_best_actions(self, actions: List[str], count: int) -> List[str]:
         """选择最有希望的动作"""
-        # 简化实现：随机选择
         if len(actions) <= count:
             return actions
-        
-        # 可以根据动作的启发式价值进行选择
-        # 这里先随机选择
-        return random.sample(actions, count)
+
+        # 启发式优先级：靠近"完成/交付/确认"的动作优先保留（能更快到达目标状态）
+        completion_keywords = ("完成", "交付", "确认", "发送", "预订", "准备", "确定")
+        scored = []
+        for action in actions:
+            score = 0.0
+            for i, kw in enumerate(completion_keywords):
+                if kw in action:
+                    score += (len(completion_keywords) - i)
+            scored.append((score, action))
+
+        # 按启发式分数降序，保留前 count 个；分数相同时保留顺序
+        scored.sort(key=lambda x: -x[0])
+        return [a for _, a in scored[:count]]
     
     def _simulate_action(self, current_state: Dict[str, Any], action: str, task: ComplexTask) -> Dict[str, Any]:
-        """模拟执行动作，返回新状态"""
-        new_state = current_state.copy()
+        """模拟执行动作，返回新状态（深拷贝，避免子节点间共享可变状态）"""
+        new_state = copy.deepcopy(current_state)
         
         # 添加动作到历史
         if "action_history" not in new_state:
@@ -429,8 +441,10 @@ class ToTPlanner:
         elif "预订" in action or "准备" in action:
             new_state["resources_allocated"] = new_state.get("resources_allocated", 0) + 1
         elif "完成" in action or "交付" in action:
-            new_state["progress"] = 1.0  # 标记为完成
-        
+            # 完成/交付类动作：进度达到 1.0（需先经过足够步骤，否则节点不会展开到这里）
+            new_state["progress"] = 1.0
+            new_state["completed"] = True
+
         return new_state
     
     def _check_constraints(self, state: Dict[str, Any], constraints: List[TaskConstraint]) -> bool:
@@ -444,21 +458,27 @@ class ToTPlanner:
     
     def _is_goal_state(self, state: Dict[str, Any], task: ComplexTask) -> bool:
         """判断是否为目标状态"""
+        action_history = state.get("action_history", [])
+        step_count = len(action_history)
+
+        # 完成/交付动作只有在已执行过至少 1 个其他步骤时才视为终点
+        # （避免"第一动作即完成"的退化规划）
+        last_action = state.get("last_action", "")
+        is_finish_action = ("完成" in last_action or "交付" in last_action or "确认" in last_action)
+        if is_finish_action:
+            if step_count >= 2 or "completed" in state:
+                return True
+            return False
+
         # 检查进度
         progress = state.get("progress", 0.0)
-        if progress >= 0.9:  # 90%以上进度视为完成
+        if progress >= 0.9:
             return True
-        
-        # 检查动作历史长度
-        action_history = state.get("action_history", [])
-        if len(action_history) >= 6:  # 执行了足够多的动作
+
+        # 动作历史达到最大深度 → 视为完整路径
+        if step_count >= max(2, self.max_depth):
             return True
-        
-        # 检查是否有"完成"动作
-        last_action = state.get("last_action", "")
-        if "完成" in last_action or "交付" in last_action:
-            return True
-        
+
         return False
     
     def _is_action_applicable(self, state: Dict[str, Any], action: str, task: ComplexTask) -> bool:
@@ -467,12 +487,16 @@ class ToTPlanner:
         action_history = state.get("action_history", [])
         if action in action_history:
             return False  # 避免重复执行相同动作
-        
+
+        # 终局动作（完成/交付）需先经过至少一个中间步骤，避免一步到位
+        if ("完成" in action or "交付" in action) and len(action_history) < 1:
+            return False
+
         # 检查前置条件
         if "确认" in action and "发送" not in action_history:
             # 确认安排前需要先发送邀请
             return False
-        
+
         return True
     
     def _evaluate_node(self, node: ThoughtNode, task: ComplexTask) -> float:
@@ -548,50 +572,67 @@ class ToTPlanner:
         return min(max(confidence, 0.0), 1.0)
     
     def _backpropagate(self, node: ThoughtNode):
-        """回溯更新节点价值（简化实现）"""
-        # 在完整实现中，这里应该更新从节点到根节点的路径上的所有节点价值
-        # 简化实现：只更新当前节点
-        pass
+        """回溯更新从当前节点到根节点路径上所有祖先的价值。
+
+        父节点价值取子节点价值的加权平均（考虑子节点数量），
+        使搜索能逐步向高价值分支收敛。
+        """
+        current = node
+        visited = 0
+        while current is not None and current.parent_id is not None and visited < 100:
+            parent = self.nodes.get(current.parent_id)
+            if parent is None:
+                break
+            # 用子节点价值平均值更新父节点价值（仅当有子节点价值时）
+            valued_children = [c.value for cid in parent.children_ids
+                               for c in [self.nodes.get(cid)] if c is not None and c.value is not None]
+            if valued_children:
+                parent.value = sum(valued_children) / len(valued_children)
+            current = parent
+            visited += 1
     
     def _should_terminate(self) -> bool:
         """判断是否应该终止搜索"""
         # 检查迭代次数
         if self.current_iteration >= self.max_iterations:
             return True
-        
+
         # 检查时间限制（简化实现）
         if self.stats.get("search_time", 0) > 30.0:  # 30秒超时
             return True
-        
-        # 检查是否找到足够好的解决方案
-        if self.stats["best_value"] > 100.0:  # 找到高质量解决方案
+
+        # 检查是否找到足够好的解决方案（找到终止节点即视为收敛）
+        has_terminal = any(n.is_terminal() for n in self.nodes.values())
+        if has_terminal and self.stats["best_value"] > 50.0:
             return True
-        
+
         return False
     
     def _extract_best_plan(self) -> List[ThoughtNode]:
-        """提取最佳规划路径"""
-        # 找到价值最高的终止节点
-        best_terminal_node = None
-        best_value = float('-inf')
-        
+        """提取最佳规划路径。
+
+        优先选择终止节点；其次在非终止节点中选择"价值 × 深度"综合分最高的，
+        确保选出的是完整的多步路径而不是浅层单步节点。
+        """
+        best_node = None
+        best_score = float('-inf')
+
         for node in self.nodes.values():
-            if node.is_terminal() and node.value is not None and node.value > best_value:
-                best_value = node.value
-                best_terminal_node = node
-        
-        if best_terminal_node is None:
-            # 如果没有终止节点，选择价值最高的节点
-            for node in self.nodes.values():
-                if node.value is not None and node.value > best_value:
-                    best_value = node.value
-                    best_terminal_node = node
-        
-        if best_terminal_node is None:
+            if node.value is None or node.status == NodeStatus.PRUNED:
+                continue
+            # 终止节点优先（大权重），其次综合价值×深度
+            if node.is_terminal():
+                score = node.value + 1000.0 + node.depth * 10
+            else:
+                score = node.value + node.depth * 5
+            if score > best_score:
+                best_score = score
+                best_node = node
+
+        if best_node is None:
             return []
-        
-        # 获取到根节点的路径
-        return best_terminal_node.get_path_to_root(self.nodes)
+
+        return best_node.get_path_to_root(self.nodes)
     
     def _convert_nodes_to_steps(self, nodes: List[ThoughtNode], task: ComplexTask) -> List[TaskStep]:
         """将节点序列转换为任务步骤"""

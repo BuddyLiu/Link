@@ -6,6 +6,7 @@
 """
 import json
 import os
+import sys
 import logging
 from typing import Optional
 
@@ -65,3 +66,11 @@ class PermissionSettings:
         self._settings.update(new_settings)
         self._save()
         return self.list_settings()
+
+
+# ── 模块别名注册（消除双模块单例分裂） ──
+_THIS_NAME = __name__
+_OTHER_NAME = ("src.tools.permission_settings" if _THIS_NAME == "tools.permission_settings"
+               else "tools.permission_settings")
+if _OTHER_NAME not in sys.modules:
+    sys.modules[_OTHER_NAME] = sys.modules[_THIS_NAME]

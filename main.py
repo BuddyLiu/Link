@@ -54,6 +54,21 @@ class LINK:
         self.brain_engine = None
         self.active_tasks = {}
 
+        # 反思/学习组件（Reflexion）
+        self.reflection_engine = None
+        self.learning_module = None
+        self.knowledge_updater = None
+
+        # 记忆蒸馏器
+        self.memory_distiller = None
+
+        # 外部信息源集成
+        self.external = None
+
+        # 任务执行模式：manual（手动，逐步确认）/ auto（自动，连续执行）
+        self._execution_mode = "manual"
+        self._auto_steps_limit = 3  # 自动模式每轮最多连续执行的步骤数
+
         # 项目知识库
         self._project_context = ""
         self._project_scanned = False
@@ -67,7 +82,15 @@ class LINK:
         
         # 初始化组件
         self._initialize_components()
-        
+
+        # 重建用户画像（记忆可能已持久化，重启后需从 fact 记忆恢复）
+        try:
+            self._update_user_profile()
+            if self._user_profile:
+                self.logger.info(f"已恢复用户画像 ({len(self._user_profile)} 字)")
+        except Exception as e:
+            self.logger.debug(f"初始化重建画像失败: {e}")
+
         self.logger.info("LINK智能体初始化完成（第三阶段：复杂任务规划）")
     
     def _initialize_components(self):
@@ -86,6 +109,30 @@ class LINK:
         # 初始化大脑引擎
         self._initialize_brain_engine()
 
+        # 给记忆蒸馏器注入大脑引擎（用于 LLM 摘要）
+        try:
+            if self.memory_distiller is not None and self.brain_engine is not None:
+                self.memory_distiller.set_brain(self.brain_engine)
+        except Exception:
+            pass
+
+        # 初始化外部信息源集成（天气/新闻/日历）
+        try:
+            from src.external.integration import create_external_integration
+            ext_config = {}
+            try:
+                ext_cfg = self.settings.external.model_dump()
+                ext_config = dict(ext_cfg or {})
+            except Exception:
+                pass
+            self.external = create_external_integration(ext_config, logger=self.logger)
+        except Exception as e:
+            self.logger.debug(f"外部信息源初始化失败: {e}")
+            self.external = None
+
+        # 初始化反思/学习机制（Reflexion）
+        self._initialize_reflection()
+
         # 自动扫描项目知识（后台执行，不影响启动）
         try:
             self._scan_current_project()
@@ -99,7 +146,10 @@ class LINK:
         try:
             # 修复导入路径问题
             try:
-                from tools.system_tools import initialize_system_tools
+                try:
+                    from src.tools.system_tools import initialize_system_tools
+                except ImportError:
+                    from tools.system_tools import initialize_system_tools
             except ImportError:
                 from .tools.system_tools import initialize_system_tools
             
@@ -122,6 +172,15 @@ class LINK:
                 self.logger.info(f"记忆模块初始化完成，现有 {stats['total_memories']} 条记忆")
             else:
                 self.logger.warning("记忆模块初始化不完全，部分功能可能受限")
+
+            # 初始化记忆蒸馏器（大脑引擎就绪后注入）
+            try:
+                from src.memory.distillation import create_memory_distiller
+                self.memory_distiller = create_memory_distiller(
+                    memory_engine=self.memory_engine, brain=None, logger=self.logger)
+            except Exception as de:
+                self.logger.debug(f"记忆蒸馏器初始化延迟: {de}")
+                self.memory_distiller = None
         except Exception as e:
             self.logger.error(f"记忆模块初始化失败: {str(e)}")
             self.logger.warning("记忆功能将不可用，继续加载其他模块")
@@ -196,6 +255,89 @@ class LINK:
             # 设置大脑引擎为None以避免后续错误
             self.brain_engine = None
 
+    def _initialize_reflection(self):
+        """初始化反思/学习机制（Reflexion三件套）"""
+        try:
+            from src.reflection.reflection_engine import create_reflection_engine
+            from src.reflection.learning_module import create_learning_module
+            from src.reflection.knowledge_updater import create_knowledge_updater
+
+            # 从配置读取（兼容 settings.reflection）
+            refl_config = {}
+            try:
+                refl_config = self.settings.reflection.model_dump()
+            except Exception:
+                pass
+
+            # 触发器值名映射：settings 用 "failure"，engine 用 "task_failure"
+            _TRIGGER_MAP = {
+                "failure": "task_failure",
+                "task_failure": "task_failure",
+                "low_confidence": "low_confidence",
+                "user_feedback": "user_feedback",
+            }
+            triggers = refl_config.get("reflection_triggers", [])
+            refl_config["reflection_triggers"] = [
+                _TRIGGER_MAP.get(str(t), str(t)) for t in triggers
+            ]
+
+            self.learning_module = create_learning_module(refl_config)
+            self.knowledge_updater = create_knowledge_updater(refl_config)
+            self.reflection_engine = create_reflection_engine(refl_config)
+            self.reflection_engine.set_components(
+                learning_module=self.learning_module,
+                knowledge_updater=self.knowledge_updater,
+            )
+            self.reflection_engine.set_logger(self.logger)
+
+            self.logger.info(f"反思/学习机制初始化完成: 触发器={refl_config.get('reflection_triggers')}")
+        except Exception as e:
+            self.logger.error(f"反思/学习机制初始化失败: {e}")
+            self.reflection_engine = None
+            self.learning_module = None
+            self.knowledge_updater = None
+
+    def _trigger_reflection(self, task_id: str, task_result: dict,
+                            trigger: str = "task_failure",
+                            context: dict = None) -> Optional[dict]:
+        """触发一次反思，返回 ReflectionResult 的关键字段 dict，无反思返回 None。
+
+        Args:
+            task_id: 任务标识（可用输入文本哈希）
+            task_result: 任务结果 dict（status/confidence/error 等）
+            trigger: 触发器名（task_failure / low_confidence / user_feedback）
+            context: 附加上下文（输入文本、工具名等）
+        """
+        if not self.reflection_engine:
+            return None
+        try:
+            from src.reflection.reflection_engine import ReflectionTrigger
+            trig_map = {
+                "task_failure": ReflectionTrigger.TASK_FAILURE,
+                "low_confidence": ReflectionTrigger.LOW_CONFIDENCE,
+                "user_feedback": ReflectionTrigger.USER_FEEDBACK,
+            }
+            trig = trig_map.get(trigger)
+            if not trig:
+                return None
+            result = self.reflection_engine.reflect(
+                task_id, task_result, trig, context=context or {})
+            if result is None:
+                return None
+            summary = {
+                "id": getattr(result, "id", ""),
+                "trigger": getattr(result.trigger, "value", trigger),
+                "analysis": getattr(result, "analysis", ""),
+                "root_causes": getattr(result, "root_causes", []),
+                "suggestions": getattr(result, "suggestions", []),
+            }
+            self.logger.info(
+                f"反思完成: {summary['trigger']} → {summary['analysis'][:80]}")
+            return summary
+        except Exception as e:
+            self.logger.error(f"反思触发失败: {e}")
+            return None
+
     def _reconfigure_brain(self, new_config: dict):
         """运行时切换模型提供者"""
         self.logger.info(f"重新配置大脑引擎: provider={new_config.get('model_provider')}")
@@ -232,6 +374,16 @@ class LINK:
                       "what time", "date today", "当前时间"]
         if any(w in t for w in time_words):
             return {"type": "simple_query", "sub_intent": "time", "confidence": 0.9}
+
+        # 天气 / 新闻查询
+        weather_words = ["天气", "气温", "多少度", "下雨", "天晴"]
+        if any(w in t for w in weather_words):
+            return {"type": "external", "sub_intent": "weather", "confidence": 0.9}
+        news_words = ["新闻", "头条", "时事", "热点新闻", "最新消息"]
+        if any(w in t for w in news_words):
+            return {"type": "external", "sub_intent": "news", "confidence": 0.9}
+        if t in ("日程", "我的日程", "日历", "查看日历", "日程安排"):
+            return {"type": "external", "sub_intent": "calendar", "confidence": 0.9}
 
         reminder_words = ["提醒", "设置提醒", "提醒我", "定时", "到时提醒",
                           "提醒一下", "记得提醒"]
@@ -331,44 +483,192 @@ class LINK:
             content = re.sub(r'每天\s*\d{1,2}(?::\d{2})?\s*点?', '', text).strip()
             return content, {"datetime": nxt.isoformat(), "time": f"{hour:02d}:{minute:02d}"}, "daily"
 
-        # 明天 HH 点（支持 下午/晚上）
-        m = re.search(r'明天\s*(?:上午|下午|晚上|中午)?\s*(\d{1,2})(?::(\d{2}))?\s*点?', text)
+        # 明天 HH 点（支持 下午/晚上/点半）
+        m = re.search(r'明天\s*(?:上午|下午|晚上|中午)?\s*(\d{1,2})(?::(\d{2}))?\s*点(?:半)?', text)
         if m:
             hour = int(m.group(1)); minute = int(m.group(2) or 0)
+            if m.group(0).endswith("半"):  # "9点半" → 9:30
+                minute = 30
             # 下午/晚上 → +12
             if re.search(r'明天\s*(?:下午|晚上)', text) and hour < 12:
                 hour += 12
             nxt = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-            content = re.sub(r'明天\s*(?:上午|下午|晚上|中午)?\s*\d{1,2}(?::\d{2})?\s*点?', '', text).strip()
+            content = re.sub(r'明天\s*(?:上午|下午|晚上|中午)?\s*\d{1,2}(?::\d{2})?\s*点(?:半)?', '', text).strip()
             return content, {"datetime": nxt.isoformat()}, "once"
 
-        # N 分钟后 / N 小时后 / N 小时后
-        m = re.search(r'(\d+)\s*(分|分钟|小时|天|周)(?:钟)?后', text)
+        # N 秒钟后 / N 分钟后 / N 小时后 / N 天后 / N 周后
+        m = re.search(r'(\d+)\s*(秒|分|分钟|小时|天|周)(?:钟)?后', text)
         if m:
             num = int(m.group(1)); unit = m.group(2)
-            if "分" in unit: delta = timedelta(minutes=num)
+            if "秒" in unit: delta = timedelta(seconds=num)
+            elif "分" in unit: delta = timedelta(minutes=num)
             elif "小时" in unit: delta = timedelta(hours=num)
             elif "天" in unit: delta = timedelta(days=num)
             elif "周" in unit: delta = timedelta(weeks=num)
-            else: delta = timedelta(minutes=num)
+            else: delta = timedelta(seconds=num)
             nxt = now + delta
-            content = re.sub(r'\d+\s*(?:分|分钟|小时|天|周)(?:钟)?后', '', text).strip()
+            content = re.sub(r'\d+\s*(?:秒|分|分钟|小时|天|周)(?:钟)?后', '', text).strip()
             return content, {"datetime": nxt.isoformat()}, "once"
 
-        # 今天/现在 HH 点（含下午/晚上）
-        m = re.search(r'(?:下午|晚上|上午|中午)?\s*(\d{1,2})(?::(\d{2}))?\s*点?', text)
+        # 今天/现在 HH点 / HH:MM / HH点半（含下午/晚上）— 必须有"点"才视为时间
+        m = re.search(r'(?:下午|晚上|上午|中午)?\s*(\d{1,2})(?::(\d{2}))?\s*点(?:半)?', text)
         if m:
             hour = int(m.group(1)); minute = int(m.group(2) or 0)
+            if m.group(0).endswith("半"):  # "8点半" → 8:30
+                minute = 30
             if re.search(r'(?:下午|晚上)', text) and hour < 12:
                 hour += 12
             nxt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if nxt <= now:
                 nxt += timedelta(days=1)
-            content = re.sub(r'(?:下午|晚上|上午|中午)?\s*\d{1,2}(?::\d{2})?\s*点?', '', text).strip()
+            content = re.sub(r'(?:下午|晚上|上午|中午)?\s*\d{1,2}(?::\d{2})?\s*点(?:半)?', '', text).strip()
             return content, {"datetime": nxt.isoformat()}, "once"
 
         # 无法解析 → 默认 1 小时后
         return text, {"datetime": (now + timedelta(hours=1)).isoformat()}, "once"
+
+    def _refine_reminder_content(self, raw: str) -> str:
+        """用 LLM 理解用户原意，提炼出简洁的提醒内容。
+
+        例: "提醒我关空调" → "关空调"; "提醒我晚上8点吃药" → "吃药"
+        失败（无模型/超时/异常）时返回空字符串，由调用方回退到规则剥离结果。
+        """
+        if not raw:
+            return ""
+        engine = getattr(self, "brain_engine", None)
+        if not engine:
+            return ""
+        try:
+            sys_prompt = (
+                "你是一个智能助手，负责从用户的提醒请求中提炼出简洁明确的提醒内容。\n"
+                "规则：\n"
+                "1. 去掉所有时间、日期、频率词（如：5秒钟后、明天9点、每天、下午、之后、到时）\n"
+                "2. 去掉祈使词（如：提醒、记得、帮我、请、帮我提醒）\n"
+                "3. 只保留用户实际要提醒自己做的那件事，用最简短的动宾短语表达\n"
+                "4. 直接输出提炼结果，不要解释，不要加引号或标点\n"
+                f"用户请求: {raw}\n"
+                "提醒内容:"
+            )
+            result = engine.simple_query(sys_prompt, system_prompt="你是LINK智能体的提醒内容提炼器。")
+            refined = (result or "").strip().strip('"').strip("'").strip()
+            # 防御：提炼结果不应再残留明显的时间/祈使词，残留则视为无效回退
+            import re as _re
+            if not refined or _re.search(r'(分钟|小时|秒|点|今天|明天|每天|提醒|记得|帮我|请)', refined):
+                return ""
+            return refined[:60]
+        except Exception:
+            return ""
+
+    def _parse_reminder_condition(self, text: str):
+        """解析条件触发提醒，返回 (content, trigger_config, repeat_pattern) 或 None。
+
+        支持格式:
+          - 当CPU超过80%时提醒我 → simple: key=cpu_usage operator=greater_than value=80
+          - 内存使用率大于90%提醒我 → simple: key=memory_usage operator=greater_than value=90
+          - 当磁盘不足时提醒我 → simple: key=disk_usage operator=is_false (disk_usage 高视为磁盘满)
+          - 当网络断开时提醒我 → simple: key=network_status operator=equals value=offline
+          - 当网络恢复时提醒我 → simple: key=network_status operator=equals value=online
+          - 5分钟后提醒我 → None（时间提醒，由 _parse_reminder_time 处理）
+        """
+        import re
+        # 条件关键词表：中文/英文 → trigger_checker key
+        CONDITION_KEYS = [
+            ("cpu使用率", "cpu_usage"), ("cpu利用率", "cpu_usage"), ("cpu占用", "cpu_usage"),
+            ("内存使用率", "memory_usage"), ("内存占用", "memory_usage"),
+            ("磁盘使用率", "disk_usage"), ("磁盘占用", "disk_usage"),
+            ("电池", "battery_level"), ("电量", "battery_level"),
+            ("工作时间段", "is_working_hours"), ("工作时间", "is_working_hours"),
+            ("网络", "network_status"), ("网速", "network_status"),
+            ("cpu", "cpu_usage"), ("cpu", "cpu_usage"),
+            ("内存", "memory_usage"), ("磁盘", "disk_usage"), ("时间", "system_time"),
+        ]
+        # 操作符映射：中文 → trigger_checker operator
+        OP_MAP = [
+            ("超过", "greater_than"), ("大于", "greater_than"), ("高于", "greater_than"), ("超出", "greater_than"),
+            ("达到", "greater_than_or_equal"), ("不少于", "greater_than_or_equal"),
+            ("低于", "less_than"), ("小于", "less_than"), ("不到", "less_than"), ("不超过", "less_than_or_equal"),
+            ("不足", "less_than"), ("断开", "equals"), ("恢复", "equals"),
+            ("等于", "equals"),
+        ]
+
+        # 判断是否条件触发：必须出现"当...时/当...就/XX时提醒" 或"XX使用率/占用>数值"
+        is_cond = bool(
+            re.search(r'(?:当|等到).{0,20}?(?:时|就|提醒)', text, re.I) or
+            re.search(r'(?:使用率|占用|电量|网速|状态|断开|恢复).{0,8}(?:超过|大于|高于|低于|小于|达到|等于|不足|断开|恢复|满)', text)
+        )
+        if not is_cond:
+            return None
+
+        # 找条件key（大小写不敏感）
+        matched_key = None
+        for cn, key in CONDITION_KEYS:
+            if cn.lower() in text.lower():
+                matched_key = key
+                break
+        if not matched_key:
+            return None
+
+        # 网络断开/恢复 → 语义化值
+        if matched_key == "network_status":
+            lower_text = text.lower()
+            val = "offline" if ("断开" in text or "掉线" in text or "断网" in text) else "online"
+            cond = {
+                "condition_type": "simple",
+                "key": "network_status",
+                "operator": "equals",
+                "value": val,
+            }
+            # 内容：保留"网络恢复/断开提醒"的语义
+            content = "网络断开" if val == "offline" else "网络恢复"
+            return content, {"condition": cond, "condition_type": "simple"}, "once"
+
+        # 找操作符
+        op = None
+        for cn, op_name in OP_MAP:
+            if cn in text:
+                op = op_name
+                break
+        if not op:
+            op = "greater_than"  # 默认
+
+        # 找数值（百分比或具体值）
+        num = None
+        m = re.search(r'(\d+(?:\.\d+)?)\s*%?', text)
+        if m and matched_key in ("cpu_usage", "memory_usage", "disk_usage", "battery_level"):
+            num = float(m.group(1))
+
+        # 无明确数值的语义化处理
+        if num is None:
+            if matched_key == "disk_usage" and ("不足" in text or "满" in text):
+                # "磁盘不足" → 磁盘使用率 >= 90（视为满）
+                cond = {"condition_type": "simple", "key": "disk_usage", "operator": "greater_than_or_equal", "value": 90.0}
+                return "磁盘空间不足", {"condition": cond, "condition_type": "simple"}, "once"
+            if matched_key == "battery_level" and ("低" in text or "不足" in text):
+                cond = {"condition_type": "simple", "key": "battery_level", "operator": "less_than", "value": 20.0}
+                return "电量低", {"condition": cond, "condition_type": "simple"}, "once"
+            # 兜底：布尔条件
+            cond = {"condition_type": "simple", "key": matched_key, "operator": "is_true", "value": True}
+            content = f"{matched_key}条件达成"
+            return content, {"condition": cond, "condition_type": "simple"}, "once"
+
+        # 有数值 → 标准比较条件
+        cond = {"condition_type": "simple", "key": matched_key, "operator": op, "value": num}
+
+        # 清理内容：去掉条件描述，只留要提醒的事
+        import re as _re
+        content = text
+        content = _re.sub(r'^(当|等到|我的)?', '', content)
+        content = _re.sub(r'(时提醒我|的时候提醒我|的时候就提醒我|时提醒|就提醒我|提醒我|提醒|帮我|请)', '', content).strip()
+        for cn, key in CONDITION_KEYS:
+            if cn.lower() in content.lower():
+                content = _re.sub(re.escape(cn), '', content, flags=re.I)
+        content = _re.sub(r'\d+(?:\.\d+)?\s*%?', '', content)
+        for cn, _op in OP_MAP:
+            content = content.replace(cn, "")
+        content = content.strip("，,。 ")
+        if not content:
+            content = f"{matched_key}条件达成"
+        return content, {"condition": cond, "condition_type": "simple"}, "once"
 
     def _create_reminder(self, text: str) -> str:
         """创建提醒，返回确认信息"""
@@ -378,11 +678,22 @@ class LINK:
 
         try:
             from src.reminders.reminder_manager import ReminderTrigger
-            content, trigger_config, repeat = self._parse_reminder_time(text)
 
-            # 去掉内容前的"提醒/提醒我/设置提醒"等前缀
+            # 先尝试解析为条件触发
+            cond_result = self._parse_reminder_condition(text)
+            if cond_result:
+                content, trigger_config, repeat = cond_result
+                trigger_type = ReminderTrigger.CONDITION
+            else:
+                content, trigger_config, repeat = self._parse_reminder_time(text)
+                trigger_type = ReminderTrigger.TIME
+
+            # 去掉内容前的"提醒我/设置提醒/提醒"等前缀（长前缀优先，避免"提醒我"被"提醒"截断）
             import re as _re
-            content = _re.sub(r'^(提醒|设置提醒|提醒我|提醒一下|记得提醒|定时)\s*', '', content or "").strip()
+            content = _re.sub(r'^(提醒我|设置提醒|提醒一下|记得提醒|定时|提醒)\s*', '', content or "").strip()
+
+            # 用 LLM 理解提炼简洁的提醒内容（失败自动回退到上面的剥离结果）
+            content = self._refine_reminder_content(content) or content
 
             if not content:
                 return "❌ 请说明提醒内容和时间，例如：\"提醒 每天9点 喝水\""
@@ -392,11 +703,18 @@ class LINK:
                 user_id="default",
                 title=title,
                 content=content,
-                trigger_type=ReminderTrigger.TIME,
+                trigger_type=trigger_type,
                 trigger_config=trigger_config,
                 repeat_pattern=repeat,
             )
             if reminder:
+                if trigger_type == ReminderTrigger.CONDITION:
+                    cond = trigger_config.get("condition", {})
+                    key = cond.get("key", "")
+                    op = cond.get("operator", "")
+                    val = cond.get("value", "")
+                    cond_str = f"{key} {op} {val}"
+                    return f"✅ 已设置条件提醒：{content}\n🔔 触发条件：{cond_str}"
                 nxt = trigger_config.get("datetime", "")
                 if nxt:
                     try:
@@ -481,6 +799,30 @@ class LINK:
                 self._save_to_memory(input_text, reply, "conversation")
                 return reply
 
+        # 外部信息查询（天气/新闻/日历）→ 本地查询，不调 LLM
+        if intent["type"] == "external":
+            sub = intent.get("sub_intent", "")
+            if sub == "weather":
+                import re as _r
+                _m = _r.search(r'(.{1,10}?)的?天气', input_text)
+                city = _m.group(1).strip() if _m else None
+                if city and city in ("今天", "现在", "明天"):
+                    city = None
+                reply = self._query_external("weather", {"city": city})
+            elif sub == "news":
+                import re as _r
+                _m = _r.search(r'(?:看|查)?(.{1,10}?)新闻', input_text)
+                topic = _m.group(1).strip() if _m else None
+                if topic in ("看", "查", "热点"):
+                    topic = None
+                reply = self._query_external("news", {"topic": topic})
+            else:
+                reply = self._query_external("calendar", {"days": 7})
+            self._conversation_history.append({"role": "user", "content": input_text})
+            self._conversation_history.append({"role": "assistant", "content": reply})
+            self._save_to_memory(input_text, reply, "conversation")
+            return reply
+
         # 提醒意图 → 创建提醒（本地处理，不调 LLM）
         if intent["type"] == "reminder":
             reply = self._create_reminder(input_text)
@@ -549,12 +891,50 @@ class LINK:
         # 提取并保存关键事实（记忆记录器 Phase A）
         self._extract_facts_from_conversation(input_text, response)
 
+        # 反思：检测低置信/失败迹象，触发反思与学习（自动，不影响回复）
+        self._check_and_reflect(input_text, response, is_online=is_online)
+
         # 主动学习（每 5 轮整理一次记忆）
         if len(self._conversation_history) % 10 == 0:
             self._proactive_maintenance()
 
         self.logger.info(f"生成响应: {response[:50]}...")
         return response
+
+    def _check_and_reflect(self, input_text: str, response: str, is_online: bool = False):
+        """自动检测本次交互是否需要反思（低置信/失败迹象），触发反思学习。"""
+        if not self.reflection_engine:
+            return
+        try:
+            import hashlib
+            task_id = "input_" + hashlib.md5(input_text.encode("utf-8")).hexdigest()[:12]
+            failed_marker = False
+            low_conf = False
+            low_resp = response and len(response.strip()) < 20
+
+            # 失败迹象：错误/失败/无法/拒绝/查询失败等
+            import re as _re
+            if _re.search(r'(无法|失败|错误|出错|拒绝|查询失败|找不到|不可用|抱歉.{0,6}不能)', response or ""):
+                failed_marker = True
+
+            task_result = {
+                "status": "failed" if failed_marker else "success",
+                "confidence": 0.4 if low_conf else 0.9,
+                "response_length": len(response or ""),
+                "input": input_text[:200],
+            }
+            context = {
+                "is_online": is_online,
+                "response": response[:200],
+            }
+            if failed_marker:
+                self._trigger_reflection(task_id, task_result,
+                                         trigger="task_failure", context=context)
+            elif low_resp and low_conf:
+                self._trigger_reflection(task_id, task_result,
+                                         trigger="low_confidence", context=context)
+        except Exception as e:
+            self.logger.debug(f"自动反思跳过: {e}")
     
     def _process_action_response(self, response: str, original_input: str) -> str:
         """处理 LLM 响应中的 [[ACTION:xxx]] 标记，处理失败则返回原文"""
@@ -727,11 +1107,17 @@ class LINK:
             path = params.get("path", "")
             mode = params.get("mode", "read")
             perm_type = params.get("type", "temporary")
+            as_dir = params.get("as_dir", False)
             if not path:
                 return "[[ERROR: 缺少 path 参数]]"
             from src.tools.file_permissions import get_permission_manager
             pm = get_permission_manager()
-            result = pm.authorize(path, mode, perm_type)
+            if as_dir:
+                result = pm.grant_dir(path, mode="read_write",
+                                      perm_type=perm_type,
+                                      duration="permanent" if perm_type == "permanent" else "1h")
+            else:
+                result = pm.authorize(path, mode, perm_type)
             return result["message"]
 
         elif action == "FILE_AUTH_LIST":
@@ -991,21 +1377,134 @@ class LINK:
                     continue
                 if len(m.content) < 6:
                     continue
+                # 排除项目知识（带 project_knowledge 标签或明显是项目技术信息）
+                tags = m.metadata.get("tags") or []
+                if "project_knowledge" in tags:
+                    continue
+                content_lower = m.content.lower()
+                if any(k in content_lower for k in (
+                        "入口文件", "项目描述", "根目录", "测试框架",
+                        "编码风格", "web框架", "cli方式", "忽略规则",
+                        "pytest", "fastapi", "argparse", "asyncio",
+                        "main.py", "readme")):
+                    continue
                 user_facts.append(m)
 
-            # 去重
-            seen = set()
-            lines = []
+            # 按类别分组展示（名称/职业/偏好/联系方式/其他）
+            import re as _re
+            categories = {
+                "称呼": lambda c: _re.search(r'用户叫|名字叫|名为', c),
+                "职业": lambda c: any(k in c for k in ("职业", "工程师", "开发", "设计师", "产品经理", "经理", "架构师", "运营", "市场", "销售")),
+                "偏好": lambda c: any(k in c for k in ("偏好", "喜欢", "爱好", "不爱", "讨厌")),
+                "联系方式": lambda c: "手机号" in c or _re.search(r'1[3-9]\d{9}', c),
+            }
+            grouped = {k: [] for k in categories}
+            other = []
             for m in sorted(user_facts, key=lambda x: x.importance, reverse=True):
-                key = m.content[:20]
-                if key not in seen:
-                    seen.add(key)
-                    lines.append(f"- {m.content[:120]}")
-            self._user_profile = "\n".join(lines) if lines else ""
-            if lines:
-                self.logger.info(f"用户画像已更新: {len(lines)} 条")
+                content = m.content[:120]
+                placed = False
+                for cat, matcher in categories.items():
+                    try:
+                        if matcher(content):
+                            grouped[cat].append(content)
+                            placed = True
+                            break
+                    except Exception:
+                        pass
+                if not placed:
+                    other.append(content)
+
+            # 去重（同类别内容前20字相同只保留一条）
+            def dedup(items):
+                seen = set()
+                out = []
+                for it in items:
+                    key = _re.sub(r'\s+', '', it)[:20]
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(it)
+                return out
+
+            parts = []
+            for cat, items in grouped.items():
+                items = dedup(items)
+                if items:
+                    parts.append(f"【{cat}】\n" + "\n".join(f"- {it}" for it in items[:6]))
+            other = dedup(other)
+            if other:
+                parts.append("【其他信息】\n" + "\n".join(f"- {it}" for it in other[:8]))
+
+            self._user_profile = "\n\n".join(parts) if parts else ""
+            if parts:
+                self.logger.info(f"用户画像已更新: {len(parts)} 个分类")
         except Exception as e:
             self.logger.debug(f"用户画像更新失败: {e}")
+
+    def import_onboarding(self, answers: Dict[str, Any]) -> dict:
+        """导入问卷答案，构建用户记忆库。
+
+        将问卷各题答案写入 fact 记忆（供画像分类展示 + 语义检索），
+        格式对齐 _update_user_profile 的分类规则（称呼/职业/偏好/联系方式）。
+
+        Args:
+            answers: {"category": "value", ...} 问卷答案
+
+        Returns:
+            {"success": bool, "saved": int, "profile": str}
+        """
+        if not self.memory_engine:
+            return {"success": False, "saved": 0, "message": "记忆引擎未就绪"}
+        saved = 0
+        facts = []
+
+        # 各分类的问题答案 → 规范化事实文本
+        cat_rules = [
+            ("称呼", "名字", "name", "用户叫"),
+            ("称呼", "称呼", "nickname", "用户希望被称呼为"),
+            ("职业", "职业", "job", "用户职业是"),
+            ("联系方式", "联系方式", "contact", "用户联系方式是"),
+            ("偏好", "偏好", "likes", "用户偏好"),
+            ("偏好", "不喜欢", "dislikes", "用户不喜欢"),
+            ("其他", "习惯", "habits", "用户习惯"),
+            ("其他", "目标", "goals", "用户目标是"),
+            ("其他", "背景", "background", "用户背景是"),
+        ]
+        for cat, label, key, prefix in cat_rules:
+            val = str(answers.get(key, "") or "").strip()
+            if not val:
+                continue
+            if key == "likes":
+                text = f"用户偏好: {val}"
+            elif key == "dislikes":
+                text = f"用户不喜欢: {val}"
+            elif key == "contact":
+                # 带"手机号"标记便于 _update_user_profile 归入【联系方式】分类
+                text = f"用户联系方式/手机号: {val}"
+            else:
+                text = f"{prefix}: {val}"
+            facts.append((text, 0.85 if cat in ("称呼", "职业", "联系方式") else 0.7))
+
+        # 自由补充项
+        extra = str(answers.get("extra", "") or "").strip()
+        if extra:
+            facts.append((f"用户补充信息: {extra[:300]}", 0.7))
+
+        for text, imp in facts:
+            try:
+                self.memory_engine.add_fact_memory(text, importance=imp,
+                                                   tags=["onboarding"])
+                saved += 1
+            except Exception as e:
+                self.logger.debug(f"问卷记忆写入失败: {e}")
+
+        self._update_user_profile()
+        if saved:
+            self.logger.info(f"问卷导入: 已写入 {saved} 条用户记忆")
+        return {
+            "success": saved > 0,
+            "saved": saved,
+            "profile": getattr(self, "_user_profile", ""),
+        }
 
     # ── 项目知识库 ─────────────────────────────────────
 
@@ -1063,11 +1562,25 @@ class LINK:
             self.logger.debug(f"文件知识提取失败: {e}")
 
     def _proactive_maintenance(self):
-        """主动维护：整理记忆、更新画像"""
+        """主动维护：整理记忆、更新画像、蒸馏压缩"""
         try:
             self._update_user_profile()
-            if self.memory_engine and len(self._conversation_history) > 200:
-                self.logger.info("主动维护完成")
+
+            # 记忆蒸馏：偏好聚合 + 过期对话摘要
+            distiller = getattr(self, "memory_distiller", None)
+            if distiller is not None and self.memory_engine:
+                try:
+                    if self.memory_distiller._brain is None and self.brain_engine:
+                        self.memory_distiller.set_brain(self.brain_engine)
+                    self.memory_distiller.aggregate_preferences()
+                    # 对话历史足够多时才对旧对话做摘要（保留最近 20 条）
+                    hist_len = len(self._conversation_history)
+                    if hist_len >= 60:
+                        self.memory_distiller.distill_conversations(
+                            max_items=30, min_age_days=1, keep_recent=20)
+                except Exception as de:
+                    self.logger.debug(f"记忆蒸馏跳过: {de}")
+            self.logger.info("主动维护完成")
         except Exception:
             pass
 
@@ -1101,7 +1614,10 @@ class LINK:
 
         # 1b. 已授权的外部路径（始终包含）
         try:
-            from tools.file_permissions import get_permission_manager
+            try:
+                from src.tools.file_permissions import get_permission_manager
+            except ImportError:
+                from tools.file_permissions import get_permission_manager
             pm = get_permission_manager()
             perms = pm.list_permissions()
             ext_perms = [p for p in perms if not p.get("under_project")]
@@ -1294,6 +1810,43 @@ class LINK:
         
         return response
     
+    def set_execution_mode(self, mode: str):
+        """设置任务执行模式：manual（手动）/ auto（自动）"""
+        if mode in ("manual", "auto"):
+            self._execution_mode = mode
+            self.logger.info(f"任务执行模式切换为: {'自动' if mode == 'auto' else '手动'}")
+            return True
+        return False
+
+    def get_execution_mode(self) -> dict:
+        """获取当前执行模式信息"""
+        return {
+            "mode": getattr(self, "_execution_mode", "manual"),
+            "auto_steps_limit": getattr(self, "_auto_steps_limit", 3),
+        }
+
+    def get_task_status_summary(self) -> list:
+        """获取所有任务的状态摘要（供 web 监控 API 使用）"""
+        if not self.planning_engine:
+            return []
+        try:
+            tasks = self.planning_engine.list_active_tasks()
+        except Exception:
+            tasks = []
+        out = []
+        for t in (tasks or []):
+            steps = getattr(t, "steps", []) or []
+            done = sum(1 for s in steps if s.status == "completed")
+            out.append({
+                "id": getattr(t, "id", ""),
+                "goal": getattr(t, "goal", "")[:60],
+                "status": getattr(t, "status", ""),
+                "total_steps": len(steps),
+                "completed_steps": done,
+                "progress": round(done / len(steps) * 100, 1) if steps else 0,
+            })
+        return out
+
     def _parse_task_request(self, input_text: str) -> Dict[str, Any]:
         """解析任务请求"""
         # 简化解析：提取关键信息
@@ -1522,14 +2075,16 @@ class LINK:
         if not pending_steps:
             return f"任务'{task.goal}'没有待处理的步骤。"
         
-        # 检查是否要自动执行所有步骤
-        auto_execute_all = False
-        if "自动" in input_text or "全部" in input_text or "所有" in input_text:
+        # 检查是否要自动执行所有步骤（优先用持久化执行模式，其次关键词）
+        mode = getattr(self, "_execution_mode", "manual")
+        auto_execute_all = mode == "auto"
+        if not auto_execute_all and ("自动" in input_text or "全部" in input_text or "所有" in input_text):
             auto_execute_all = True
-        
+
         response = ""
         steps_executed = 0
-        max_steps_to_execute = 3 if auto_execute_all else 1  # 自动模式最多执行3步，防止耗时过长
+        limit = getattr(self, "_auto_steps_limit", 3)
+        max_steps_to_execute = limit if auto_execute_all else 1  # 自动模式最多连续执行 limit 步，防止耗时过长
         
         for i, step in enumerate(pending_steps[:max_steps_to_execute]):
             # 使用大脑引擎执行步骤
@@ -1648,6 +2203,23 @@ class LINK:
                 return (f"✅ 步骤完成：{step_to_complete.description}\n\n"
                        f"🎉 所有步骤已完成！任务'{task.goal}'执行完成。")
     
+    def _query_external(self, intent: str, params: dict = None) -> str:
+        """查询外部信息源（天气/新闻/日历），带降级处理"""
+        if not getattr(self, "external", None):
+            return "外部信息源未初始化。"
+        try:
+            result = self.external.query(intent, params or {})
+            text = result.get("text", "查询失败。")
+            # 记录到记忆（用户查询过什么）
+            try:
+                self._save_to_memory(f"查询{intent}: {text[:80]}", "", "event")
+            except Exception:
+                pass
+            return text
+        except Exception as e:
+            self.logger.error(f"外部查询失败({intent}): {e}")
+            return f"抱歉，{intent}查询暂时不可用：{e}"
+
     def _simple_response(self, input_text: str, memory_context: str = "") -> str:
         """
         LLM驱动的主响应逻辑（无硬编码关键词）
@@ -1669,8 +2241,27 @@ class LINK:
                 self.logger.error(f"获取时间失败: {str(e)}")
                 return "抱歉，我无法获取当前时间。"
 
-        if input_lower in ("天气", "今天天气"):
-            return "天气查询功能将在后续版本中实现。"
+        if input_lower in ("天气", "今天天气", "查询天气"):
+            return self._query_external("weather", {"city": None})
+
+        if input_lower in ("新闻", "今日新闻", "热点新闻", "最新消息"):
+            return self._query_external("news", {"topic": None})
+
+        if input_lower in ("日程", "我的日程", "查看日历", "日历"):
+            return self._query_external("calendar", {"days": 7})
+
+        # 带具体参数的查询：XX的天气 / XX新闻
+        import re as _re
+        _wm = _re.search(r'(.{1,10}?)的?天气', input_text)
+        if _wm:
+            city = _wm.group(1).strip()
+            if city and len(city) <= 6 and city not in ("今天", "现在", "明天"):
+                return self._query_external("weather", {"city": city})
+        _nm = _re.search(r'(?:看|查)?(.{1,10}?)新闻', input_text)
+        if _nm:
+            topic = _nm.group(1).strip()
+            if topic and len(topic) <= 10 and topic not in ("看", "查", "热点"):
+                return self._query_external("news", {"topic": topic})
 
         # LLM 响应
         if self.brain_engine:
@@ -1985,6 +2576,35 @@ class LINK:
             return f"{icon} {msg}"
         return f"🔧 执行: {tool_name}"
 
+    def _grant_file_permission(self, pm, resource: str, rtype: str,
+                               mode: str, perm_type: str, duration: str):
+        """授予文件/目录访问权限（目录授权时自动识别目录）。
+
+        优先授权目录（若资源是目录或其父目录在项目外），使整个目录可用。
+        """
+        if rtype != "file" or not resource:
+            pm.authorize(resource or "./", mode="read",
+                         perm_type=perm_type, duration=duration)
+            return
+        try:
+            from src.tools.file_permissions import get_permission_manager
+            if pm is None:
+                pm = get_permission_manager()
+            # 目录授权：目标路径是目录 → 授权整个目录
+            import os as _os
+            if _os.path.isdir(resource) or not _os.path.exists(resource):
+                result = pm.grant_dir(resource, mode="read_write",
+                                      perm_type=perm_type, duration=duration)
+            else:
+                result = pm.authorize(resource, mode="read_write",
+                                      perm_type=perm_type, duration=duration)
+            if result.get("message"):
+                self._report_progress("🔓", result["message"])
+        except Exception as e:
+            self.logger.warning(f"授权目录失败 {resource}: {e}")
+            pm.authorize(resource or "./", mode="read_write",
+                         perm_type=perm_type, duration=duration)
+
     def _execute_tool_call(self, tool_name: str, args: dict) -> str:
         """执行 Tool Calling 返回的工具调用"""
         self._tool_call_count += 1
@@ -2065,13 +2685,14 @@ class LINK:
                     auto_dur = ps.get_auto_auth_duration(rtype, mode)
                     if auto_dur:
                         self._report_progress("🔓", f"自动授权 {mode} {rtype}: {resource[:80]}")
-                        if auto_dur != "once":
-                            from src.tools.file_permissions import get_permission_manager
-                            pm = get_permission_manager()
-                            pm.authorize(resource, mode="read_write" if rtype == "file" else "read",
-                                        perm_type="permanent" if auto_dur == "permanent" else "temporary",
-                                        duration=auto_dur)
-                        # 重试（once 模式直接重试无需持久化）
+                        from src.tools.file_permissions import get_permission_manager
+                        pm = get_permission_manager()
+                        # 始终授权（once 也授予临时权限，否则重试必再失败形成死循环）
+                        self._grant_file_permission(
+                            pm, resource, rtype, mode,
+                            "permanent" if auto_dur == "permanent" else "temporary",
+                            auto_dur if auto_dur != "once" else None)
+                        # 重试（once 模式授权后直接重试）
                         return self.tool_manager.execute_tool(tool_id, **kwargs)
 
                     # 2. 向用户请求授权
@@ -2087,12 +2708,17 @@ class LINK:
                     # 4. 处理响应
                     if response and response.get("approved"):
                         dur = response.get("duration", "once")
-                        if dur != "once":
-                            from src.tools.file_permissions import get_permission_manager
-                            pm = get_permission_manager()
-                            pm.authorize(resource, mode="read_write" if rtype == "file" else "read",
-                                        perm_type="permanent" if dur == "permanent" else "temporary",
-                                        duration=dur)
+                        from src.tools.file_permissions import get_permission_manager
+                        pm = get_permission_manager()
+                        # 目录授权：授权用户选择的目标（默认是资源本身或父目录）
+                        grant_target = resource
+                        if response.get("grant_dir"):
+                            grant_target = response.get("grant_resource") or resource
+                        # 始终授权（once 也授予临时权限，否则重试必再失败形成死循环）
+                        self._grant_file_permission(
+                            pm, grant_target, rtype, mode,
+                            "permanent" if dur == "permanent" else "temporary",
+                            dur if dur != "once" else None)
                         self._report_progress("✅", f"已授权 {mode} {resource[:80]}")
                         return self.tool_manager.execute_tool(tool_id, **kwargs)
                     else:
@@ -2104,19 +2730,40 @@ class LINK:
                     return f"权限被拒绝: {e}"
             except FileNotFoundError as e:
                 self._report_progress("❌", f"文件未找到: {tool_name}")
+                self._reflect_tool_failure(tool_name, args, f"文件未找到: {e}")
                 return f"文件未找到: {e}"
             except TimeoutError as e:
                 self._report_progress("⏱", f"操作超时: {tool_name}")
+                self._reflect_tool_failure(tool_name, args, f"操作超时: {e}")
                 return f"操作超时: {e}"
             except ValueError as e:
                 self._report_progress("❌", f"参数无效: {tool_name}")
+                self._reflect_tool_failure(tool_name, args, f"参数无效: {e}")
                 return f"参数无效: {e}"
             except Exception as e:
                 self._report_progress("❌", f"执行失败: {tool_name} - {e}")
                 self.logger.error(f"工具执行异常 {tool_name}: {e}", exc_info=True)
+                self._reflect_tool_failure(tool_name, args, f"执行失败: {e}")
                 return f"执行失败: {e}"
 
         return f"未知工具: {tool_name}"
+
+    def _reflect_tool_failure(self, tool_name: str, args: dict, error: str):
+        """工具调用失败时触发反思，学习失败模式（不影响主流程）"""
+        try:
+            import hashlib
+            task_id = "tool_" + hashlib.md5(f"{tool_name}{error}".encode("utf-8")).hexdigest()[:12]
+            task_result = {
+                "status": "failed",
+                "error": error,
+                "tool": tool_name,
+            }
+            context = {
+                "tool_args": {k: str(v)[:100] for k, v in (args or {}).items()},
+            }
+            self._trigger_reflection(task_id, task_result, trigger="task_failure", context=context)
+        except Exception as e:
+            self.logger.debug(f"工具失败反思跳过: {e}")
 
     def _tool_response(self, input_text: str, memory_context: str = "",
                        stream_callback: callable = None,

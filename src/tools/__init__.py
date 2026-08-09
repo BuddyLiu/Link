@@ -6,6 +6,21 @@ LINK工具模块
 from typing import Dict, List, Any, Optional, Callable, Type, Union
 from abc import ABC, abstractmethod
 import json
+import sys
+
+# ── 模块名别名注册（消除双模块单例分裂） ──
+# 项目内同时存在 `tools` 与 `src.tools` 两种导入路径，Python 会把同一物理
+# 包当作两个模块加载，各自持有独立单例（tool_manager / 权限管理器被分裂）。
+# 无论哪个名字先被 import，另一个名字都会被重定向到同一个模块对象。
+_canonical_tools = sys.modules.get("src.tools") or sys.modules.get("tools")
+if _canonical_tools is None or _canonical_tools is sys.modules.get(__name__):
+    # 当前模块（tools 或 src.tools）成为 canonical
+    pass
+# 注册另一个名字指向当前模块
+if sys.modules.get("src.tools") is not sys.modules.get(__name__):
+    sys.modules["src.tools"] = sys.modules[__name__]
+if sys.modules.get("tools") is not sys.modules.get(__name__):
+    sys.modules["tools"] = sys.modules[__name__]
 
 # 修复导入路径问题
 from config.settings import settings
