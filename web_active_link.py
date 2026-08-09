@@ -1109,7 +1109,16 @@ ws.onmessage = e => {
         expandBtn.textContent = isExpanded ? '收起' : '展开全部';
         if (!isExpanded) wrap.scrollTop = wrap.scrollHeight;
       };
+      var copyThinkBtn = document.createElement('button');
+      copyThinkBtn.className = 'think-expand-btn';
+      copyThinkBtn.textContent = '复制思考';
+      copyThinkBtn.id = 'stream-reasoning-copy';
+      copyThinkBtn.onclick = function() {
+        var rcEl = document.getElementById('stream-reasoning-content');
+        copyText(rcEl ? rcEl.textContent : '', copyThinkBtn);
+      };
       meta.appendChild(countEl);
+      meta.appendChild(copyThinkBtn);
       meta.appendChild(expandBtn);
       det.appendChild(sum); det.appendChild(wrap); det.appendChild(meta);
       var typingEl = chatBox.querySelector('.typing');
@@ -1271,7 +1280,14 @@ async function loadHistory(page) {
           expandBtn.textContent = isExpanded ? '收起' : '展开全部';
           if (!isExpanded) wrap.scrollTop = wrap.scrollHeight;
         };
+        var copyThinkBtn = document.createElement('button');
+        copyThinkBtn.className = 'think-expand-btn';
+        copyThinkBtn.textContent = '复制思考';
+        copyThinkBtn.onclick = function() {
+          copyText(msg.reasoning, copyThinkBtn);
+        };
         meta.appendChild(countEl);
+        meta.appendChild(copyThinkBtn);
         meta.appendChild(expandBtn);
         det.appendChild(sum); det.appendChild(wrap); det.appendChild(meta);
         div.appendChild(det);
