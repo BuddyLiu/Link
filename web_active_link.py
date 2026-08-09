@@ -696,12 +696,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .msg.user .time{text-align:left}
 /* Input area */
 .input-area{flex-shrink:0;padding:12px 20px;background:#0d0d14;border-top:1px solid #1a1a2e;display:flex;justify-content:center}
-.input-area input{flex:1;padding:10px 14px;background:#13131f;border:1px solid rgba(255,255,255,.25);border-radius:8px;font-size:13px;outline:none;color:#e0e0e0;transition:border-color .2s}
-.input-area input::placeholder{color:#4a4a6a}
-.input-area input:focus{border-color:#6366f1}
-.input-area button{padding:10px 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
+.input-area textarea{flex:1;padding:10px 14px;background:#13131f;border:1px solid rgba(255,255,255,.25);border-radius:8px;font-size:13px;outline:none;color:#e0e0e0;transition:border-color .2s;resize:none;font-family:inherit;line-height:1.5;max-height:120px;min-height:40px}
+.input-area textarea::placeholder{color:#4a4a6a}
+.input-area textarea:focus{border-color:#6366f1}
+.input-area button{padding:10px 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s;align-self:flex-end;height:40px}
 .input-area button:hover{background:#4f46e5}
 .input-area button:disabled{background:#1a1a2e;color:#4a4a6a;cursor:not-allowed}
+.input-area .send-hint{font-size:10px;color:#4a4a6a;align-self:flex-end;margin:0 8px 4px 0;white-space:nowrap;user-select:none}
+/* Thinking 活跃动画（流式思考进行中） */
+.think-active .think-scroll-wrap{border:1px solid rgba(99,102,241,.45);box-shadow:0 0 12px rgba(99,102,241,.08) inset}
+.think-active summary{animation:thinkPulse 1.6s ease-in-out infinite}
+@keyframes thinkPulse{0%,100%{color:#6366f1}50%{color:#a5b4fc}}
 /* Typing */
 .typing .bubble{color:#6366f1;opacity:.6;font-style:italic;font-size:13px}
 /* System messages */
@@ -871,7 +876,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </div>
 <div class="input-area">
 <div style="width:100%;max-width:820px;display:flex;gap:8px;margin:0 auto">
-<input id="input" placeholder="输入消息..." autofocus>
+<textarea id="input" placeholder="输入消息...（Enter 发送，Shift+Enter 换行）" autofocus rows="1"></textarea>
+<span class="send-hint" id="send-hint">Enter 发送</span>
 <button id="send-btn" onclick="send()">发送</button>
 </div>
 </div>
@@ -1106,6 +1112,8 @@ ws.onmessage = e => {
       var typingEl = chatBox.querySelector('.typing');
       if (typingEl) chatBox.insertBefore(det, typingEl);
       else chatBox.appendChild(det);
+      // 思考活跃标记：提示用户思考进行中
+      det.classList.add('think-active');
     }
     var rc = document.getElementById('stream-reasoning-content');
     if (rc) rc.textContent += d.data;
@@ -1156,6 +1164,9 @@ ws.onmessage = e => {
 
     // 停止流式打字机，补全未打出的剩余内容
     if (_streamTimer) { clearTimeout(_streamTimer); _streamTimer = null; }
+    // 移除思考活跃动画
+    var _actDet = document.getElementById('stream-reasoning');
+    if (_actDet) _actDet.classList.remove('think-active');
 
     var streamEl = document.getElementById('stream-msg');
     if (streamEl) {
@@ -1185,6 +1196,7 @@ ws.onmessage = e => {
       if (_rc) _rc.removeAttribute('id');
       streamContentId = null;
       _streamTyped = 0;
+      restoreSendBtn();
       return;
     }
 
@@ -1198,6 +1210,13 @@ ws.onmessage = e => {
     return;
   }
 };
+
+// 回复完成/失败后恢复发送按钮
+function restoreSendBtn() {
+  sendBtn.disabled = false;
+  sendBtn.textContent = '发送';
+  input.focus();
+}
 
 // ── 历史会话分页加载 ──
 async function loadHistory(page) {
@@ -1326,14 +1345,33 @@ async function loadHistory(page) {
 function send() {
   const text = input.value.trim();
   if (!text) return;
+  // 防连点：已禁用（等待回复）时忽略
+  if (sendBtn.disabled && !window._sendReentrant) return;
   input.value = '';
+  autoResizeInput();
   addMessage('user', text);
   showTyping();
   sendBtn.disabled = true;
+  sendBtn.textContent = '回复中...';
   ws.send(JSON.stringify({type: 'user_input', text}));
 }
 
-input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) send(); });
+// textarea 自适应高度
+function autoResizeInput() {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+}
+
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing) {
+    if (e.shiftKey) {
+      // Shift+Enter：插入换行
+      return; // textarea 默认行为即换行
+    }
+    e.preventDefault();
+    send();
+  }
+});
 
 // ----- Helper: smart auto-scroll & copy -----
 function addThinking(reasoning, callback) {
@@ -1603,8 +1641,7 @@ function typewriteMessage(role, fullText) {
         copyBtn.onclick = function() { copyText(fullText, copyBtn); };
         div.appendChild(copyBtn);
       }
-      sendBtn.disabled = false;
-      input.focus();
+      restoreSendBtn();
     }
   }
 
