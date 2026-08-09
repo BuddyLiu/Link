@@ -987,6 +987,7 @@ var streamContentId = null;
 var streamContentBuf = '';
 var _streamTyped = 0;      // 打字机已打出的字符数
 var _streamTimer = null;   // 打字机 tick 定时器
+var _streamRenderCounter = 0; // 渲染节流计数器（长内容降低渲染频率）
 var _reasoningSpeed = 0;   // 思考内容接收速率（字符/tick，用于联动打字速度）
 var _reasoningLastLen = 0; // 上次思考接收的字符数
 
@@ -1008,25 +1009,38 @@ function streamTypeTick() {
 
   // 动态步长：积压越多，每 tick 打的字符越多
   var step = 1;
-  if (pending > 600) step = 12;
+  if (pending > 1500) step = 30;
+  else if (pending > 900) step = 20;
+  else if (pending > 600) step = 12;
   else if (pending > 300) step = 6;
   else if (pending > 120) step = 3;
   else if (pending > 50) step = 2;
 
   _streamTyped = Math.min(total, _streamTyped + step);
-  // 打字过程中用部分渲染（未闭合标记转义），避免 markdown 闪烁
-  try { sb.innerHTML = renderMarkdownPartial(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
-  catch(e) { sb.textContent = streamContentBuf.slice(0, _streamTyped) + '|'; }
-  chatBox.scrollTop = chatBox.scrollHeight;
+
+  // 渲染性能优化：内容很长时降低渲染频率（每 N 次 tick 渲染一次），
+  // 避免长回复时每次全量 marked.parse 导致卡顿
+  _streamRenderCounter = (_streamRenderCounter || 0) + 1;
+  var renderEvery = 1;
+  if (total > 8000) renderEvery = 4;
+  else if (total > 3000) renderEvery = 3;
+  else if (total > 1200) renderEvery = 2;
+
+  if (_streamRenderCounter % renderEvery === 0 || _streamTyped >= total) {
+    try { sb.innerHTML = renderMarkdownPartial(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
+    catch(e) { sb.textContent = streamContentBuf.slice(0, _streamTyped) + '|'; }
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
 
   // 动态间隔：
   //   - 积压大（生成快跟上了）→ 间隔短，快速打
   //   - 思考还在快速接收 → 间隔短（追赶思考节奏）
   //   - 思考接收慢 → 间隔长（慢打，等思考/答案自然返回）
   var delay;
-  if (pending > 300 || _reasoningSpeed > 3) delay = 8;
-  else if (pending > 80 || _reasoningSpeed > 1) delay = 14;
-  else delay = 26;
+  if (pending > 500 || _reasoningSpeed > 3) delay = 8;
+  else if (pending > 150 || _reasoningSpeed > 1) delay = 12;
+  else if (pending > 40) delay = 18;
+  else delay = 28;
   _streamTimer = setTimeout(streamTypeTick, delay);
 }
 
@@ -1150,6 +1164,7 @@ ws.onmessage = e => {
     if (!streamContentId) {
       streamContentBuf = '';
       _streamTyped = 0;
+      _streamRenderCounter = 0;
       if (_streamTimer) { clearTimeout(_streamTimer); _streamTimer = null; }
       var div = document.createElement('div');
       div.className = 'msg assistant';
