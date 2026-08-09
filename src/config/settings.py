@@ -80,7 +80,7 @@ class PlanningSettings(BaseSettings):
 class ReflectionSettings(BaseSettings):
     """反思系统配置（第三阶段）"""
     enable_auto_reflection: bool = Field(default=True, description="是否启用自动反思")
-    reflection_triggers: List[str] = Field(default=["failure", "low_confidence"], description="反思触发器")
+    reflection_triggers: List[str] = Field(default=["failure", "low_confidence", "user_feedback"], description="反思触发器")
     max_reflection_iterations: int = Field(default=3, description="最大反思迭代次数")
     reflection_confidence_threshold: float = Field(default=0.7, description="触发反思的置信度阈值")
     save_reflection_history: bool = Field(default=True, description="是否保存反思历史")

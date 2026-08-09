@@ -2482,7 +2482,12 @@ function denyPermission() {
             }
             store = self.brain_link.memory_engine.store
             store.add_memory(f"Feedback [{rating}]: {content[:300]}", metadata)
-            return {"success": True}
+            # 负面反馈 → 触发反思学习（从错误中改进）
+            learned = False
+            if rating == "down":
+                learned = self.brain_link.learn_from_feedback(
+                    content, reasoning or "")
+            return {"success": True, "learned": learned}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

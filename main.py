@@ -1610,6 +1610,41 @@ class LINK:
         content = f"用户反馈:{rating}|{user_input[:80]}→{assistant_content[:80]}"
         self.memory_engine.store.add_memory(content, metadata)
 
+    def learn_from_feedback(self, assistant_content: str,
+                            reasoning: str = "") -> bool:
+        """从用户负面反馈中学习：记录用户不满意的点，并触发反思。
+
+        将反馈写入记忆（供检索改进），并触发 user_feedback 反思。
+        返回是否触发了反思。
+        """
+        if not assistant_content:
+            return False
+        try:
+            # 1. 记录"用户不喜欢"的记忆（供后续检索，避免重复犯错）
+            if self.memory_engine:
+                dislike = assistant_content[:200]
+                self.memory_engine.add_fact_memory(
+                    f"用户对以下回复不满意: {dislike}", importance=0.9,
+                    tags=["feedback", "dislike"])
+
+            # 2. 触发反思学习（USER_FEEDBACK 触发器期望 user_feedback.satisfaction）
+            import hashlib
+            task_id = "fb_" + hashlib.md5(assistant_content.encode("utf-8")).hexdigest()[:12]
+            result = self._trigger_reflection(
+                task_id,
+                {"status": "failed", "confidence": 0.2,
+                 "response_length": len(assistant_content),
+                 "input": assistant_content[:200],
+                 "user_feedback": {"satisfaction": 1,
+                                  "comment": assistant_content[:200]}},
+                trigger="user_feedback",
+                context={"reasoning": reasoning[:200],
+                         "feedback": assistant_content[:200]})
+            return bool(result)
+        except Exception as e:
+            self.logger.debug(f"反馈学习失败: {e}")
+            return False
+
     def _retrieve_memory_context(self, query: str) -> str:
         """检索相关记忆作为LLM上下文，含用户画像和项目知识"""
         if not self.memory_engine:
