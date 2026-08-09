@@ -79,6 +79,7 @@ class LINK:
         # 工具执行进度回调（用于实时展示读/写文件等操作）
         self._progress_callback = None
         self._tool_call_count = 0  # 当前会话的工具调用计数
+        self._maintenance_count = 0  # 主动维护计数器（每 N 轮触发，不依赖历史长度）
         
         # 初始化组件
         self._initialize_components()
@@ -894,8 +895,9 @@ class LINK:
         # 反思：检测低置信/失败迹象，触发反思与学习（自动，不影响回复）
         self._check_and_reflect(input_text, response, is_online=is_online)
 
-        # 主动学习（每 5 轮整理一次记忆）
-        if len(self._conversation_history) % 10 == 0:
+        # 主动学习（每 10 轮整理一次记忆，用计数器保证稳定触发）
+        self._maintenance_count += 1
+        if self._maintenance_count % 10 == 0:
             self._proactive_maintenance()
 
         self.logger.info(f"生成响应: {response[:50]}...")
