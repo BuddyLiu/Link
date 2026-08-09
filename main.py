@@ -66,7 +66,7 @@ class LINK:
         self.external = None
 
         # 任务执行模式：manual（手动，逐步确认）/ auto（自动，连续执行）
-        self._execution_mode = "manual"
+        self._execution_mode = self._load_execution_mode()
         self._auto_steps_limit = 3  # 自动模式每轮最多连续执行的步骤数
 
         # 项目知识库
@@ -1860,10 +1860,33 @@ class LINK:
         
         return response
     
+    _EXEC_MODE_FILE = "data/settings/execution_mode.json"
+
+    def _load_execution_mode(self) -> str:
+        """从磁盘加载持久化的执行模式"""
+        try:
+            import os as _os, json as _json
+            if _os.path.exists(self._EXEC_MODE_FILE):
+                with open(self._EXEC_MODE_FILE, "r", encoding="utf-8") as f:
+                    data = _json.load(f)
+                mode = data.get("mode", "manual")
+                if mode in ("manual", "auto"):
+                    return mode
+        except Exception:
+            pass
+        return "manual"
+
     def set_execution_mode(self, mode: str):
-        """设置任务执行模式：manual（手动）/ auto（自动）"""
+        """设置任务执行模式：manual（手动）/ auto（自动），并持久化"""
         if mode in ("manual", "auto"):
             self._execution_mode = mode
+            try:
+                import os as _os, json as _json
+                _os.makedirs(_os.path.dirname(self._EXEC_MODE_FILE), exist_ok=True)
+                with open(self._EXEC_MODE_FILE, "w", encoding="utf-8") as f:
+                    _json.dump({"mode": mode}, f, ensure_ascii=False)
+            except Exception as e:
+                self.logger.debug(f"执行模式持久化失败: {e}")
             self.logger.info(f"任务执行模式切换为: {'自动' if mode == 'auto' else '手动'}")
             return True
         return False
@@ -1873,6 +1896,7 @@ class LINK:
         return {
             "mode": getattr(self, "_execution_mode", "manual"),
             "auto_steps_limit": getattr(self, "_auto_steps_limit", 3),
+            "persisted": True,
         }
 
     def get_task_status_summary(self) -> list:
