@@ -1629,7 +1629,36 @@ class LINK:
                     f"用户对以下回复不满意: {dislike}", importance=0.9,
                     tags=["feedback", "dislike"])
 
-            # 2. 触发反思学习（USER_FEEDBACK 触发器期望 user_feedback.satisfaction）
+            # 2. 用 LLM 提炼改进洞察（让知识沉淀有实际价值）
+            insight = self._generate_feedback_insight(assistant_content, reasoning)
+            if insight and self.knowledge_updater:
+                try:
+                    import uuid as _uuid
+                    from src.reflection.knowledge_updater import KnowledgeEntry
+                    entry = KnowledgeEntry(
+                        id=f"fb_{_uuid.uuid4().hex[:8]}",
+                        knowledge_type="strategy",
+                        content={
+                            "summary": insight[:200],
+                            "key_insights": [insight[:200]],
+                            "suggestions": [insight[:200]],
+                            "trigger": "user_feedback",
+                        },
+                        source_reflection_id="feedback_learning",
+                        confidence=0.8,
+                        applicability=0.8,
+                        tags=["user_feedback", "feedback_learning"],
+                    )
+                    kb = self.knowledge_updater.knowledge_base
+                    kb.setdefault("strategy", []).append(entry)
+                    try:
+                        self.knowledge_updater._save_knowledge_to_file()
+                    except Exception:
+                        pass
+                except Exception as ke:
+                    self.logger.debug(f"知识沉淀失败: {ke}")
+
+            # 3. 触发反思学习（USER_FEEDBACK 触发器期望 user_feedback.satisfaction）
             import hashlib
             task_id = "fb_" + hashlib.md5(assistant_content.encode("utf-8")).hexdigest()[:12]
             result = self._trigger_reflection(
@@ -1642,10 +1671,36 @@ class LINK:
                 trigger="user_feedback",
                 context={"reasoning": reasoning[:200],
                          "feedback": assistant_content[:200]})
-            return bool(result)
+            return bool(result) or bool(insight)
         except Exception as e:
             self.logger.debug(f"反馈学习失败: {e}")
             return False
+
+    def _generate_feedback_insight(self, content: str, reasoning: str = "") -> str:
+        """用 LLM 从负面反馈中提炼改进洞察（无 LLM 时规则降级）"""
+        try:
+            if self.brain_engine and self.brain_engine.model_adapter:
+                prompt = (
+                    "根据用户对 AI 回复的不满意反馈，提炼 1 条具体的改进经验，"
+                    "用于今后避免同样问题。要求：具体、可操作、30-80 字。\n\n"
+                    f"用户不满意的回复: {content[:200]}\n"
+                    f"当时思考: {reasoning[:200]}\n"
+                )
+                out = self.brain_engine.simple_query(
+                    prompt,
+                    system_prompt="你是经验提炼助手，只输出一条改进经验，不要解释。")
+                if out and len(out.strip()) > 8 and "查询失败" not in out:
+                    return out.strip()[:200]
+        except Exception:
+            pass
+        # 规则降级：用关键词提炼
+        import re as _re
+        keywords = ("不够", "太", "缺少", "没有", "详细", "简洁", "错误", "失败")
+        for kw in keywords:
+            if kw in content:
+                idx = content.find(kw)
+                return f"用户反馈: {content[max(0, idx-20):idx+40][:80]} → 需改进"
+        return "用户对回复不满意，需改进回复质量"
 
     def _retrieve_memory_context(self, query: str) -> str:
         """检索相关记忆作为LLM上下文，含用户画像和项目知识"""
@@ -1700,6 +1755,24 @@ class LINK:
                 self.logger.info(f"检索到 {len(related)} 条相关记录")
         except Exception as e:
             self.logger.debug(f"记忆检索失败: {e}")
+
+        # 3. 反思沉淀的知识库（改进建议/失败经验）→ 影响后续回答
+        try:
+            ku = self.knowledge_updater
+            if ku is not None:
+                kresults = ku.query_knowledge(query, limit=5)
+                if kresults:
+                    klines = []
+                    for k in kresults:
+                        content = getattr(k, "content", {}) or {}
+                        insights = content.get("key_insights", []) or []
+                        for ins in insights[:2]:
+                            if isinstance(ins, str) and ins.strip():
+                                klines.append(f"- {ins.strip()[:120]}")
+                    if klines:
+                        parts.append("【经验教训】\n" + "\n".join(klines[:4]))
+        except Exception as e:
+            self.logger.debug(f"知识检索失败: {e}")
 
         return "\n\n".join(parts) if parts else ""
 

@@ -418,35 +418,40 @@ class KnowledgeUpdater:
         return results[:limit]
     
     def _knowledge_matches_query(self, knowledge_entry: KnowledgeEntry, query_lower: str) -> bool:
-        """检查知识条目是否匹配查询"""
+        """检查知识条目是否匹配查询（全词匹配 + 中文关键词部分匹配）"""
         # 检查标签匹配
         for tag in knowledge_entry.tags:
             if query_lower in tag.lower():
                 return True
-        
-        # 检查知识内容匹配
+
+        # 知识内容匹配（全词）
         content = knowledge_entry.content
-        
-        # 检查总结
-        if "summary" in content and query_lower in content["summary"].lower():
+        content_text = ""
+        for key in ("summary", "reflection_analysis"):
+            if content.get(key):
+                content_text += str(content[key]).lower() + " "
+        for key in ("key_insights", "action_items", "suggestions"):
+            for item in content.get(key, []) or []:
+                content_text += str(item).lower() + " "
+        if query_lower in content_text:
             return True
-        
-        # 检查关键洞察
-        if "key_insights" in content:
-            for insight in content["key_insights"]:
-                if query_lower in insight.lower():
+
+        # 中文关键词部分匹配：提取查询中的 2+ 字片段，任一命中即算匹配
+        # 中文无空格分词，用二元组/三元组近似（提高召回）
+        if any('一' <= ch <= '鿿' for ch in query_lower):
+            import re
+            words = re.findall(r'[一-鿿]{2,}', query_lower)
+            for w in words:
+                if w and w in content_text:
                     return True
-        
-        # 检查行动项
-        if "action_items" in content:
-            for action in content["action_items"]:
-                if query_lower in action.lower():
-                    return True
-        
-        # 检查反思分析
-        if "reflection_analysis" in content and query_lower in content["reflection_analysis"].lower():
-            return True
-        
+            # 二次提取：查询中的 2 字/3 字片段
+            if len(query_lower) >= 2:
+                for i in range(len(query_lower) - 1):
+                    seg = query_lower[i:i+2]
+                    if seg in content_text:
+                        return True
+        return False
+
         # 检查根本原因
         if "root_causes" in content:
             for cause in content["root_causes"]:
