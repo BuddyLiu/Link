@@ -1831,17 +1831,20 @@ class LINK:
         max_steps = min(steps_to_execute, len(pending_steps), 3)  # 最多执行3步，防止耗时过长
         
         for i, step in enumerate(pending_steps[:max_steps]):
+            # 推送步骤开始进度
+            self._report_progress("🔧", f"任务[{task.goal[:30]}] 执行步骤 {i+1}: {step.description[:40]}")
             # 使用大脑引擎执行步骤
             execution_result = self._execute_task_step_with_brain(task, step)
-            
+
             # 更新步骤状态和结果
             self.planning_engine.update_task_step(
-                task_id, 
-                step.id, 
+                task_id,
+                step.id,
                 "completed" if execution_result["success"] else "in_progress",
                 execution_result["result"]
             )
-            
+            task._last_execution_result = execution_result.get("result", "")
+
             steps_executed += 1
             
             if execution_result["success"]:
@@ -2262,6 +2265,8 @@ class LINK:
         max_steps_to_execute = limit if auto_execute_all else 1  # 自动模式最多连续执行 limit 步，防止耗时过长
         
         for i, step in enumerate(pending_steps[:max_steps_to_execute]):
+            # 推送步骤开始进度
+            self._report_progress("🔧", f"任务[{task.goal[:30]}] 执行步骤 {i+1}: {step.description[:40]}")
             # 使用大脑引擎执行步骤
             execution_result = self._execute_task_step_with_brain(task, step)
 
