@@ -1012,7 +1012,8 @@ function streamTypeTick() {
   else if (pending > 50) step = 2;
 
   _streamTyped = Math.min(total, _streamTyped + step);
-  try { sb.innerHTML = renderMarkdown(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
+  // 打字过程中用部分渲染（未闭合标记转义），避免 markdown 闪烁
+  try { sb.innerHTML = renderMarkdownPartial(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
   catch(e) { sb.textContent = streamContentBuf.slice(0, _streamTyped) + '|'; }
   chatBox.scrollTop = chatBox.scrollHeight;
 
@@ -1586,6 +1587,28 @@ function renderMarkdown(text) {
   if (!text) return '';
   try { return marked.parse(text); }
   catch(e) { return '<p>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
+}
+
+// 流式打字中的部分 markdown 渲染：未闭合的语法标记临时转义，避免闪烁
+function renderMarkdownPartial(text) {
+  if (!text) return '';
+  var t = text;
+  // 未闭合的代码围栏 ``` → 补一个闭合围栏，保证 marked 不吞内容
+  // （优先处理围栏，避免内部单反引号干扰计数）
+  var fenceCount = (t.match(/```/g) || []).length;
+  var fenceOpen = fenceCount % 2 === 1;
+  if (fenceOpen) {
+    t += '\\n```';
+  } else {
+    // 无未闭合围栏时，才处理单个反引号（行内代码）
+    var backticks = (t.match(/`/g) || []).length;
+    if (backticks % 2 === 1) t = t.replace(/`(?=[^`]*$)/, '～');
+  }
+  // 未闭合的 **bold** → 保留为字面星号（不触发解析）
+  var stars = (t.match(/\\*\\*/g) || []).length;
+  if (stars % 2 === 1) t = t.replace(/\\*\\*(?=[^*]*$)/, '∗∗');
+  try { return marked.parse(t); }
+  catch(e) { return '<p>' + t.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
 }
 
 // ----- Typewriter Effect (token-based progressive reveal) -----
