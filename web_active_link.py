@@ -1187,6 +1187,10 @@ ws.onmessage = e => {
         };
         streamEl.appendChild(copyBtn);
       }
+      // 实时回复添加反馈按钮（👍/👎）
+      if (!streamEl.querySelector('.feedback-btns')) {
+        addFeedbackBtns(streamEl, result, reasoning);
+      }
       // 清除 ID，防止下一条消息 getElementById 命中旧元素
       streamEl.removeAttribute('id');
       var _bub = streamEl.querySelector('.bubble');
@@ -1467,6 +1471,17 @@ function updateScrollButtons() {
   var sb = document.getElementById('scroll-bottom');
   if (st) st.classList.toggle('scroll-hidden', chatBox.scrollTop <= 10);
   if (sb) sb.classList.toggle('scroll-hidden', chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight <= 20);
+  // 滚动到顶部附近时自动加载更早消息（防抖）
+  if (!historyLoading && !historyEnd && chatBox.scrollTop <= 40) {
+    var loadMore = document.getElementById('load-more');
+    if (loadMore) {
+      clearTimeout(window._autoLoadTimer);
+      window._autoLoadTimer = setTimeout(function() {
+        historyPage++;
+        loadHistory(historyPage);
+      }, 500);
+    }
+  }
 }
 chatBox.addEventListener('scroll', updateScrollButtons);
 setTimeout(updateScrollButtons, 500);
@@ -1664,11 +1679,34 @@ function typewriteMessage(role, fullText) {
         copyBtn.onclick = function() { copyText(fullText, copyBtn); };
         div.appendChild(copyBtn);
       }
+      // 打字完成的消息添加反馈按钮
+      if (!div.querySelector('.feedback-btns')) {
+        addFeedbackBtns(div, fullText, '');
+      }
       restoreSendBtn();
     }
   }
 
   type();
+}
+
+// 给消息添加反馈按钮（👍/👎）
+function addFeedbackBtns(msgDiv, content, reasoning) {
+  var fbDiv = document.createElement('div');
+  fbDiv.className = 'feedback-btns';
+  var fId = 'fb_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2,6);
+  var up = document.createElement('button');
+  up.className = 'feedback-btn up';
+  up.dataset.msgId = fId; up.dataset.rating = 'up'; up.title = '有用';
+  up.textContent = '👍';
+  up.onclick = function(){ sendFeedback(fId, 'up', content, reasoning || ''); };
+  var down = document.createElement('button');
+  down.className = 'feedback-btn down';
+  down.dataset.msgId = fId; down.dataset.rating = 'down'; down.title = '没用';
+  down.textContent = '👎';
+  down.onclick = function(){ sendFeedback(fId, 'down', content, reasoning || ''); };
+  fbDiv.appendChild(up); fbDiv.appendChild(down);
+  msgDiv.appendChild(fbDiv);
 }
 
 function addMessage(role, content) {
