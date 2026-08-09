@@ -955,6 +955,8 @@ async function showTasks() {
       var bar = '▓'.repeat(Math.round(t.progress / 20)) + '░'.repeat(5 - Math.round(t.progress / 20));
       lines.push((i+1) + '. [' + t.status + '] ' + t.goal);
       lines.push('   ' + bar + ' ' + t.progress + '% (' + t.completed_steps + '/' + t.total_steps + ' 步)');
+      if (t.current_step) lines.push('   🔄 当前步骤: ' + t.current_step);
+      if (t.last_result) lines.push('   📄 最近结果: ' + t.last_result.replace(/\\n/g, ' ').slice(0, 60));
     });
     addMessage('system', lines.join('\\n'));
   } catch(e) { addMessage('system', '任务查询失败: ' + e); }

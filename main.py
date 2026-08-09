@@ -1911,6 +1911,12 @@ class LINK:
         for t in (tasks or []):
             steps = getattr(t, "steps", []) or []
             done = sum(1 for s in steps if s.status == "completed")
+            # 当前步骤 = 第一个 in_progress 或 pending 的步骤
+            current_step = ""
+            for s in steps:
+                if s.status in ("in_progress", "pending"):
+                    current_step = getattr(s, "description", "")[:50]
+                    break
             out.append({
                 "id": getattr(t, "id", ""),
                 "goal": getattr(t, "goal", "")[:60],
@@ -1918,6 +1924,8 @@ class LINK:
                 "total_steps": len(steps),
                 "completed_steps": done,
                 "progress": round(done / len(steps) * 100, 1) if steps else 0,
+                "current_step": current_step,
+                "last_result": getattr(t, "_last_execution_result", "")[:100],
             })
         return out
 
@@ -2249,15 +2257,16 @@ class LINK:
         for i, step in enumerate(pending_steps[:max_steps_to_execute]):
             # 使用大脑引擎执行步骤
             execution_result = self._execute_task_step_with_brain(task, step)
-            
+
             # 更新步骤状态和结果
             self.planning_engine.update_task_step(
-                task_id, 
-                step.id, 
+                task_id,
+                step.id,
                 "completed" if execution_result["success"] else "in_progress",
                 execution_result["result"]
             )
-            
+            task._last_execution_result = execution_result.get("result", "")
+
             steps_executed += 1
             
             if execution_result["success"]:
