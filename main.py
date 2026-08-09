@@ -371,10 +371,17 @@ class LINK:
         """快速分类用户意图（纯规则，<1ms）"""
         t = text.strip().lower()
 
-        greeting_words = ["你好", "您好", "嗨", "hello", "hi", "hey", "早上好",
-                          "下午好", "晚上好", "good morning", "good afternoon",
+        greeting_words = ["你好", "您好", "嗨", "早上好", "下午好", "晚上好",
                           "早安", "午安", "晚安", "在吗", "在不在"]
+        # 英文问候需精确词匹配（避免 hello.py / hello world 里的 hello 被误判）
         if any(g in t for g in greeting_words):
+            return {"type": "greeting", "confidence": 0.95}
+        # 英文问候：必须是句首独立词（前无字母，后无字母/点号/横线），
+        # 避免 "hello.py"、"hello-world"、"shello" 误判
+        import re as _re
+        if _re.search(r'(^|[\s，。！？])?(hello|hi|hey|good\s+morning|good\s+afternoon)\b(?![\w.-])', t) \
+           and not _re.search(r'\w(hello|hi|hey)\b', t) \
+           and not _re.search(r'(写|创建|生成|运行|程序|文件|代码|脚本|编译)', t):
             return {"type": "greeting", "confidence": 0.95}
 
         thanks_words = ["谢谢", "感谢", "多谢", "thanks", "thank", "辛苦了"]
