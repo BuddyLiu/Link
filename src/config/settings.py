@@ -124,7 +124,9 @@ class SystemSettings(BaseSettings):
     log_level: str = Field(default="INFO", description="日志级别：DEBUG, INFO, WARNING, ERROR")
     max_concurrent_tasks: int = Field(default=5, description="最大并发任务数")
     data_directory: str = Field(default="./data", description="数据存储目录")
-    
+    workspace_directory: str = Field(
+        default="~/LINK-Workspace", description="默认工作目录（LINK 文件操作的落点）")
+
     class Config:
         env_prefix = "SYSTEM_"
 
@@ -150,6 +152,8 @@ class Settings(BaseSettings):
             self.system.debug_mode = os.getenv("DEBUG_MODE").lower() == "true"
         if os.getenv("LOG_LEVEL"):
             self.system.log_level = os.getenv("LOG_LEVEL")
+        if os.getenv("LINK_WORKSPACE"):
+            self.system.workspace_directory = os.getenv("LINK_WORKSPACE")
             
         # 更新模型配置
         if os.getenv("MODEL_NAME"):

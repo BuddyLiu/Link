@@ -360,10 +360,18 @@ class TestListFilesTool:
             tool_manager.execute_tool("list_files", path="/nonexistent/dir")
 
     def test_default_path(self, tool_manager):
-        """默认 path='.' 应返回当前目录内容"""
-        result = tool_manager.execute_tool("list_files")
-        assert isinstance(result, list)
-        assert len(result) > 0
+        """默认 path='.' 应返回工作目录内容"""
+        # 在工作目录创建文件（相对路径落点 = 工作目录）
+        from config.paths import get_workspace_directory
+        ws = get_workspace_directory()
+        probe = ws / "default_path_probe.txt"
+        probe.write_text("probe")
+        try:
+            result = tool_manager.execute_tool("list_files")
+            assert isinstance(result, list)
+            assert "default_path_probe.txt" in result
+        finally:
+            probe.unlink(missing_ok=True)
 
 
 # =============================================================================

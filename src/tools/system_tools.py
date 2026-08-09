@@ -20,6 +20,10 @@ try:
 except ImportError:
     from tools import Tool, SystemTool, tool_manager
     from tools.file_permissions import get_permission_manager
+try:
+    from config.paths import resolve_tool_path, get_workspace_directory
+except ImportError:
+    from src.config.paths import resolve_tool_path, get_workspace_directory
 from utils.logger import logger
 
 
@@ -122,8 +126,8 @@ class ListFilesTool(SystemTool):
         path = kwargs.get("path", ".")
         recursive = kwargs.get("recursive", False)
 
-        # 权限检查
-        p = Path(path).resolve()
+        # 权限检查（相对路径解析到工作目录）
+        p = resolve_tool_path(path)
         allowed, reason = get_permission_manager().is_path_allowed(str(p), "read")
         if not allowed:
             raise PermissionError(reason)
@@ -174,8 +178,8 @@ class ReadFileTool(SystemTool):
         path = kwargs["path"]
         encoding = kwargs.get("encoding", "utf-8")
 
-        # 权限检查
-        p = Path(path).resolve()
+        # 权限检查（相对路径解析到工作目录）
+        p = resolve_tool_path(path)
         allowed, reason = get_permission_manager().is_path_allowed(str(p), "read")
         if not allowed:
             raise PermissionError(reason)
@@ -287,7 +291,7 @@ class ExecuteCommandTool(SystemTool):
             }
         }
         super().__init__("execute_command", "执行系统命令（安全受限，仅白名单内命令）", parameters)
-        self._project_root = str(Path.cwd())
+        self._project_root = get_workspace_directory()  # 命令在工作目录执行
 
     def _classify_command(self, command: str) -> str:
         """将命令分类: 'safe' / 'dangerous' / 'unknown'"""
@@ -448,7 +452,7 @@ class EditFileTool(SystemTool):
         super().__init__("edit_file", "编辑文件：用字符串匹配替换内容", parameters)
 
     def _safe_path(self, path: str, mode: str = "write") -> Path:
-        p = Path(path).resolve()
+        p = resolve_tool_path(path)
         allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
         if not allowed:
             raise PermissionError(reason)
@@ -495,7 +499,7 @@ class WriteFileTool(SystemTool):
         super().__init__("write_file", "创建或覆盖写入文件", parameters)
 
     def _safe_path(self, path: str, mode: str = "write") -> Path:
-        p = Path(path).resolve()
+        p = resolve_tool_path(path)
         allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
         if not allowed:
             raise PermissionError(reason)
@@ -531,7 +535,7 @@ class GrepFilesTool(SystemTool):
         super().__init__("grep_files", "在文件中搜索文本", parameters)
 
     def _safe_path(self, path: str, mode: str = "read") -> Path:
-        p = Path(path).resolve()
+        p = resolve_tool_path(path)
         allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
         if not allowed:
             raise PermissionError(reason)
@@ -568,7 +572,7 @@ class GrepFilesTool(SystemTool):
                         for ln, line in enumerate(f, 1):
                             if pattern.lower() in line.lower():
                                 preview = line.strip()[:120]
-                                rel = fpath.relative_to(Path(os.getcwd()))
+                                rel = fpath.relative_to(search_path)
                                 results.append(f"{rel}:{ln}: {preview}")
                                 if len(results) >= max_results:
                                     raise StopIteration
@@ -607,19 +611,19 @@ class GlobFilesTool(SystemTool):
         except (ValueError, TypeError):
             max_results = 30
 
-        search_path = Path(root).resolve()
+        search_path = resolve_tool_path(root)
         # 使用统一的权限管理器检查路径
         try:
             from src.tools.file_permissions import get_permission_manager
         except ImportError:
             from tools.file_permissions import get_permission_manager
         pm = get_permission_manager()
-        allowed = pm.project_root()  # 项目根目录
+        allowed = pm.project_root()  # 工作目录
         allowed_path = Path(allowed)
         try:
             search_path.relative_to(allowed_path)
         except ValueError:
-            # 外部路径：通过权限管理器检查
+            # 外部/源码路径：通过权限管理器检查（源码只读放行）
             ok, _ = pm.is_path_allowed(str(search_path), "read")
             if not ok:
                 raise PermissionError(f"不允许访问项目目录外: {search_path}")
@@ -657,7 +661,7 @@ class DeleteFileTool(SystemTool):
         super().__init__("delete_file", "删除文件", parameters)
 
     def _safe_path(self, path: str, mode: str = "write") -> Path:
-        p = Path(path).resolve()
+        p = resolve_tool_path(path)
         allowed, reason = get_permission_manager().is_path_allowed(str(p), mode)
         if not allowed:
             raise PermissionError(reason)

@@ -1126,8 +1126,16 @@ class LINK:
             perms = pm.list_permissions()
             lines = ["当前文件访问权限："]
             for p in perms:
-                mark = "📁" if p["under_project"] else "🔓"
-                lines.append(f"  {mark} {p['path']} ({p['mode']}, {p['type']})")
+                if p.get("read_only"):
+                    mark = "📖"
+                    extra = "（源码只读，写入需授权）"
+                elif p["under_project"]:
+                    mark = "📁"
+                    extra = "（工作目录，读写自由）"
+                else:
+                    mark = "🔓"
+                    extra = ""
+                lines.append(f"  {mark} {p['path']} ({p['mode']}, {p['type']}){extra}")
             return "\n".join(lines)
 
         return f"[[ERROR: 未知的文件操作 {action}]]"
@@ -1612,7 +1620,7 @@ class LINK:
         if hasattr(self, '_user_profile') and self._user_profile:
             parts.append("【关于用户】\n" + self._user_profile)
 
-        # 1b. 已授权的外部路径（始终包含）
+        # 1b. 文件访问环境（工作目录/源码目录/已授权外部路径，始终包含）
         try:
             try:
                 from src.tools.file_permissions import get_permission_manager
@@ -1620,13 +1628,18 @@ class LINK:
                 from tools.file_permissions import get_permission_manager
             pm = get_permission_manager()
             perms = pm.list_permissions()
-            ext_perms = [p for p in perms if not p.get("under_project")]
-            if ext_perms:
-                lines = ["【已授权的外部文件/目录】"]
-                for p in ext_perms:
+            lines = []
+            for p in perms:
+                if p.get("under_project"):
+                    lines.append(f"  - {p['path']}（工作目录，读写自由）")
+                elif p.get("read_only"):
+                    lines.append(f"  - {p['path']}（源码目录，只读，写入需授权）")
+                else:
                     mode_label = "读写" if p["mode"] == "read_write" else "只读" if p["mode"] == "read" else "写入"
-                    lines.append(f"  - {p['path']} ({mode_label}，{'永久' if p['type'] == 'permanent' else '临时'})")
-                lines.append("提示：授权目录后，其下所有文件/子目录自动获得读写权限。")
+                    lines.append(f"  - {p['path']}（已授权 {mode_label}，{'永久' if p['type'] == 'permanent' else '临时'}）")
+            if lines:
+                lines.insert(0, "【文件访问环境】")
+                lines.append("提示：相对路径默认落到工作目录；写源码目录需先授权。")
                 parts.append("\n".join(lines))
         except Exception:
             pass
@@ -2287,6 +2300,7 @@ class LINK:
                     "- 授权外部文件/目录访问 → [[ACTION:FILE_AUTHORIZE|path=路径|mode=read|type=temporary]]\n"
                     "  ⚠️ 授权目录后，其下所有文件自动获得读写权限（无需逐个授权）\n"
                     "- 查看已授权路径 → [[ACTION:FILE_AUTH_LIST]]\n"
+                    "⚠️ 相对路径默认落到工作目录；读源码目录用绝对路径；写源码目录需先授权。\n"
                     "\n"
                     "写入文件时：把完整内容放在 content= 中，回复只需写操作标记和简短确认。\n"
                     "所有文件操作（读/写/编辑/搜索/删除）都实时从磁盘操作，不依赖记忆中的文件信息。\n"

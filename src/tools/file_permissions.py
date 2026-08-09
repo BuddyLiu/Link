@@ -55,8 +55,15 @@ class FilePermissionManager:
     - permanent: 持久权限，写入磁盘，重启后保留
     """
 
-    def __init__(self, persist_path: str = "./data/permissions.json"):
-        self._project_root = str(Path(os.getcwd()).resolve())
+    def __init__(self, persist_path: str = "./data/permissions.json",
+                 workspace_root: str = None, source_root: str = None):
+        # 工作目录（默认 ~/LINK-Workspace）：文件操作的自由落点
+        # 源码目录（默认进程 cwd）：只读保留、写入需授权
+        from config.paths import resolve_workspace, resolve_source_root
+        self._workspace_root = str(Path(workspace_root or resolve_workspace()).resolve())
+        self._source_root = str(Path(source_root or resolve_source_root()).resolve())
+        # 兼容旧属性名（外部仍调用 project_root()）
+        self._project_root = self._workspace_root
         # whitelist: { abs_path: {"mode": ..., "type": ..., "expires_at": Optional[float]} }
         self._whitelist: Dict[str, dict] = {}
         self._persist_path = str(Path(persist_path).resolve())
@@ -65,15 +72,24 @@ class FilePermissionManager:
         self._cleanup_expired()
 
     def project_root(self) -> str:
-        """获取项目根目录"""
-        return self._project_root
+        """获取工作目录（文件操作的项目根）"""
+        return self._workspace_root
+
+    def workspace_root(self) -> str:
+        """获取工作目录"""
+        return self._workspace_root
+
+    def source_root(self) -> str:
+        """获取源码目录"""
+        return self._source_root
 
     def is_path_allowed(self, path: str, mode: str = "read") -> tuple:
         """
         检查路径是否有指定模式的访问权限。
 
         规则：
-        - 项目目录内 → 默认允许（严格边界匹配，避免 /proj_evil 误判）
+        - 工作目录内 → 默认允许读写（严格边界匹配，避免 /proj_evil 误判）
+        - 源码目录内 → 只读放行；写入需白名单授权
         - 白名单中的路径 → 按授权模式检查
         - 授权**目录**的**子路径** → 自动继承读写权限（mode 无关）
           例如：授权 /data 目录 → /data/sub/file.txt 可读也可写
@@ -88,23 +104,19 @@ class FilePermissionManager:
         """
         abs_path = str(Path(path).resolve())
 
-        # 1. 项目目录内 → 默认允许（严格边界匹配）
-        if self._is_under_project(abs_path):
-            return True, ""
-
         # 惰性过期清理（每 50 次检查触发一次）
         self._check_count += 1
         if self._check_count % 50 == 0:
             self._cleanup_expired()
 
-        # 2. 精确匹配
+        # 1. 精确匹配（授权路径放行，含源码目录已授权写入）
         entry = self._whitelist.get(abs_path)
         exact_ok = False
         if entry and not self._is_expired(entry):
             if self._mode_allows(entry["mode"], mode):
                 exact_ok = True
 
-        # 3. 父目录授权继承：只有授权条目是"目录"时才继承
+        # 2. 父目录授权继承：只有授权条目是"目录"时才继承
         #    （按路径长度降序，优先最近的父目录）
         #    目录授权授予全读写，比单文件授权更宽松，故优先级更高
         for whitelisted_path in sorted(self._whitelist.keys(), reverse=True,
@@ -125,12 +137,27 @@ class FilePermissionManager:
         if entry and not self._is_expired(entry):
             return False, f"路径已在白名单中，但仅有 {entry['mode']} 权限，需要 {mode} 权限"
 
+        # 3. 工作目录内 → 默认允许（严格边界匹配）
+        if self._is_under_project(abs_path):
+            return True, ""
+
+        # 4. 源码目录内 → 只读放行，写入拒绝（白名单已检查，未授权）
+        if self._is_under_source(abs_path):
+            if mode == "read":
+                return True, ""
+            return False, self._build_deny_message(abs_path, mode)
+
         return False, self._build_deny_message(abs_path, mode)
 
     def _is_under_project(self, abs_path: str) -> bool:
-        """严格判断路径是否在项目目录内（边界匹配，防 /proj_evil 误判）"""
-        root = self._project_root.rstrip(os.sep) + os.sep
-        return abs_path == self._project_root or abs_path.startswith(root)
+        """严格判断路径是否在工作目录内（边界匹配，防 /proj_evil 误判）"""
+        root = self._workspace_root.rstrip(os.sep) + os.sep
+        return abs_path == self._workspace_root or abs_path.startswith(root)
+
+    def _is_under_source(self, abs_path: str) -> bool:
+        """严格判断路径是否在源码目录内（边界匹配）"""
+        root = self._source_root.rstrip(os.sep) + os.sep
+        return abs_path == self._source_root or abs_path.startswith(root)
 
     def _is_dir_grant(self, whitelisted_path: str, entry: dict) -> bool:
         """判断授权条目是否为目录授权（是目录时才允许子路径继承）"""
@@ -145,6 +172,16 @@ class FilePermissionManager:
     def _build_deny_message(self, path: str, mode: str) -> str:
         """构建友好的拒绝访问提示"""
         parent = os.path.dirname(path)
+        # 源码目录内的写入 → 专用提示（源码默认只读）
+        if self._is_under_source(path):
+            return (
+                f"源码目录默认只读，不允许写入:\n  {path}\n\n"
+                f"如需允许写入源码，可以告诉我：\n"
+                f'  "授权写入源码 {path}"\n'
+                f'  "授权目录 {parent} 的读写权限"   ← 授权后该目录下文件可读写\n\n'
+                f"也可以直接让我弹窗授权。\n"
+                f"💡 普通文件请保存到默认工作目录 {self._workspace_root}"
+            )
         return (
             f"不允许访问项目目录之外的路径:\n  {path}\n\n"
             f"如需授权，可以告诉我：\n"
@@ -292,7 +329,7 @@ class FilePermissionManager:
         return False
 
     def list_permissions(self) -> list:
-        """列出所有外部授权"""
+        """列出所有访问权限（工作目录 + 源码目录 + 白名单授权）"""
         result = []
         for path, entry in sorted(self._whitelist.items()):
             result.append({
@@ -302,13 +339,22 @@ class FilePermissionManager:
                 "is_dir": bool(entry.get("is_dir")),
                 "under_project": self._is_under_project(path),
             })
-        # 也显示项目根目录
+        # 工作目录（文件操作的项目根，读写自由）
         result.insert(0, {
-            "path": self._project_root,
+            "path": self._workspace_root,
             "mode": "read_write",
             "type": "permanent",
             "is_dir": True,
             "under_project": True,
+        })
+        # 源码目录（只读，写入需授权）
+        result.insert(0, {
+            "path": self._source_root,
+            "mode": "read",
+            "type": "permanent",
+            "is_dir": True,
+            "under_project": False,
+            "read_only": True,
         })
         return result
 
