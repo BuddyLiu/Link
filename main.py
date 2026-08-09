@@ -2045,34 +2045,120 @@ class LINK:
         return response
     
     def _execute_task_step_with_brain(self, task, step):
-        """使用大脑引擎执行任务步骤"""
+        """使用大脑引擎执行任务步骤（真正调用工具，而非仅生成方案）"""
         if not self.brain_engine:
             return {
                 "success": False,
                 "result": f"⚠️ 大脑引擎不可用，无法自动执行步骤。请手动执行: {step.action}"
             }
-        
+
         try:
-            # 根据任务类型和步骤描述生成提示
+            # 根据任务类型和步骤描述生成执行提示
             prompt = self._generate_execution_prompt(task, step)
-            
-            # 使用大脑引擎生成执行方案
+
+            # 优先用 Function Calling 真正执行动作（调用工具）
+            executed = self._try_execute_step_with_tools(prompt, task, step)
+            if executed is not None:
+                return executed
+
+            # 降级：仅生成执行方案
             execution_plan = self.brain_engine.simple_query(
                 prompt,
                 system_prompt="你是一个智能任务执行助手，请根据任务要求生成具体的执行方案。"
             )
-            
             return {
                 "success": True,
                 "result": f"📋 大脑引擎生成的执行方案:\n{execution_plan}\n\n✅ 步骤执行完成。"
             }
-            
+
         except Exception as e:
             self.logger.error(f"使用大脑引擎执行步骤失败: {str(e)}")
             return {
                 "success": False,
                 "result": f"❌ 大脑引擎执行失败: {str(e)}\n请手动执行: {step.action}"
             }
+
+    def _try_execute_step_with_tools(self, prompt: str, task, step) -> Optional[dict]:
+        """尝试用工具调用真正执行步骤动作。返回 None 表示无需工具/降级到方案。"""
+        if not self.brain_engine or not self.brain_engine.model_adapter:
+            return None
+        try:
+            action = (step.action or "").lower()
+
+            # ① 确定性的文件动作解析（写/创建文件），直接执行工具，不依赖 LLM
+            direct = self._try_direct_file_action(step)
+            if direct is not None:
+                return direct
+
+            # ② LLM 工具调用：明确要求调用工具执行
+            messages = [{
+                "role": "system",
+                "content": (
+                    "你是任务执行助手。用户要求你执行一个动作，你必须真正执行它，"
+                    "不要只给方案。规则：\n"
+                    "- 创建/写入文件 → 调用 write_file 工具（相对路径会落到默认工作目录）\n"
+                    "- 读取文件 → 调用 read_file\n"
+                    "- 搜索信息 → 调用 search_web\n"
+                    "- 执行命令 → 调用 execute_command\n"
+                    "- 纯研究/规划类动作（无法用工具完成）→ 直接给出结论或方案\n"
+                    "执行工具后，简要说明做了什么。"
+                )
+            }, {"role": "user", "content": prompt}]
+            result = self.brain_engine.chat_with_tools(
+                messages, self.TOOL_DEFS,
+                tool_executor=self._execute_tool_call,
+                max_rounds=6,
+                stream_callback=getattr(self, "_progress_callback", None),
+            )
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            if text and "查询失败" not in text:
+                return {
+                    "success": True,
+                    "result": f"✅ 步骤执行完成：\n{text.strip()[:2000]}",
+                }
+            return None
+        except Exception as e:
+            self.logger.warning(f"工具化步骤执行失败，降级方案: {e}")
+            return None
+
+    def _try_direct_file_action(self, step) -> Optional[dict]:
+        """确定性解析"创建/写入文件"类步骤动作，直接调用 write_file 工具。
+
+        识别模式：动作含 创建/写 + 文件名(带扩展名)，且描述含具体内容或可生成。
+        """
+        import re as _re
+        action = step.action or ""
+        desc = step.description or ""
+        # 仅处理明确涉及文件创建的动作
+        if not any(k in action for k in ("创建", "写", "生成", "保存")):
+            return None
+        # 提取文件名（含扩展名）
+        m = _re.search(r'([\w一-鿿.-]+\.\w{1,10})', action + " " + desc)
+        if not m:
+            return None
+        filename = m.group(1).strip()
+        # 从描述/动作提取内容：优先引号内，其次"内容为/内容是"后
+        content = ""
+        combined = action + " " + desc
+        qm = _re.search(r'["“]([^"”]{1,200})["”]', combined)
+        if qm:
+            content = qm.group(1).strip()
+        else:
+            cm = _re.search(r'(?:内容[是为]|内容[:：])\s*["“]?([^，。,;"”\n]{1,200})', combined)
+            if cm:
+                content = cm.group(1).strip()
+        # 生成类动作让 LLM 生成内容，否则若提取到内容则直接写
+        if content:
+            try:
+                result = self.tool_manager.execute_tool("write_file",
+                                                        path=filename, content=content)
+                return {"success": True,
+                        "result": f"✅ 已创建文件 {filename}\n{result}"}
+            except Exception as e:
+                return {"success": False,
+                        "result": f"❌ 创建文件失败: {e}"}
+        # 未提取到明确内容 → 交给 LLM 工具调用处理
+        return None
     
     def _generate_execution_prompt(self, task, step):
         """生成执行步骤的提示"""
