@@ -1926,17 +1926,21 @@ class LINK:
             self.planning_engine.update_task_step(
                 task_id,
                 step.id,
-                "completed" if execution_result["success"] else "in_progress",
+                "completed" if execution_result["success"] else "failed",
                 execution_result["result"]
             )
             task._last_execution_result = execution_result.get("result", "")
 
             steps_executed += 1
-            
+
             if execution_result["success"]:
                 response += (f"✅ 步骤{i+1}执行完成：{step.description}\n")
             else:
-                response += (f"🔄 步骤{i+1}开始执行：{step.description}\n")
+                response += (f"❌ 步骤{i+1}执行失败：{step.description}\n")
+                # 失败即中断，避免依赖前置步骤的后续步骤错误执行
+                response += f"   失败原因: {execution_result['result'][:120]}\n"
+                response += f"💡 输入'完成步骤 {task_id}'重试或手动处理"
+                break
             
             # 添加简化的执行结果（避免响应过长）
             result_preview = execution_result["result"][:100] + "..." if len(execution_result["result"]) > 100 else execution_result["result"]
@@ -2360,20 +2364,23 @@ class LINK:
             self.planning_engine.update_task_step(
                 task_id,
                 step.id,
-                "completed" if execution_result["success"] else "in_progress",
+                "completed" if execution_result["success"] else "failed",
                 execution_result["result"]
             )
             task._last_execution_result = execution_result.get("result", "")
 
             steps_executed += 1
-            
+
             if execution_result["success"]:
                 response += (f"✅ 步骤{i+1}执行完成：{step.description}\n\n"
                            f"📋 执行结果：\n{execution_result['result']}\n\n")
             else:
-                response += (f"🔄 步骤{i+1}开始执行：{step.description}\n\n"
-                           f"📋 执行结果：\n{execution_result['result']}\n\n")
-            
+                response += (f"❌ 步骤{i+1}执行失败：{step.description}\n\n"
+                           f"📋 失败原因：\n{execution_result['result']}\n\n")
+                # 失败即中断（自动模式也停），避免依赖步骤的后续步骤错误执行
+                response += f"💡 输入'完成步骤 {task_id}'重试或手动处理"
+                break
+
             # 如果不是自动执行所有步骤，执行第一步后停止
             if not auto_execute_all:
                 response += f"💡 继续下一步请输入：'完成步骤 {task_id}'"
