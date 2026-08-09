@@ -1794,14 +1794,21 @@ class LINK:
             # 存储任务
             self.active_tasks[task.id] = task
             
-            # 生成响应（不自动执行，等待用户手动开始）
+            # 生成响应
             response = self._format_task_plan_response(task, decomposition_result, planning_result)
-            
-            # 添加手动执行提示
-            response += f"\n💡 任务已创建，等待手动执行。\n"
-            response += f"   输入'开始执行 {task.id}'开始执行第一步\n"
-            response += f"   或输入'查看任务 {task.id}'查看详细规划"
-            
+
+            # 自动模式：创建任务后自动开始执行前几步（智能化执行）
+            auto = getattr(self, "_execution_mode", "manual") == "auto"
+            if auto and planning_result.get("plan"):
+                response += "\n⚡ 检测到自动执行模式，正在自动开始任务...\n"
+                exec_result = self._auto_execute_task_steps(task.id, steps_to_execute=2)
+                response += exec_result
+            else:
+                # 手动模式：等待用户开始
+                response += f"\n💡 任务已创建，等待手动执行。\n"
+                response += f"   输入'开始执行 {task.id}'开始执行第一步\n"
+                response += f"   或输入'查看任务 {task.id}'查看详细规划"
+
             return response
             
         except Exception as e:
