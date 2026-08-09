@@ -312,6 +312,16 @@ class LINK:
         if not self.reflection_engine:
             return None
         try:
+            # 全局反思节流：连续错误避免频繁调用 LLM 反思
+            import time as _t
+            now = _t.time()
+            last = getattr(self, "_last_reflection_ts", 0)
+            if now - last < 5 and trigger in ("task_failure", "low_confidence"):
+                return None
+            self._last_reflection_ts = now
+        except Exception:
+            pass
+        try:
             from src.reflection.reflection_engine import ReflectionTrigger
             trig_map = {
                 "task_failure": ReflectionTrigger.TASK_FAILURE,
