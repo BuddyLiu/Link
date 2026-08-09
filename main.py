@@ -1818,10 +1818,13 @@ class LINK:
             dropped_summaries.append(f"Q:{q} A:{a}")
 
         if dropped_summaries:
-            # 合并最后几对被裁的对话作为摘要
-            raw = " | ".join(dropped_summaries[-3:])
-            self._history_summary = raw[:300]  # 限制摘要长度
-            self.logger.info(f"对话历史裁剪，新增摘要: {self._history_summary[:80]}...")
+            # 合并被裁对话作为摘要（累积追加，保留更多上下文）
+            raw = " | ".join(dropped_summaries[-5:])
+            if self._history_summary:
+                self._history_summary = (raw + " | " + self._history_summary)[:500]
+            else:
+                self._history_summary = raw[:500]
+            self.logger.info(f"对话历史裁剪，累计摘要: {len(self._history_summary)} 字符")
 
         if self._conversation_history:
             current_len = sum(len(m["content"]) for m in self._conversation_history)
