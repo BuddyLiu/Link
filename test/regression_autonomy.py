@@ -25,6 +25,12 @@ def check(name, cond, detail=""):
 
 
 def main():
+    # 清理持久化的执行模式，保证"默认手动"断言隔离
+    import os as _os
+    _mode_file = _os.path.join("data", "settings", "execution_mode.json")
+    if _os.path.exists(_mode_file):
+        _os.remove(_mode_file)
+
     from main import LINK
 
     a = LINK()
