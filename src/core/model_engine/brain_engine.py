@@ -45,7 +45,9 @@ class BrainEngine:
         self.model_adapter = None
         self.logger = None
         self.interaction_history: List[Dict[str, Any]] = []
-        
+        # Token 用量统计（跨所有 LLM 调用累积，供状态栏展示）
+        self.token_usage = {"total": 0, "calls": 0}
+
         self._initialize_components()
     
     def _initialize_components(self):
@@ -80,6 +82,8 @@ class BrainEngine:
                 self._log("error", "模型适配器初始化失败")
             else:
                 self._log("info", f"模型适配器初始化成功: {self.model_adapter.get_model_info()['model_name']}")
+                # 挂接全局 token 统计回调（覆盖 simple_query 等只返回文本的路径）
+                self.model_adapter.on_token_usage = self._record_token_usage_cb
                 
         except Exception as e:
             self._log("error", f"初始化模型适配器失败: {str(e)}")
@@ -130,7 +134,30 @@ class BrainEngine:
         if len(self.interaction_history) > max_history:
             self.interaction_history = self.interaction_history[-max_history:]
     
-    def process_user_input(self, 
+    def _record_token_usage_cb(self, tokens: int) -> None:
+        """适配器回调：每次 LLM 调用返回 usage 时累积 token 用量"""
+        self._accum_token(tokens)
+
+    def _accum_token(self, tokens: int) -> None:
+        """统一累积逻辑（有 token 才记）"""
+        tokens = tokens or 0
+        if tokens > 0:
+            self.token_usage["total"] += tokens
+            self.token_usage["calls"] += 1
+
+    def get_token_stats(self) -> Dict[str, Any]:
+        """获取 token 用量统计（供状态栏展示）"""
+        total = self.token_usage.get("total", 0)
+        calls = self.token_usage.get("calls", 0)
+        return {
+            "total": total,
+            "calls": calls,
+            # 单位换算：显示为万级更直观
+            "total_wan": round(total / 10000, 2),
+            "avg": round(total / calls, 1) if calls else 0,
+        }
+
+    def process_user_input(self,
                            user_input: str,
                            context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -429,7 +456,7 @@ class BrainEngine:
                 max_tokens=max_tokens,
                 **kwargs
             )
-            
+
             # 记录交互
             self._log_interaction(
                 "chat_completion",

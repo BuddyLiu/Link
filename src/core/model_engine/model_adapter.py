@@ -68,6 +68,8 @@ class ModelAdapter(ABC):
         self.model_name = config.get("model_name", "unknown")
         self.logger = None
         self._initialized = False
+        # Token 用量回调：每次 LLM 调用返回 usage 时触发，用于全局统计
+        self.on_token_usage = None
     
     def set_logger(self, logger):
         """设置日志记录器"""

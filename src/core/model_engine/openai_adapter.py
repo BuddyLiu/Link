@@ -175,6 +175,13 @@ class OpenAIAdapter(ModelAdapter):
                 finish_reason = choice.finish_reason or "stop"
                 total_tokens = response.usage.total_tokens if response.usage else 0
 
+            # 触发全局 token 统计回调（覆盖 simple_query 等只返回文本的路径）
+            if self.on_token_usage and total_tokens > 0:
+                try:
+                    self.on_token_usage(total_tokens)
+                except Exception:
+                    pass
+
             extra_meta = {}
             if reasoning:
                 extra_meta["reasoning"] = reasoning

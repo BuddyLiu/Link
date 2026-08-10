@@ -169,7 +169,14 @@ class OllamaAdapter(ModelAdapter):
             eval_count = response_data.get("eval_count", 0)
             prompt_eval_count = response_data.get("prompt_eval_count", 0)
             total_tokens = eval_count + prompt_eval_count
-            
+
+            # 触发全局 token 统计回调
+            if self.on_token_usage and total_tokens > 0:
+                try:
+                    self.on_token_usage(total_tokens)
+                except Exception:
+                    pass
+
             # 构建响应对象
             result = ModelResponse(
                 text=response_text,
@@ -265,7 +272,14 @@ class OllamaAdapter(ModelAdapter):
             eval_count = response_data.get("eval_count", 0)
             prompt_eval_count = response_data.get("prompt_eval_count", 0)
             total_tokens = eval_count + prompt_eval_count
-            
+
+            # 触发全局 token 统计回调
+            if self.on_token_usage and total_tokens > 0:
+                try:
+                    self.on_token_usage(total_tokens)
+                except Exception:
+                    pass
+
             # 构建响应对象
             result = ModelResponse(
                 text=response_text,

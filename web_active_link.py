@@ -860,6 +860,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <div id="status-content">
 <div id="status-model">模型: 加载中...</div>
 <div id="status-memory">记忆: 加载中...</div>
+<div id="status-token">Token: 加载中...</div>
 <div id="status-session">会话: 加载中...</div>
 </div>
 </details>
@@ -913,6 +914,11 @@ ws.onopen = () => { _wsReconnectAttempts = 0; addMessage('system', '已连接到
 ws.onclose = () => { addMessage('system', '连接已断开'); reconnectWS(); };
 ws.onerror = () => { /* onclose 会触发重连，此处避免重复提示 */ };
 
+function fmtToken(n) {
+  if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+  return String(n);
+}
+
 async function updateStatus() {
   try {
     var r = await fetch('/api/debug');
@@ -930,6 +936,14 @@ async function updateStatus() {
     document.getElementById('status-model').innerHTML =
       '<span style="color:#6366f1">' + provider + '</span> / ' + model + ' [' + health + ']';
     document.getElementById('status-memory').innerHTML = totalMem + ' 条记忆';
+    var ts = (d.brain || {}).token_stats || {};
+    var tokenEl = document.getElementById('status-token');
+    if (ts.total) {
+      var avgStr = ts.avg ? ' / 均' + ts.avg : '';
+      tokenEl.innerHTML = 'Token: ' + fmtToken(ts.total) + '（' + ts.calls + ' 次调用' + avgStr + '）';
+    } else {
+      tokenEl.innerHTML = 'Token: 0';
+    }
     document.getElementById('status-session').innerHTML = '运行 ' + uptime;
   } catch(e) { /* ignore */ }
 }
@@ -2655,6 +2669,11 @@ function denyPermission() {
             be = link.brain_engine
             result["config"] = getattr(be, "config", {})
             result["health"] = be.health_check() if hasattr(be, "health_check") else {}
+            if hasattr(be, "get_token_stats"):
+                try:
+                    result["token_stats"] = be.get_token_stats()
+                except Exception:
+                    result["token_stats"] = {}
             history = []
             if hasattr(be, "get_interaction_history"):
                 for h in be.get_interaction_history(limit=20):

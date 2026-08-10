@@ -47,8 +47,17 @@ class _MockAdapter:
                            "n_messages": len(messages)})
         if self._first_empty and len(self.calls) == 1:
             # 第一次：思考吃光预算，回复为空
-            return self._mk("", reasoning="x" * 5000, finish="length")
-        return self._mk("✅ 重试后的正常回复内容。")
+            resp = self._mk("", reasoning="x" * 5000, finish="length")
+        else:
+            resp = self._mk("✅ 重试后的正常回复内容。")
+        # 模拟真实适配器触发全局 token 统计回调（返回 100 token）
+        cb = getattr(self, "on_token_usage", None)
+        if cb:
+            try:
+                cb(100)
+            except Exception:
+                pass
+        return resp
 
 
 def _make_engine(adapter) -> BrainEngine:
@@ -59,6 +68,9 @@ def _make_engine(adapter) -> BrainEngine:
     engine._last_tool_sigs = []
     engine._loop_count = 0
     engine._json_fail_counts = {}
+    engine.token_usage = {"total": 0, "calls": 0}
+    # 挂接全局 token 统计回调（与 _initialize_components 的行为一致）
+    adapter.on_token_usage = engine._accum_token
     return engine
 
 
@@ -122,8 +134,38 @@ def test_empty_without_reasoning_no_retry():
     assert result.get("text") == ""
 
 
+def test_token_usage_accumulated():
+    """LLM 调用应通过适配器回调累积 token 统计"""
+    adapter = _MockAdapter(first_empty=False)
+    engine = _make_engine(adapter)
+
+    # 两次调用，每次触发回调累加 100 token
+    engine.chat_with_tools(
+        [{"role": "user", "content": "你好"}], tools=[], max_rounds=3)
+    engine.chat_with_tools(
+        [{"role": "user", "content": "再问"}], tools=[], max_rounds=3)
+
+    stats = engine.get_token_stats()
+    assert stats["total"] == 200, f"token 应累计 200，实际 {stats['total']}"
+    assert stats["calls"] == 2, f"调用数应 2，实际 {stats['calls']}"
+    assert stats["total_wan"] == 0.02, f"万级换算错误: {stats['total_wan']}"
+    assert stats["avg"] == 100.0, f"平均错误: {stats['avg']}"
+
+
+def test_token_usage_zero_when_no_calls():
+    """未调用 LLM 时 token 统计为 0"""
+    adapter = _MockAdapter(first_empty=False)
+    engine = _make_engine(adapter)
+    stats = engine.get_token_stats()
+    assert stats["total"] == 0
+    assert stats["calls"] == 0
+    assert stats["total_wan"] == 0.0
+
+
 if __name__ == "__main__":
     test_empty_reply_retry_returns_text()
     test_non_empty_reply_no_retry()
     test_empty_without_reasoning_no_retry()
+    test_token_usage_accumulated()
+    test_token_usage_zero_when_no_calls()
     print("✅ test_empty_reply_retry 全部通过")
