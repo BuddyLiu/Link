@@ -1730,17 +1730,38 @@ function typewriteMessage(role, fullText) {
     return Math.max(min, base - t * (base - min));
   }
 
+  // 渲染节流：全量 marked.parser 保持渲染正确，但每 RENDER_STEP 个 token
+  // 才渲染一次（打字机按 token 步进，合并中间步骤），把 O(n²) 开销降为
+  // O(n²)/RENDER_STEP。长内容（>200 token）时步长加大，进一步减负。
+  var RENDER_STEP = tokens.length > 200 ? 3 : 1;
+  var _lastRenderIdx = -1;
+  var _rafPending = false;
+
+  function renderCurrent() {
+    _rafPending = false;
+    try { bubble.innerHTML = marked.parser(tokens.slice(0, idx + 1)); }
+    catch(e) { bubble.innerHTML = '<p>' + fullText.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
+    scrollToBottom();
+  }
+
   function type() {
     if (idx < tokens.length) {
       var now = Date.now();
       var elapsed = now - lastTickTime;
       lastTickTime = now;
-      try { bubble.innerHTML = marked.parser(tokens.slice(0, idx + 1)); }
-      catch(e) { bubble.innerHTML = '<p>' + fullText.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
-      scrollToBottom();
+      // 渲染节流：仅当跨过 RENDER_STEP 边界或到末尾时渲染，并用 rAF 合并
+      if (idx >= _lastRenderIdx + RENDER_STEP) {
+        _lastRenderIdx = idx;
+        if (!_rafPending) {
+          _rafPending = true;
+          requestAnimationFrame(renderCurrent);
+        }
+      }
       idx++;
       setTimeout(type, calcInterval());
     } else {
+      // 确保最终渲染完整
+      if (!_rafPending) { _rafPending = true; requestAnimationFrame(renderCurrent); }
       scrollToBottom();
       if (!div.querySelector('.copy-btn')) {
         var copyBtn = document.createElement('button');
