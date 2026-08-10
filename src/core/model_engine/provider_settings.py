@@ -17,7 +17,7 @@ DEFAULT_SETTINGS = {
     "model": "deepseek-chat",
     "offline_model": "qwen2.5:1.5b",
     "temperature": 0.7,
-    "max_tokens": 4096,
+    "max_tokens": 8192,  # DeepSeek Reasoner 思考+回复共享该预算，4096 易被长思考耗尽
 }
 
 

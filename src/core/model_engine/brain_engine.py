@@ -506,6 +506,51 @@ class BrainEngine:
             self._log("error", f"简单查询失败: {str(e)}")
             return f"查询失败: {str(e)}"
 
+    def _retry_truncated_reply(self, messages: list, reasoning: str,
+                               truncated: bool, stream_callback: callable = None):
+        """思考耗尽输出预算时，追加约束提示重试获取完整回复。
+
+        思考(reasoning_content)与回复(content)共享 max_tokens 总预算，
+        思考过长会吃掉 content 的空间，导致回复为空或被 length 截断。
+        策略：逐次提高 max_tokens 并明确要求停止思考、精简作答，
+        最多重试 2 次（8192 → 16384）。
+
+        Returns:
+            (text, reasoning) 成功时返回；全部失败返回 None
+        """
+        self._log("warning",
+                  f"思考过程({len(reasoning)}字)耗尽输出预算，{'回复为空' if not truncated else '回复被截断'}，"
+                  f"重试(提高max_tokens+约束思考)")
+        last_text = ""
+        for attempt, budget in enumerate((8192, 16384)):
+            messages.append({
+                "role": "user",
+                "content": (f"你上一轮的思考过程过长，把回复的 token 预算耗尽了，最终回复"
+                            f"{'为空' if not truncated else '被截断未完整输出'}。"
+                            "这一轮请停止深入思考，不要重新推导，直接精简地输出你的最终答案，"
+                            "确保完整不要截断。"),
+            })
+            try:
+                resp = self.model_adapter.chat_completion(
+                    messages, temperature=0.7,
+                    max_tokens=budget,
+                    tools=None,  # 重试专注纯文本回复，避免再进入工具调用
+                    stream_callback=stream_callback,
+                )
+                text2 = resp.text or ""
+                reasoning2 = resp.metadata.get("reasoning", "")
+                last_text = text2
+                # 重试成功：非空且未再被截断
+                if text2 and resp.finish_reason != "length":
+                    return (text2, reasoning2)
+                self._log("warning", f"重试第{attempt + 1}次后仍{'为空' if not text2 else '被截断'}"
+                                     f"(长度{len(text2)})，继续尝试")
+            except Exception as re_:
+                self._log("error", f"截断回复重试失败(第{attempt + 1}次): {re_}")
+        self._log("warning", "重试多次后仍未获得完整回复，返回已获取内容")
+        # 返回最后一次获取到的内容（即使被截断也有价值，优于空兜底）
+        return (last_text, "") if last_text else None
+
     def chat_with_tools(self, messages: list, tools: list,
                         tool_executor: callable = None,
                         max_rounds: int = 50,
@@ -545,7 +590,7 @@ class BrainEngine:
                 use_stream = stream_callback is not None
                 resp = self.model_adapter.chat_completion(
                     messages, temperature=0.7,
-                    max_tokens=self.config.get("default_max_tokens", 4096),
+                    max_tokens=self.config.get("default_max_tokens", 8192),
                     tools=tools,
                     stream_callback=stream_callback if use_stream else None,
                 )
@@ -564,34 +609,22 @@ class BrainEngine:
                 if not is_tool_call:
                     self._log("info", f"  → 纯文本回复 (长度 {len(text)})")
                     # DeepSeek Reasoner 的 reasoning_content 与 content 共享 max_tokens 输出预算。
-                    # 思考过长会把预算耗尽，content 被截断为空 → 触发上层兜底"我已经收到你的消息"。
-                    # 补救：追加约束提示重试一次，提高 max_tokens 并禁止继续思考，让剩余预算专注产出回复。
-                    if not text and reasoning and round_num == 0:
-                        self._log("warning",
-                                  f"思考过程({len(reasoning)}字)耗尽输出预算，回复为空，重试(提高max_tokens+约束思考)")
-                        messages.append({
-                            "role": "user",
-                            "content": "你上一轮的思考过程过长，把回复的 token 预算耗尽了，最终回复为空被截断。"
-                                       "这一轮请停止深入思考，不要重新推导，直接用文字输出你的最终答案。",
-                        })
-                        try:
-                            resp2 = self.model_adapter.chat_completion(
-                                messages, temperature=0.7,
-                                max_tokens=8192,
-                                tools=None,  # 重试专注纯文本回复，避免再进入工具调用
-                                stream_callback=stream_callback if use_stream else None,
-                            )
-                            text2 = resp2.text or ""
-                            reasoning2 = resp2.metadata.get("reasoning", "")
+                    # 思考过长会把预算耗尽：content 可能为空（→上层兜底），也可能非空但被 length 截断
+                    # （→用户看到"结果没打印完"）。两种都需补救：追加约束提示重试，提高 max_tokens
+                    # 并禁止继续思考，让剩余预算专注产出完整回复。
+                    truncated = resp.finish_reason == "length"
+                    # 触发条件：① 空回复且有思考（预算耗尽）② finish_reason=length 被截断
+                    if ((not text and reasoning) or truncated) and round_num == 0:
+                        retried = self._retry_truncated_reply(
+                            messages, reasoning, truncated, stream_callback if use_stream else None)
+                        if retried:
+                            text2, reasoning2 = retried
                             if reasoning2:
                                 all_reasoning.append(reasoning2)
                             if text2:
                                 self._log("info", f"  → 重试后回复 (长度 {len(text2)})")
                                 full_reasoning = "\n".join(all_reasoning) if all_reasoning else reasoning2
                                 return {"text": text2, "reasoning": full_reasoning}
-                            self._log("warning", "重试后回复仍为空")
-                        except Exception as re_:
-                            self._log("error", f"空回复重试失败: {re_}")
                     # 返回累积的完整思考（多轮工具调用时思考分散在各轮）
                     full_reasoning = "\n".join(all_reasoning) if all_reasoning else reasoning
                     return {"text": text, "reasoning": full_reasoning}  # 纯文本回复，完成
