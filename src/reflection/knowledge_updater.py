@@ -333,19 +333,22 @@ class KnowledgeUpdater:
         for knowledge_type, entries in self.knowledge_base.items():
             if len(entries) <= 10:  # 条目太少不需要整合
                 continue
-            
+
             # 按置信度和适用性排序
             entries.sort(key=lambda x: (x.confidence + x.applicability) / 2, reverse=True)
-            
+
             # 保留高质量条目（前70%）
             keep_count = int(len(entries) * 0.7)
+            removed_ids = {e.id for e in entries[keep_count:]}
             self.knowledge_base[knowledge_type] = entries[:keep_count]
-            
-            consolidated_count += (len(entries) - keep_count)
-            
-            # 重建索引
+
+            consolidated_count += len(removed_ids)
+
+            # 重建索引：新增/保留条目注册，移除被整合掉的条目
             for entry in self.knowledge_base[knowledge_type]:
                 self.knowledge_index[entry.id] = entry
+            for removed_id in removed_ids:
+                self.knowledge_index.pop(removed_id, None)
         
         self._log("info", f"知识整合完成，删除了 {consolidated_count} 条低质量知识")
         
