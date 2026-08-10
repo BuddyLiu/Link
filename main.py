@@ -930,7 +930,16 @@ class LINK:
         if self._maintenance_count % 10 == 0:
             self._proactive_maintenance()
 
-        self.logger.info(f"生成响应: {response[:50]}...")
+        # 记录完整回复（供控制台查看最终结果）
+        try:
+            reasoning_final = getattr(self, '_last_reasoning', '')
+            final_log = f"\n[对话结果] 用户: {input_text[:200]}\n"
+            if reasoning_final:
+                final_log += f"[思考过程] ({len(reasoning_final)}字):\n{reasoning_final[:1500]}\n"
+            final_log += f"[回复内容] ({len(response)}字):\n{response[:2000]}"
+            self.logger.info(final_log)
+        except Exception as le:
+            self.logger.debug(f"对话结果日志失败: {le}")
         return response
 
     def _check_and_reflect(self, input_text: str, response: str, is_online: bool = False):
@@ -3100,6 +3109,23 @@ class LINK:
         messages.extend(history_msgs)
         messages.append({"role": "user", "content": input_text})
 
+        # 记录发送给 DeepSeek 的请求（供控制台查看交互细节）
+        try:
+            _ad = getattr(self.brain_engine, "model_adapter", None)
+            _model = (getattr(_ad, "model_name", "") or getattr(_ad, "model", "") or "unknown")
+            _base = (getattr(_ad, "api_base", "") or "")
+            req_log = (f"\n{'='*50}\n[LLM 请求] → {_base} (模型: {_model})\n"
+                       f"[LLM 请求] 消息数: {len(messages)}\n")
+            for m in messages:
+                role = m.get("role", "?")
+                content = str(m.get("content", ""))[:500]
+                if m.get("tool_calls"):
+                    content += f" | tool_calls: {m['tool_calls']}"
+                req_log += f"  [{role}] {content}\n"
+            self.logger.info(req_log)
+        except Exception as le:
+            self.logger.debug(f"请求日志失败: {le}")
+
         # 调用 DeepSeek Function Calling
         try:
             result = self.brain_engine.chat_with_tools(
@@ -3112,6 +3138,14 @@ class LINK:
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""
             self._last_reasoning = reasoning if len(reasoning) > 20 else ""
+
+            # 记录 DeepSeek 返回的思考过程和回复（供控制台查看）
+            try:
+                resp_log = f"[LLM 响应] 思考过程({len(reasoning)}字):\n{reasoning[:2000]}\n[LLM 回复] ({len(text)}字):\n{text[:2000]}"
+                self.logger.info(resp_log)
+            except Exception as re_:
+                self.logger.debug(f"响应日志失败: {re_}")
+
             if text and "查询失败" not in text:
                 return text.strip()
             return self._process_action_response(
