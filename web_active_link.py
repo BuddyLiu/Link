@@ -921,7 +921,10 @@ function fmtToken(n) {
 
 async function updateStatus() {
   try {
-    var r = await fetch('/api/debug');
+    var ctrl = new AbortController();
+    var _stTimer = setTimeout(function(){ ctrl.abort(); }, 8000);
+    var r = await fetch('/api/debug', {signal: ctrl.signal});
+    clearTimeout(_stTimer);
     var d = await r.json();
     var b = d.brain || {};
     var m = d.memory || {};
@@ -945,14 +948,21 @@ async function updateStatus() {
       tokenEl.innerHTML = 'Token: 0';
     }
     document.getElementById('status-session').innerHTML = '运行 ' + uptime;
-  } catch(e) { /* ignore */ }
+  } catch(e) {
+    // 状态刷新失败：状态栏提示连接中断，避免静默显示过期数据
+    var el = document.getElementById('status-model');
+    if (el) el.innerHTML = '<span style="color:#ef4444">⚠️ 连接中断</span>';
+  }
 }
 setInterval(updateStatus, 10000);
 
 // ── 任务执行模式切换 ──
 async function loadExecMode() {
   try {
-    var r = await fetch('/api/execution-mode');
+    var ctrl = new AbortController();
+    var _mt = setTimeout(function(){ ctrl.abort(); }, 8000);
+    var r = await fetch('/api/execution-mode', {signal: ctrl.signal});
+    clearTimeout(_mt);
     var d = await r.json();
     var mode = d.mode || 'manual';
     var btn = document.getElementById('mode-btn');
@@ -960,7 +970,7 @@ async function loadExecMode() {
       btn.textContent = mode === 'auto' ? '⚙️ 自动' : '⚙️ 手动';
       btn.style.color = mode === 'auto' ? '#22c55e' : '';
     }
-  } catch(e) { /* ignore */ }
+  } catch(e) { /* 失败时保持默认手动模式 */ }
 }
 async function toggleExecMode() {
   var btn = document.getElementById('mode-btn');
