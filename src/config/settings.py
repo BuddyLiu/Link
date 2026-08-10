@@ -6,7 +6,7 @@ LINK配置文件管理模块
 import os
 from typing import Dict, Any, Optional, List
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
 # 加载.env文件
@@ -27,8 +27,9 @@ class ModelSettings(BaseSettings):
     api_key: Optional[str] = Field(default=None, description="API密钥")
     api_base: Optional[str] = Field(default=None, description="API基础URL")
     
-    class Config:
-        env_prefix = "MODEL_"
+    model_config = SettingsConfigDict(
+        env_prefix="MODEL__"
+    )
 
 class MemorySettings(BaseSettings):
     """记忆存储配置"""
@@ -42,8 +43,9 @@ class MemorySettings(BaseSettings):
     enable_auto_summary: bool = Field(default=True, description="是否启用自动摘要")
     summary_min_length: int = Field(default=100, description="触发摘要的最小文本长度")
     
-    class Config:
-        env_prefix = "MEMORY_"
+    model_config = SettingsConfigDict(
+        env_prefix="MEMORY__"
+    )
 
 class ToolSettings(BaseSettings):
     """工具配置"""
@@ -51,8 +53,9 @@ class ToolSettings(BaseSettings):
     mcp_server_enabled: bool = Field(default=False, description="是否启用MCP服务器")
     mcp_server_port: int = Field(default=8000, description="MCP服务器端口")
     
-    class Config:
-        env_prefix = "TOOL_"
+    model_config = SettingsConfigDict(
+        env_prefix="TOOL__"
+    )
 
 class VoiceSettings(BaseSettings):
     """语音交互配置"""
@@ -60,8 +63,9 @@ class VoiceSettings(BaseSettings):
     text_to_speech_enabled: bool = Field(default=False, description="是否启用文本转语音")
     speech_recognition_language: str = Field(default="zh-CN", description="语音识别语言")
     
-    class Config:
-        env_prefix = "VOICE_"
+    model_config = SettingsConfigDict(
+        env_prefix="VOICE__"
+    )
 
 
 class PlanningSettings(BaseSettings):
@@ -73,8 +77,9 @@ class PlanningSettings(BaseSettings):
     enable_complex_tasks: bool = Field(default=True, description="是否启用复杂任务处理")
     max_task_steps: int = Field(default=20, description="单个任务最大步骤数")
     
-    class Config:
-        env_prefix = "PLANNING_"
+    model_config = SettingsConfigDict(
+        env_prefix="PLANNING__"
+    )
 
 
 class ReflectionSettings(BaseSettings):
@@ -85,8 +90,9 @@ class ReflectionSettings(BaseSettings):
     reflection_confidence_threshold: float = Field(default=0.7, description="触发反思的置信度阈值")
     save_reflection_history: bool = Field(default=True, description="是否保存反思历史")
     
-    class Config:
-        env_prefix = "REFLECTION_"
+    model_config = SettingsConfigDict(
+        env_prefix="REFLECTION__"
+    )
 
 
 class ReminderSettings(BaseSettings):
@@ -97,8 +103,9 @@ class ReminderSettings(BaseSettings):
     reminder_types_enabled: List[str] = Field(default=["time", "condition"], description="启用的提醒类型")
     notification_channels: List[str] = Field(default=["cli", "desktop"], description="通知渠道：cli, desktop, mobile")
     
-    class Config:
-        env_prefix = "REMINDER_"
+    model_config = SettingsConfigDict(
+        env_prefix="REMINDER__"
+    )
 
 
 class ExternalServicesSettings(BaseSettings):
@@ -114,8 +121,9 @@ class ExternalServicesSettings(BaseSettings):
     google_calendar_api_key: Optional[str] = Field(default=None, description="Google日历API密钥")
     newsapi_api_key: Optional[str] = Field(default=None, description="NewsAPI API密钥")
     
-    class Config:
-        env_prefix = "EXTERNAL_"
+    model_config = SettingsConfigDict(
+        env_prefix="EXTERNAL__"
+    )
 
 
 class SystemSettings(BaseSettings):
@@ -127,8 +135,9 @@ class SystemSettings(BaseSettings):
     workspace_directory: str = Field(
         default="~/LINK-Workspace", description="默认工作目录（LINK 文件操作的落点）")
 
-    class Config:
-        env_prefix = "SYSTEM_"
+    model_config = SettingsConfigDict(
+        env_prefix="SYSTEM__"
+    )
 
 class Settings(BaseSettings):
     """全局配置"""
