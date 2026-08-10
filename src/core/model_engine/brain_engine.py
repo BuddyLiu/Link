@@ -770,10 +770,21 @@ class BrainEngine:
 
         return {"text": "已达最大工具调用轮数", "reasoning": ""}
 
+    def _cached_model_health(self, ttl: int = 30) -> Dict[str, Any]:
+        """带 TTL 缓存的模型健康检查（避免每次轮询真实调用 LLM API）"""
+        import time as _t
+        now = _t.time()
+        if getattr(self, "_health_cache", None) and now - self._health_cache_ts < ttl:
+            return self._health_cache
+        health = self.model_adapter.health_check()
+        self._health_cache = health
+        self._health_cache_ts = now
+        return health
+
     def health_check(self) -> Dict[str, Any]:
         """
         健康检查
-        
+
         Returns:
             健康状态信息
         """
@@ -791,7 +802,8 @@ class BrainEngine:
         
         if self.model_adapter:
             try:
-                model_health = self.model_adapter.health_check()
+                # 健康检查会真实调用 LLM API（代价高），用 TTL 缓存避免前端轮询每10秒触发
+                model_health = self._cached_model_health()
                 health_info["model_adapter"] = model_health
                 health_info["overall_status"] = model_health.get("status", "unknown")
             except Exception as e:

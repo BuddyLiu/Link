@@ -3593,7 +3593,7 @@ async function loadMemoriesPage(page) {
         html += '<td>' + (mem.importance||0) + '</td>';
         html += '<td class="content-cell">' + short + (mem.content.length > 100 ? '...' : '') + '</td>';
         html += '<td style="font-size:11px;color:#888;white-space:nowrap">' + (mem.created_at||'').slice(0,16) + '</td>';
-        html += `<td><a onclick="showMemDetail('${mem.id}')" style="cursor:pointer;color:#1a73e8;font-size:12px">详情</a></td></tr>`;
+        html += `<td><a onclick="showMemDetail('${escapeHtml(mem.id).replace(/'/g, "\\\\'")}')" style="cursor:pointer;color:#1a73e8;font-size:12px">详情</a></td></tr>`;
       }
       html += '</tbody></table></div>';
     } else {

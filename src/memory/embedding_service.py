@@ -196,19 +196,16 @@ class EmbeddingService:
         return result["embeddings"]
 
     def _embed_uncached(self, text: str) -> List[float]:
-        """不带缓存的嵌入计算"""
+        """不带缓存的嵌入计算（真实嵌入，失败时抛异常由 embed() 走不缓存随机回退）"""
         if self.backend == "ollama" and self._initialized:
-            try:
-                return self._ollama_embed(text)
-            except Exception as e:
-                print(f"⚠️ Ollama 嵌入失败回退到随机: {e}")
-                return self._random_embed(text)
+            return self._ollama_embed(text)
         elif self.model is not None:
             # 使用Sentence Transformers
             embedding = self.model.encode([text])[0]
             return embedding.tolist()
         else:
-            return self._random_embed(text)
+            # 未就绪：抛异常，避免随机向量进入 lru_cache（服务恢复后缓存仍是随机值）
+            raise RuntimeError(f"嵌入后端未就绪 (backend={self.backend})")
 
     def _random_embed(self, text: str) -> List[float]:
         """确定性随机向量后备方案"""
@@ -236,12 +233,9 @@ class EmbeddingService:
             return self._embed_cached(text.strip())
         except Exception as e:
             if self.logger:
-                self.logger.error(f"嵌入计算失败: {str(e)}")
-            # 返回随机向量作为后备
-            import hashlib
-            seed = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
-            rng = np.random.default_rng(seed)
-            return rng.standard_normal(self.dimension).tolist()
+                self.logger.debug(f"嵌入计算失败，随机回退(不缓存): {str(e)}")
+            # 返回随机向量作为后备（不经过 lru_cache，避免服务恢复后仍用随机值）
+            return self._random_embed(text.strip())
     
     def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
         """
