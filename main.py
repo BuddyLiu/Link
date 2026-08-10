@@ -49,6 +49,9 @@ class LINK:
         self._MAX_HISTORY_CHARS = 100000  # ~40K tokens, DeepSeek支持1M上下文
         self._history_summary = ""       # 被裁掉的早期对话摘要
 
+        # 共享工具执行线程池（惰性创建，避免每次工具调用新建/销毁）
+        self._tool_executor = None
+
         # 第三阶段组件
         self.planning_engine = None
         self.brain_engine = None
@@ -124,8 +127,8 @@ class LINK:
             try:
                 ext_cfg = self.settings.external.model_dump()
                 ext_config = dict(ext_cfg or {})
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug(f"外部配置读取失败，使用空配置: {e}")
             self.external = create_external_integration(ext_config, logger=self.logger)
         except Exception as e:
             self.logger.debug(f"外部信息源初始化失败: {e}")
@@ -267,8 +270,8 @@ class LINK:
             refl_config = {}
             try:
                 refl_config = self.settings.reflection.model_dump()
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug(f"反思配置读取失败，使用默认: {e}")
 
             # 触发器值名映射：settings 用 "failure"，engine 用 "task_failure"
             _TRIGGER_MAP = {
@@ -443,7 +446,6 @@ class LINK:
         sub = intent.get("sub_intent", "")
 
         if t == "greeting":
-            import datetime
             hour = datetime.datetime.now().hour
             period = "早上" if hour < 12 else "下午" if hour < 18 else "晚上"
             name = ""
@@ -587,7 +589,8 @@ class LINK:
             if not refined or _re.search(r'(分钟|小时|秒|点|今天|明天|每天|提醒|记得|帮我|请)', refined):
                 return ""
             return refined[:60]
-        except Exception:
+        except Exception as e:
+            self.logger.debug(f"提醒内容提炼失败，回退原文: {e}")
             return ""
 
     def _parse_reminder_condition(self, text: str):
@@ -610,7 +613,7 @@ class LINK:
             ("电池", "battery_level"), ("电量", "battery_level"),
             ("工作时间段", "is_working_hours"), ("工作时间", "is_working_hours"),
             ("网络", "network_status"), ("网速", "network_status"),
-            ("cpu", "cpu_usage"), ("cpu", "cpu_usage"),
+            ("cpu", "cpu_usage"),
             ("内存", "memory_usage"), ("磁盘", "disk_usage"), ("时间", "system_time"),
         ]
         # 操作符映射：中文 → trigger_checker operator
@@ -875,12 +878,6 @@ class LINK:
 
         # === LLM 驱动路由 ===
         cmd = input_text.strip()
-        if cmd in ("帮助", "help"):
-            reply = self._get_help_text()
-            self._conversation_history.append({"role": "user", "content": input_text})
-            self._conversation_history.append({"role": "assistant", "content": reply})
-            self._save_to_memory(input_text, reply, "conversation")
-            return reply
         if cmd.startswith("任务列表") or cmd == "我的任务":
             reply = self._list_tasks()
             self._conversation_history.append({"role": "user", "content": input_text})
@@ -894,8 +891,8 @@ class LINK:
             try:
                 prov = getattr(self.brain_engine.model_adapter, 'api_base', '')
                 is_online = 'deepseek' in prov or 'api.openai.com' in prov
-            except:
-                pass
+            except Exception as e:
+                self.logger.debug(f"检测在线模式失败: {e}")
 
         if is_online:
             response = self._tool_response(input_text, memory_context,
@@ -1149,7 +1146,7 @@ class LINK:
             path = params.get("path", "")
             mode = params.get("mode", "read")
             perm_type = params.get("type", "temporary")
-            as_dir = params.get("as_dir", False)
+            as_dir = str(params.get("as_dir", "false")).lower() in ("true", "1", "yes")
             if not path:
                 return "[[ERROR: 缺少 path 参数]]"
             from src.tools.file_permissions import get_permission_manager
@@ -1287,11 +1284,11 @@ class LINK:
                            and "助手" not in line \
                            and "Assistant" not in line \
                            and "LINK" not in line.upper() \
-                           and not line.endswith("。") or (line.endswith("。") and len(line) > 8):
+                           and (not line.endswith("。") or len(line) > 8):
                             if line not in facts:
                                 facts.append(line)
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug(f"LLM 事实提取失败，仅保留正则提取: {e}")
 
         # 过滤垃圾：太短、非用户信息
         clean_facts = []
@@ -1314,8 +1311,8 @@ class LINK:
             try:
                 self.memory_engine.add_fact_memory(f, importance=0.85)
                 saved += 1
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.debug(f"保存事实记忆失败: {f[:50]} → {e}")
 
         if saved:
             self.logger.info(f"记忆记录器保存 {saved} 条用户事实")
@@ -1773,8 +1770,8 @@ class LINK:
                 lines.insert(0, "【文件访问环境】")
                 lines.append("提示：相对路径默认落到工作目录；写源码目录需先授权。")
                 parts.append("\n".join(lines))
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"构建文件访问环境上下文失败: {e}")
 
         self.logger.info(f"[debug] _retrieve_memory_context query='{query}' | _user_profile empty={not bool(getattr(self, "_user_profile", ""))} | profile_len={len(getattr(self, "_user_profile", ""))}")
         if parts:
@@ -1947,7 +1944,8 @@ class LINK:
         
         response = ""
         steps_executed = 0
-        max_steps = min(steps_to_execute, len(pending_steps), 3)  # 最多执行3步，防止耗时过长
+        max_steps = min(steps_to_execute, len(pending_steps),
+                        getattr(self, "_auto_steps_limit", 3))  # 默认最多3步，防止耗时过长
         
         for i, step in enumerate(pending_steps[:max_steps]):
             # 推送步骤开始进度
@@ -2524,8 +2522,8 @@ class LINK:
             # 记录到记忆（用户查询过什么）
             try:
                 self._save_to_memory(f"查询{intent}: {text[:80]}", "", "event")
-            except Exception:
-                pass
+            except Exception as me:
+                self.logger.debug(f"记录查询事件到记忆失败: {me}")
             return text
         except Exception as e:
             self.logger.error(f"外部查询失败({intent}): {e}")
@@ -2638,10 +2636,11 @@ class LINK:
             except Exception as e:
                 self.logger.error(f"LLM响应失败: {str(e)}")
 
-        # 兜底
+        # 兜底（截断超长输入，避免终端/前端渲染异常）
         if not self.brain_engine:
             self.logger.warning("兜底响应: brain_engine 未初始化")
-        return f"我已经收到你的消息：'{input_text}'。\n\n" + self._get_suggestions()
+        snippet = input_text if len(input_text) <= 200 else input_text[:200] + "…"
+        return f"我已经收到你的消息：'{snippet}'。\n\n" + self._get_suggestions()
 
     # ── Tool Calling 响应（用于 DeepSeek Function Calling） ──
 
@@ -2965,12 +2964,14 @@ class LINK:
             try:
                 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
                 TOOL_TIMEOUT = 120  # 全局工具超时（秒）
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self.tool_manager.execute_tool, tool_id, **kwargs)
-                    try:
-                        result = future.result(timeout=TOOL_TIMEOUT)
-                    except FutureTimeout:
-                        raise TimeoutError(f"工具执行超时 (>{TOOL_TIMEOUT}s): {tool_name}")
+                # 复用共享线程池（惰性创建），避免每次工具调用新建/销毁线程池
+                if self._tool_executor is None:
+                    self._tool_executor = ThreadPoolExecutor(max_workers=4)
+                future = self._tool_executor.submit(self.tool_manager.execute_tool, tool_id, **kwargs)
+                try:
+                    result = future.result(timeout=TOOL_TIMEOUT)
+                except FutureTimeout:
+                    raise TimeoutError(f"工具执行超时 (>{TOOL_TIMEOUT}s): {tool_name}")
                 result_str = str(result)
                 # 对特定工具推送结果摘要
                 if tool_name == "read_file" and len(result_str) > 20:
@@ -3043,7 +3044,7 @@ class LINK:
                 except Exception as perm_flow_err:
                     self._report_progress("❌", f"授权流程异常: {perm_flow_err}")
                     self.logger.error(f"授权流程异常: {perm_flow_err}", exc_info=True)
-                    return f"权限被拒绝: {e}"
+                    return f"授权流程异常: {perm_flow_err}"
             except FileNotFoundError as e:
                 self._report_progress("❌", f"文件未找到: {tool_name}")
                 self._reflect_tool_failure(tool_name, args, f"文件未找到: {e}")
@@ -3143,7 +3144,7 @@ class LINK:
             result = self.brain_engine.chat_with_tools(
                 messages, self.TOOL_DEFS,
                 tool_executor=self._execute_tool_call,
-                max_rounds=5000,
+                max_rounds=50,  # 内部已有连续3轮相同调用循环检测，50 轮上限足够且防失控
                 stream_callback=stream_callback,
                 plan_callback=plan_callback,
             )
