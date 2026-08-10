@@ -433,6 +433,11 @@ class KnowledgeUpdater:
         for key in ("key_insights", "action_items", "suggestions"):
             for item in content.get(key, []) or []:
                 content_text += str(item).lower() + " "
+        # 根本原因与建议（补充进 content_text，避免之前的死代码）
+        for cause in content.get("root_causes", []) or []:
+            content_text += str(cause).lower() + " "
+        for suggestion in content.get("suggestions", []) or []:
+            content_text += str(suggestion).lower() + " "
         if query_lower in content_text:
             return True
 
@@ -450,20 +455,6 @@ class KnowledgeUpdater:
                     seg = query_lower[i:i+2]
                     if seg in content_text:
                         return True
-        return False
-
-        # 检查根本原因
-        if "root_causes" in content:
-            for cause in content["root_causes"]:
-                if query_lower in cause.lower():
-                    return True
-        
-        # 检查建议
-        if "suggestions" in content:
-            for suggestion in content["suggestions"]:
-                if query_lower in suggestion.lower():
-                    return True
-        
         return False
     
     def get_knowledge_stats(self) -> Dict[str, Any]:
