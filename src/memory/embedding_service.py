@@ -77,12 +77,12 @@ class EmbeddingService:
             req = urllib.request.Request(f"{self.ollama_base_url}/api/tags",
                                          method="GET",
                                          headers={"Accept": "application/json"})
-            resp = urllib.request.urlopen(req, timeout=5)
-            if resp.status == 200:
-                self._initialized = True
-                print(f"✅ Ollama 嵌入后端就绪，模型: {self.model_name}，维度: {self.dimension}")
-            else:
-                print(f"⚠️ Ollama 服务响应异常 (HTTP {resp.status})，使用随机嵌入后备")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    self._initialized = True
+                    print(f"✅ Ollama 嵌入后端就绪，模型: {self.model_name}，维度: {self.dimension}")
+                else:
+                    print(f"⚠️ Ollama 服务响应异常 (HTTP {resp.status})，使用随机嵌入后备")
         except Exception as e:
             print(f"⚠️ Ollama 服务不可用 ({e})，使用随机嵌入 + 关键词搜索后备")
             self._initialized = False
@@ -172,8 +172,8 @@ class EmbeddingService:
             method="POST",
             headers={"Content-Type": "application/json"}
         )
-        resp = urllib.request.urlopen(req, timeout=30)
-        result = json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
         return result["embeddings"][0]
 
     def _ollama_embed_batch(self, texts: list, batch_size: int = 32) -> list:
@@ -191,8 +191,8 @@ class EmbeddingService:
             method="POST",
             headers={"Content-Type": "application/json"}
         )
-        resp = urllib.request.urlopen(req, timeout=60)
-        result = json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode())
         return result["embeddings"]
 
     def _embed_uncached(self, text: str) -> List[float]:

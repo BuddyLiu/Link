@@ -44,6 +44,7 @@ class KnowledgeUpdater:
             "min_confidence_threshold": 0.6,  # 最小置信度阈值
             "min_applicability_threshold": 0.5,  # 最小适用性阈值
             "max_knowledge_entries": 1000,  # 最大知识条目数
+            "max_knowledge_entries_per_type": 200,  # 每种类型最大知识条目数（原先隐式回退 200）
             "knowledge_consolidation_enabled": True,  # 是否启用知识整合
             "auto_save_interval": 300,  # 自动保存间隔（秒）
             "knowledge_types": ["pattern", "strategy", "constraint", "resource", "error"],

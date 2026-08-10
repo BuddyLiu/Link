@@ -471,6 +471,18 @@ class TestExecuteCommandTool:
         assert isinstance(result, dict)
         assert result["binary"] or True  # cat 二进制文件可能被检测到
 
+    def test_sudo_as_argument_not_blocked(self, tool_manager):
+        """sudo 作为参数（echo "sudo xxx"）不应被误拦"""
+        result = tool_manager.execute_tool("execute_command",
+                                           command='echo "sudo hello"')
+        assert isinstance(result, dict)
+        assert result["success"]
+
+    def test_sudo_as_command_blocked(self, tool_manager):
+        """sudo 作为首 token 应被拒绝（提权）"""
+        with pytest.raises((ValueError, PermissionError)):
+            tool_manager.execute_tool("execute_command", command="sudo ls")
+
 
 # =============================================================================
 # SearchWebTool（基本测试，不依赖网络）

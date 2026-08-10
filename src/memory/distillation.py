@@ -159,8 +159,9 @@ class MemoryDistiller:
                     try:
                         store.delete_memory(extra.id)
                         removed += 1
-                    except Exception:
-                        pass
+                    except Exception as de:
+                        if self.logger:
+                            self.logger.warning(f"偏好聚合删除冗余记忆失败（{extra.id}）: {de}")
                 kept += 1
 
             if removed and self.logger:
@@ -198,14 +199,17 @@ class MemoryDistiller:
                 ts = m.metadata.get("timestamp", "")
                 try:
                     age = datetime.now() - datetime.fromisoformat(ts)
-                except Exception:
+                except Exception as de:
+                    if self.logger:
+                        self.logger.debug(f"记忆时间戳解析失败（{m.id}），跳过清理: {de}")
                     continue
                 if age.days >= max_age_days:
                     try:
                         store.delete_memory(m.id)
                         cleaned += 1
-                    except Exception:
-                        pass
+                    except Exception as de:
+                        if self.logger:
+                            self.logger.warning(f"清理过期记忆失败（{m.id}）: {de}")
 
             if cleaned and self.logger:
                 self.logger.info(f"长期压缩: 清理 {cleaned} 条过期记忆")

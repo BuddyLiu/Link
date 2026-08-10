@@ -257,9 +257,8 @@ class ExecuteCommandTool(SystemTool):
         # 系统破坏
         "rm -rf /", "rm -rf /*", "rm -rf ~",
         "dd if=", "mkfs", "mkswap", "fdisk", "parted", "format",
-        # 提权
+        # 提权（sudo/su 改用首 token 检测，避免误拦 echo "sudo xxx" 类合法命令）
         "chmod 777 /", "chmod -R 777", "chown -R",
-        "sudo", "su ",
         # Fork 炸弹 / shell-shock
         ":(){ :|:& };:", "() { :; };",
         # 设备操作
@@ -320,6 +319,11 @@ class ExecuteCommandTool(SystemTool):
         if not tokens:
             return "unknown"
         first_token = tokens[0].lower()
+
+        # 提权命令首 token 检测（sudo/su 作为命令首词即拒绝，即使后续是白名单命令）
+        if first_token in ("sudo", "su", "doas", "pkexec"):
+            logger.warning(f"命令为提权操作，已拒绝: {cmd[:100]}")
+            return "dangerous"
 
         # 尝试完整命令前缀匹配（如 "git status"）
         for prefix in self.SAFE_COMMANDS:
@@ -735,8 +739,8 @@ class SearchWebTool(SystemTool):
                 req = urllib.request.Request(url,
                     headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
                     timeout=15)
-                resp = urllib.request.urlopen(req, timeout=15)
-                html = resp.read().decode("utf-8", errors="ignore")
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    html = resp.read().decode("utf-8", errors="ignore")
 
                 for pattern in patterns:
                     extracted = extract_results(html, pattern, 1, 2, 3)
@@ -755,8 +759,8 @@ class SearchWebTool(SystemTool):
             try:
                 url = "https://www.bing.com/search?q=" + urllib.parse.quote(query)
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                resp = urllib.request.urlopen(req, timeout=10)
-                html = resp.read().decode("utf-8", errors="ignore")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    html = resp.read().decode("utf-8", errors="ignore")
                 for m in re.finditer(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', html):
                     url = m.group(1)
                     title = clean_html(m.group(2))

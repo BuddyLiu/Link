@@ -8,6 +8,7 @@ import sys
 import argparse
 import json
 import time
+import threading
 from typing import Optional, Dict, Any, List
 
 # 修复导入路径问题
@@ -83,6 +84,7 @@ class LINK:
         self._progress_callback = None
         self._tool_call_count = 0  # 当前会话的工具调用计数
         self._maintenance_count = 0  # 主动维护计数器（每 N 轮触发，不依赖历史长度）
+        self._count_lock = threading.Lock()  # 计数器并发安全锁（web 模式多线程访问）
         
         # 初始化组件
         self._initialize_components()
@@ -923,8 +925,10 @@ class LINK:
         self._check_and_reflect(input_text, response, is_online=is_online)
 
         # 主动学习（每 10 轮整理一次记忆，用计数器保证稳定触发）
-        self._maintenance_count += 1
-        if self._maintenance_count % 10 == 0:
+        with self._count_lock:
+            self._maintenance_count += 1
+            count = self._maintenance_count
+        if count % 10 == 0:
             self._proactive_maintenance()
 
         # 记录完整回复（供控制台查看最终结果）
@@ -2922,8 +2926,10 @@ class LINK:
 
     def _execute_tool_call(self, tool_name: str, args: dict) -> str:
         """执行 Tool Calling 返回的工具调用"""
-        self._tool_call_count += 1
-        step_tag = f"[Step {self._tool_call_count}]"
+        with self._count_lock:
+            self._tool_call_count += 1
+            step_num = self._tool_call_count
+        step_tag = f"[Step {step_num}]"
         progress_msg = f"{step_tag} {self._format_tool_progress(tool_name, args)}"
         self._report_progress("⏳", progress_msg)
 

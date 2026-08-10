@@ -493,9 +493,9 @@ class ToTPlanner:
         if ("完成" in action or "交付" in action) and len(action_history) < 1:
             return False
 
-        # 检查前置条件
-        if "确认" in action and "发送" not in action_history:
-            # 确认安排前需要先发送邀请
+        # 确认类动作需至少一个前置步骤（原硬编码"先发送邀请"只适用派对场景，
+        # 会误拦旅行/会议等任务的"确认安排"，改为通用前置约束）
+        if "确认" in action and len(action_history) < 1:
             return False
 
         return True
