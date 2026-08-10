@@ -950,7 +950,7 @@ class LINK:
             import hashlib
             task_id = "input_" + hashlib.md5(input_text.encode("utf-8")).hexdigest()[:12]
             failed_marker = False
-            low_conf = False
+            # 响应过短（<20字符）暗示低置信：未能给出实质内容
             low_resp = response and len(response.strip()) < 20
 
             # 失败迹象：错误/失败/无法/拒绝/查询失败等
@@ -960,7 +960,8 @@ class LINK:
 
             task_result = {
                 "status": "failed" if failed_marker else "success",
-                "confidence": 0.4 if low_conf else 0.9,
+                # 响应过短视为低置信（原 low_conf 恒为 False，此路径死代码）
+                "confidence": 0.4 if low_resp else 0.9,
                 "response_length": len(response or ""),
                 "input": input_text[:200],
             }
@@ -971,7 +972,7 @@ class LINK:
             if failed_marker:
                 self._trigger_reflection(task_id, task_result,
                                          trigger="task_failure", context=context)
-            elif low_resp and low_conf:
+            elif low_resp:
                 self._trigger_reflection(task_id, task_result,
                                          trigger="low_confidence", context=context)
         except Exception as e:
@@ -1932,6 +1933,9 @@ class LINK:
     
     def _auto_execute_task_steps(self, task_id: str, steps_to_execute: int = 2) -> str:
         """自动执行任务步骤"""
+        if not self.planning_engine:
+            return "抱歉，任务执行功能当前不可用（规划引擎未初始化）。"
+
         task = self.planning_engine.get_task(task_id)
         if not task:
             return f"找不到ID为'{task_id}'的任务。"
@@ -2351,18 +2355,21 @@ class LINK:
     
     def _start_task_execution(self, input_text: str) -> str:
         """开始执行任务（自动执行所有步骤）"""
+        if not self.planning_engine:
+            return "抱歉，任务执行功能当前不可用（规划引擎未初始化）。"
+
         # 提取任务ID
         words = input_text.split()
         task_id = None
-        
+
         for word in words:
             if word.startswith("project_") and len(word) > 5:
                 task_id = word
                 break
-        
+
         if not task_id:
             return "请提供任务ID，例如：'开始执行 project_1234567890'"
-        
+
         task = self.planning_engine.get_task(task_id)
         if not task:
             return f"找不到ID为'{task_id}'的任务。"
