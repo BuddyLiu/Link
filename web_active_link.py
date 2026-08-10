@@ -3847,7 +3847,7 @@ async function loadArchives() {
         listHtml += '<td>' + escapeHtml(a.label||'') + '</td>';
         listHtml += '<td>' + (a.memory_count||0) + '</td>';
         listHtml += '<td style="color:' + verifiedColor + ';font-size:13px">' + verifiedIcon + '</td>';
-        listHtml += `<td><button class="restore-btn" onclick="restoreArchive('${a.archive_id}')" style="padding:4px 12px;background:#34a853;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">恢复</button></td></tr>`;
+        listHtml += `<td><button class="restore-btn" onclick="restoreArchive('${escapeHtml(a.archive_id).replace(/'/g, "\\\\'")}')" style="padding:4px 12px;background:#34a853;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">恢复</button></td></tr>`;
       }
       listHtml += '</tbody></table></div>';
     }
