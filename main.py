@@ -418,8 +418,21 @@ class LINK:
             return {"type": "chitchat", "sub_intent": "bye", "confidence": 0.9}
 
         praise_words = ["厉害", "不错", "很好", "好的", "ok", "可以", "好棒", "优秀"]
+        # 请求动作词：若消息含这些词，说明是请求而非纯夸赞
+        request_words = ["生成", "创建", "写", "帮我", "保存", "执行", "做", "打开",
+                         "文件", "报告", "程序", "代码", "整理", "总结", "分析",
+                         "列出", "查找", "搜索", "设置", "发送", "生成一份"]
         if any(w in t for w in praise_words):
-            return {"type": "chitchat", "sub_intent": "praise", "confidence": 0.8}
+            # "好的/可以/ok"等仅作为简短应答或纯夸赞时才判 praise；
+            # 若后面跟实际请求（含动作词），优先识别为任务
+            if any(w in t for w in request_words):
+                return {"type": "complex_task", "confidence": 0.5}
+            # 纯夸赞：消息很短（≤6 字）或仅含夸赞词
+            stripped = t.strip(" ，。！？!?,. ")
+            if len(stripped) <= 6:
+                return {"type": "chitchat", "sub_intent": "praise", "confidence": 0.8}
+            # 长消息含夸赞词但有具体内容 → 按请求处理
+            return {"type": "complex_task", "confidence": 0.5}
 
         return {"type": "complex_task", "confidence": 0.5}
 
