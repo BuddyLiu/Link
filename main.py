@@ -114,8 +114,8 @@ class LINK:
         try:
             if self.memory_distiller is not None and self.brain_engine is not None:
                 self.memory_distiller.set_brain(self.brain_engine)
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"记忆蒸馏器注入大脑引擎失败: {e}")
 
         # 初始化外部信息源集成（天气/新闻/日历）
         try:
@@ -137,8 +137,8 @@ class LINK:
         # 自动扫描项目知识（后台执行，不影响启动）
         try:
             self._scan_current_project()
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"项目知识扫描失败: {e}")
 
         self.logger.info("LINK组件初始化完成")
     
@@ -1631,8 +1631,8 @@ class LINK:
                 except Exception as de:
                     self.logger.debug(f"记忆蒸馏跳过: {de}")
             self.logger.info("主动维护完成")
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"主动维护出错: {e}")
 
     def _save_feedback(self, user_input: str, assistant_content: str, rating: str):
         """保存用户反馈到记忆库（供 Web 入口调用或后续扩展）"""
@@ -1731,8 +1731,8 @@ class LINK:
                     system_prompt="你是经验提炼助手，只输出一条改进经验，不要解释。")
                 if out and len(out.strip()) > 8 and "查询失败" not in out:
                     return out.strip()[:200]
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"LLM 反馈洞察生成失败，改用规则降级: {e}")
         # 规则降级：用关键词提炼
         import re as _re
         keywords = ("不够", "太", "缺少", "没有", "详细", "简洁", "错误", "失败")
@@ -2005,8 +2005,8 @@ class LINK:
                 mode = data.get("mode", "manual")
                 if mode in ("manual", "auto"):
                     return mode
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"读取执行模式失败，回退到 manual: {e}")
         return "manual"
 
     def set_execution_mode(self, mode: str):
@@ -2038,7 +2038,8 @@ class LINK:
             return []
         try:
             tasks = self.planning_engine.list_active_tasks()
-        except Exception:
+        except Exception as e:
+            self.logger.warning(f"读取任务列表失败: {e}")
             tasks = []
         out = []
         for t in (tasks or []):
@@ -2632,10 +2633,14 @@ class LINK:
                 response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt, extra_messages=history_msgs)
                 if response and "查询失败" not in response:
                     return response.strip()
+                # 响应含"查询失败"或为空 → 兜底（记录根因，便于排查）
+                self.logger.warning(f"LLM 响应异常回落兜底: 响应空={not response}, 含查询失败={'查询失败' in (response or '')}")
             except Exception as e:
                 self.logger.error(f"LLM响应失败: {str(e)}")
 
         # 兜底
+        if not self.brain_engine:
+            self.logger.warning("兜底响应: brain_engine 未初始化")
         return f"我已经收到你的消息：'{input_text}'。\n\n" + self._get_suggestions()
 
     # ── Tool Calling 响应（用于 DeepSeek Function Calling） ──
