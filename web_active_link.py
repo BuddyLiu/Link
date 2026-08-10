@@ -1024,12 +1024,15 @@ var _streamTimer = null;   // 打字机 tick 定时器
 var _streamRenderCounter = 0; // 渲染节流计数器（长内容降低渲染频率）
 var _reasoningSpeed = 0;   // 思考内容接收速率（字符/tick，用于联动打字速度）
 var _reasoningLastLen = 0; // 上次思考接收的字符数
+var _streamAborted = false; // 流式终止标志：ASSISTANT 完成时置位，阻止残余 tick
 
 // ── 流式打字机：速度跟随生成节奏动态调节 ──
 // 核心：思考内容返回越快 → 答案打字越快；思考生成慢 → 答案打字慢（等思考）。
 // 用"积压量"和"思考接收速率"两个信号共同驱动。
 function streamTypeTick() {
   _streamTimer = null;
+  // 流式已终止（ASSISTANT 完成/新消息开始）→ 丢弃残余 tick，避免竞态
+  if (_streamAborted) return;
   var sb = document.getElementById('stream-bubble');
   if (!sb) { _streamTyped = 0; return; }
   var total = streamContentBuf.length;
@@ -1063,7 +1066,7 @@ function streamTypeTick() {
   if (_streamRenderCounter % renderEvery === 0 || _streamTyped >= total) {
     try { sb.innerHTML = renderMarkdownPartial(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
     catch(e) { sb.textContent = streamContentBuf.slice(0, _streamTyped) + '|'; }
-    chatBox.scrollTop = chatBox.scrollHeight;
+    if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
   }
 
   // 动态间隔：
@@ -1194,7 +1197,7 @@ ws.onmessage = e => {
     }
     // 记录思考接收速率 → 驱动答案打字速度联动
     trackReasoningSpeed(rc);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
     return;
   }
 
@@ -1205,6 +1208,7 @@ ws.onmessage = e => {
       streamContentBuf = '';
       _streamTyped = 0;
       _streamRenderCounter = 0;
+      _streamAborted = false;
       if (_streamTimer) { clearTimeout(_streamTimer); _streamTimer = null; }
       var div = document.createElement('div');
       div.className = 'msg assistant';
@@ -1214,7 +1218,9 @@ ws.onmessage = e => {
       bubble.id = 'stream-bubble';
       div.appendChild(bubble);
       chatBox.appendChild(div);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      // 流式期间禁用 smooth 滚动（避免每次滚动位置变化都触发动画卡顿）
+      chatBox.classList.add('instant-scroll');
+      if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
       streamContentId = 'stream-msg';
     }
     streamContentBuf += d.data;
@@ -1229,7 +1235,8 @@ ws.onmessage = e => {
     var reasoning = d.data.reasoning || '';
     var result = d.data.result || '';
 
-    // 停止流式打字机，补全未打出的剩余内容
+    // 停止流式打字机，补全未打出的剩余内容（终止标志阻止残余 tick）
+    _streamAborted = true;
     if (_streamTimer) { clearTimeout(_streamTimer); _streamTimer = null; }
     // 移除思考活跃动画
     var _actDet = document.getElementById('stream-reasoning');
@@ -1272,6 +1279,8 @@ ws.onmessage = e => {
       });
       streamContentId = null;
       _streamTyped = 0;
+      // 流式结束，恢复 smooth 滚动（历史加载等场景仍用）
+      chatBox.classList.remove('instant-scroll');
       restoreSendBtn();
       return;
     }
@@ -1689,9 +1698,35 @@ async function sendFeedback(msgId, rating, content, reasoningText) {
 }
 
 // ----- Markdown Parser (using marked + highlight.js) -----
+// XSS 净化：marked 允许原始 HTML 穿透（新版已移除 sanitize 选项），
+// 对渲染结果做白名单过滤，移除 script/iframe/on* 事件/javascript: 链接
+function sanitizeHTML(html) {
+  try {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    // 移除高危节点
+    ['script', 'iframe', 'object', 'embed', 'link', 'meta', 'style', 'form', 'svg'].forEach(function(tag) {
+      var els = doc.querySelectorAll(tag);
+      for (var i = els.length - 1; i >= 0; i--) els[i].parentNode.removeChild(els[i]);
+    });
+    // 移除所有元素的事件属性
+    var all = doc.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var attrs = all[i].attributes;
+      for (var j = attrs.length - 1; j >= 0; j--) {
+        var name = attrs[j].name.toLowerCase();
+        var val = attrs[j].value.toLowerCase();
+        if (name.indexOf('on') === 0 || val.indexOf('javascript:') === 0) {
+          all[i].removeAttribute(attrs[j].name);
+        }
+      }
+    }
+    return doc.body.innerHTML;
+  } catch(e) { return html; }
+}
+
 function renderMarkdown(text) {
   if (!text) return '';
-  try { return marked.parse(text); }
+  try { return sanitizeHTML(marked.parse(text)); }
   catch(e) { return '<p>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
 }
 
@@ -1713,7 +1748,7 @@ function renderMarkdownPartial(text) {
   // 未闭合的 **bold** → 保留为字面星号（不触发解析）
   var stars = (t.match(/\\*\\*/g) || []).length;
   if (stars % 2 === 1) t = t.replace(/\\*\\*(?=[^*]*$)/, '∗∗');
-  try { return marked.parse(t); }
+  try { return sanitizeHTML(marked.parse(t)); }
   catch(e) { return '<p>' + t.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</p>'; }
 }
 
@@ -1852,6 +1887,7 @@ function addMessage(role, content) {
 }
 
 var typingTimer = null;
+var _typingCharTimer = null;  // 逐字符动画定时器（可被 removeTyping 中断）
 var typingStep = 0;
 const STATUS_STEPS = [
   '分析问题中...',
@@ -1887,8 +1923,9 @@ function nextTypingStep() {
     if (pos < text.length) {
       bubble.textContent += text[pos++];
       scrollToBottom();
-      setTimeout(typeChar, 12);
+      _typingCharTimer = setTimeout(typeChar, 12);
     } else {
+      _typingCharTimer = null;
       typingStep++;
       typingTimer = setTimeout(nextTypingStep, 400);
     }
@@ -1898,6 +1935,7 @@ function nextTypingStep() {
 
 function removeTyping() {
   if (typingTimer) { clearTimeout(typingTimer); typingTimer = null; }
+  if (_typingCharTimer) { clearTimeout(_typingCharTimer); _typingCharTimer = null; }
   const el = chatBox.querySelector('.typing');
   if (el) el.remove();
 }
