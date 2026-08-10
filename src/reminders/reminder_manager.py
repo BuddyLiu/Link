@@ -841,30 +841,49 @@ class ReminderManager:
                 )
                 
                 if success:
-                    # 标记为已完成
-                    reminder.status = ReminderStatus.COMPLETED
-                    reminder.updated_at = datetime.now()
-                    self._update_reminder_in_storage(reminder)
-                    
+                    if reminder.repeat_pattern == "once":
+                        # 一次性提醒：标记为已完成
+                        reminder.status = ReminderStatus.COMPLETED
+                        reminder.updated_at = datetime.now()
+                        self._update_reminder_in_storage(reminder)
+                    else:
+                        # 重复提醒：保持 ACTIVE（check_triggers 已计算下次触发时间），
+                        # 勿覆盖为 COMPLETED，否则重复提醒在首次发送后即失效
+                        self._log("debug", f"重复提醒 {reminder.id} 保持活跃，下次: {reminder.next_trigger_time}")
+
                     results["sent"] += 1
                     results["details"].append({
                         "reminder_id": reminder.id,
                         "status": "sent",
                         "timestamp": datetime.now().isoformat()
                     })
-                    
+
                     self._log("info", f"提醒通知已发送: {reminder.id}")
                 else:
+                    # 发送失败：重置为 ACTIVE，使下次 check_triggers 能重新取出重试，
+                    # 避免状态卡在 TRIGGERED 导致通知被静默丢弃
+                    if reminder.status == ReminderStatus.TRIGGERED:
+                        reminder.status = ReminderStatus.ACTIVE
+                        reminder.updated_at = datetime.now()
+                        self._update_reminder_in_storage(reminder)
                     results["failed"] += 1
                     results["details"].append({
                         "reminder_id": reminder.id,
                         "status": "failed",
                         "timestamp": datetime.now().isoformat()
                     })
-                    
-                    self._log("warning", f"发送提醒通知失败: {reminder.id}")
-                    
+
+                    self._log("warning", f"发送提醒通知失败，已重置为活跃待重试: {reminder.id}")
+
             except Exception as e:
+                # 异常时也重置为 ACTIVE 以便重试
+                try:
+                    if reminder.status == ReminderStatus.TRIGGERED:
+                        reminder.status = ReminderStatus.ACTIVE
+                        reminder.updated_at = datetime.now()
+                        self._update_reminder_in_storage(reminder)
+                except Exception as storage_e:
+                    self._log("error", f"重置提醒状态失败: {reminder.id} - {storage_e}")
                 results["failed"] += 1
                 results["details"].append({
                     "reminder_id": reminder.id,
@@ -872,7 +891,7 @@ class ReminderManager:
                     "error": str(e),
                     "timestamp": datetime.now().isoformat()
                 })
-                
+
                 self._log("error", f"发送提醒通知时出错: {reminder.id} - {str(e)}")
         
         return results
