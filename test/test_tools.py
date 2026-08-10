@@ -513,6 +513,43 @@ class TestCalculateTool:
         with pytest.raises((ValueError, ZeroDivisionError)):
             tool_manager.execute_tool("calculate", expression="1/0")
 
+    def test_trig_inverse(self, tool_manager):
+        """反三角函数（引力辅助转向角计算需要）"""
+        result = tool_manager.execute_tool("calculate", expression="asin(1)")
+        assert "1.57" in result  # asin(1) ≈ π/2
+
+    def test_atan_degrees(self, tool_manager):
+        """atan + degrees 组合（轨道力学常用）"""
+        result = tool_manager.execute_tool("calculate", expression="degrees(atan(1))")
+        assert "45" in result
+
+    def test_bitwise_xor(self, tool_manager):
+        """位运算异或"""
+        result = tool_manager.execute_tool("calculate", expression="5 ^ 3")
+        assert "6" in result  # 0b101 ^ 0b011 = 0b110
+
+    def test_constants(self, tool_manager):
+        """裸常量（pi/e）"""
+        result = tool_manager.execute_tool("calculate", expression="2 * pi")
+        assert "6.28" in result
+
+    def test_power_expression(self, tool_manager):
+        """幂运算（轨道力学常用）"""
+        result = tool_manager.execute_tool("calculate", expression="2 ** 10")
+        assert "1024" in result
+
+    def test_escape_angle(self, tool_manager):
+        """完整引力辅助公式：e = 1 + r_p * v_inf^2 / mu"""
+        result = tool_manager.execute_tool(
+            "calculate", expression="1 + 6350 * 2.71 ** 2 / 324859")
+        # 1 + 6350*7.3441/324859 = 1 + 46635.0/324859 ≈ 1.1436
+        assert "1.14" in result
+
+    def test_unknown_variable_rejected(self, tool_manager):
+        """未知变量应被拒绝（保持安全）"""
+        with pytest.raises(ValueError):
+            tool_manager.execute_tool("calculate", expression="x + 1")
+
 
 # =============================================================================
 # 回归测试：main.py TOOL_DEFS

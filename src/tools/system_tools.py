@@ -826,8 +826,13 @@ class CalculateTool(SystemTool):
                 ast.FloorDiv: operator.floordiv,
                 ast.Mod: operator.mod,
                 ast.USub: operator.neg,
+                ast.BitXor: operator.xor,    # ^（轨道力学中常用作幂或异或）
+                ast.BitAnd: operator.and_,   # &
+                ast.BitOr: operator.or_,     # |
+                ast.LShift: operator.lshift, # <<
+                ast.RShift: operator.rshift, # >>
             }
-            
+
             # 定义安全的函数
             safe_functions = {
                 'abs': abs,
@@ -840,9 +845,24 @@ class CalculateTool(SystemTool):
                 'sin': math.sin,
                 'cos': math.cos,
                 'tan': math.tan,
+                'asin': math.asin,       # 反三角函数（引力辅助转向角 δ=arcsin(1/e)）
+                'acos': math.acos,
+                'atan': math.atan,
+                'atan2': math.atan2,
+                'sinh': math.sinh,
+                'cosh': math.cosh,
+                'tanh': math.tanh,
                 'log': math.log,
+                'log2': math.log2,
                 'log10': math.log10,
                 'exp': math.exp,
+                'degrees': math.degrees,
+                'radians': math.radians,
+                'floor': math.floor,
+                'ceil': math.ceil,
+                'trunc': math.trunc,
+                'fabs': math.fabs,
+                'hypot': math.hypot,
                 'pi': math.pi,
                 'e': math.e,
             }
@@ -865,6 +885,12 @@ class CalculateTool(SystemTool):
                         return operator_func(operand_val)
                     else:
                         raise ValueError(f"不支持的运算符: {node.op}")
+                elif isinstance(node, ast.Name):
+                    # 裸常量名（pi/e/tau 等）
+                    const = safe_functions.get(node.id)
+                    if const is None:
+                        raise ValueError(f"不支持的变量: {node.id}")
+                    return const
                 elif isinstance(node, ast.Call):
                     if not isinstance(node.func, ast.Name):
                         raise ValueError("只支持简单函数调用")
