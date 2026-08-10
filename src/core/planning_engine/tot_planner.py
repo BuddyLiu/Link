@@ -180,7 +180,8 @@ class ToTPlanner:
             # 4. 回溯更新
             self._backpropagate(selected_node)
             
-            # 5. 检查终止条件
+            # 5. 检查终止条件（search_time 在循环内实时更新，使超时机制真正生效）
+            self.stats["search_time"] = time.time() - start_time
             if self._should_terminate():
                 self._log("debug", f"达到终止条件，停止搜索")
                 break
@@ -593,11 +594,11 @@ class ToTPlanner:
     
     def _should_terminate(self) -> bool:
         """判断是否应该终止搜索"""
-        # 检查迭代次数
-        if self.current_iteration >= self.max_iterations:
+        # 检查迭代次数（iteration 从 0 开始，max_iterations=100 → 0..99）
+        if self.current_iteration >= self.max_iterations - 1:
             return True
 
-        # 检查时间限制（简化实现）
+        # 检查时间限制（search_time 由主循环实时更新）
         if self.stats.get("search_time", 0) > 30.0:  # 30秒超时
             return True
 
