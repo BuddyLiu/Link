@@ -508,6 +508,7 @@ class BrainEngine:
         self._last_tool_sigs = []
         self._loop_count = 0
 
+        all_reasoning = []  # 累积所有轮的思考过程
         for round_num in range(max_rounds):
             self._log("info", f"LLM 调用轮次 #{round_num + 1}, 消息数: {len(messages)}")
             try:
@@ -527,12 +528,15 @@ class BrainEngine:
 
                 if reasoning:
                     self._log("debug", f"  → 推理: {reasoning[:100]}...")
+                    all_reasoning.append(reasoning)
                 if text:
                     self._log("debug", f"  → 文本: {text[:80]}...")
 
                 if not is_tool_call:
                     self._log("info", f"  → 纯文本回复 (长度 {len(text)})")
-                    return {"text": text, "reasoning": reasoning}  # 纯文本回复，完成
+                    # 返回累积的完整思考（多轮工具调用时思考分散在各轮）
+                    full_reasoning = "\n".join(all_reasoning) if all_reasoning else reasoning
+                    return {"text": text, "reasoning": full_reasoning}  # 纯文本回复，完成
 
                 # 首次返回计划（DeepSeek 在 tool_calls 前通常会描述计划）
                 if round_num == 0 and plan_callback and text:
