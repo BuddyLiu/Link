@@ -1521,8 +1521,15 @@ function addThinking(reasoning, callback) {
 function isNearBottom() {
   return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 120;
 }
+// rAF 节流的滚动到底：同一帧内多次调用只执行一次，避免强制同步布局
+var _scrollRaf = false;
 function scrollToBottom() {
-  if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+  if (_scrollRaf) return;
+  _scrollRaf = true;
+  requestAnimationFrame(function() {
+    _scrollRaf = false;
+    if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+  });
 }
 function scrollToTop() {
   chatBox.scrollTop = 0;
