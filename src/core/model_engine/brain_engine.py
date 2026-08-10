@@ -507,6 +507,8 @@ class BrainEngine:
         # 重置循环检测状态（防止跨对话残留导致误判）
         self._last_tool_sigs = []
         self._loop_count = 0
+        # 工具调用 JSON 解析失败计数（同一工具连续失败时给出放弃指令）
+        self._json_fail_counts = {}
 
         all_reasoning = []  # 累积所有轮的思考过程
         for round_num in range(max_rounds):
@@ -644,13 +646,25 @@ class BrainEngine:
                                     f"{k} ({v.get('type','string')})" for k, v in props.items()
                                 )
                                 break
-                        result = (
-                            f"参数格式错误: 传给 {func_name} 的 arguments 不是合法的 JSON。\n"
-                            f"期望的参数: {schema_hint or '参考工具定义'}\n"
-                            f"解析错误: {e}\n"
-                            f"请重新生成工具调用，确保 arguments 是合法 JSON 字符串，"
-                            f"字符串值内的引号/反斜杠/换行需正确转义（用 \\\" 和 \\\\ 和 \\n）"
-                        )
+                        # 同一工具连续多次解析失败：给模型放弃指令，避免反复重试同一次调用
+                        self._json_fail_counts[func_name] = self._json_fail_counts.get(func_name, 0) + 1
+                        if self._json_fail_counts[func_name] >= 2:
+                            self._log("warning", f"  → {func_name} 连续 {self._json_fail_counts[func_name]} 次参数解析失败，提示模型放弃")
+                            result = (
+                                f"参数格式错误: 传给 {func_name} 的 arguments 已连续多次不是合法 JSON（"
+                                f"{self._json_fail_counts[func_name]} 次）。\n"
+                                f"解析错误: {e}\n"
+                                f"请【停止】继续调用 {func_name}，改为用普通文本直接回复用户："
+                                f"说明你打算做什么（文件内容较长时，可描述要点），不要再次输出工具调用。"
+                            )
+                        else:
+                            result = (
+                                f"参数格式错误: 传给 {func_name} 的 arguments 不是合法的 JSON。\n"
+                                f"期望的参数: {schema_hint or '参考工具定义'}\n"
+                                f"解析错误: {e}\n"
+                                f"请重新生成工具调用，确保 arguments 是合法 JSON 字符串，"
+                                f"字符串值内的引号/反斜杠/换行需正确转义（用 \\\" 和 \\\\ 和 \\n）"
+                            )
                     except Exception as e:
                         self._log("error", f"  → 工具执行异常: {e}")
                         result = f"执行出错: {e}"
