@@ -95,12 +95,13 @@ class MemoryDistiller:
             }
             store.add_memory(f"对话摘要: {summary}", metadata)
 
-            # 删除原始对话
+            # 删除原始对话（删除失败记录日志，避免重复蒸馏不可追踪）
             for m in conversations:
                 try:
                     store.delete_memory(m.id)
-                except Exception:
-                    pass
+                except Exception as de:
+                    if self.logger:
+                        self.logger.warning(f"删除被蒸馏对话失败（{m.id}），下次可能重复蒸馏: {de}")
 
             if self.logger:
                 self.logger.info(

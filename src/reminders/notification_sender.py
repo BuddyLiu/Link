@@ -61,7 +61,8 @@ class NotificationSender:
         # 初始化日志文件
         if self.config["log_file_enabled"]:
             log_dir = os.path.dirname(self.config["log_file_path"])
-            os.makedirs(log_dir, exist_ok=True)
+            if log_dir:  # 裸文件名时 dirname 为空，无需创建目录
+                os.makedirs(log_dir, exist_ok=True)
     
     def set_logger(self, logger):
         """设置日志记录器"""
@@ -237,8 +238,11 @@ class NotificationSender:
             
             if system == "Darwin":  # macOS
                 import subprocess
+                # 转义 AppleScript 字符串字面量：双引号/反斜杠（防止注入破坏脚本）
+                def _as_escape(s):
+                    return str(s).replace("\\", "\\\\").replace('"', '\\"')
                 apple_script = f'''
-                display notification "{reminder.content}" with title "{reminder.title}"
+                display notification "{_as_escape(reminder.content)}" with title "{_as_escape(reminder.title)}"
                 '''
                 subprocess.run(["osascript", "-e", apple_script], check=False)
                 

@@ -177,7 +177,9 @@ class ReminderManager:
         
         # SQLite数据库
         db_path = self.config["database_path"]
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        db_dir = os.path.dirname(db_path)
+        if db_dir:  # 裸文件名时无需创建目录
+            os.makedirs(db_dir, exist_ok=True)
         
         try:
             self.db_conn = sqlite3.connect(db_path, check_same_thread=False)
