@@ -2355,13 +2355,14 @@ function denyPermission() {
 
             async def process_task():
                 """处理任务：消费用户输入并执行 LLM 调用"""
-                try:
-                    while True:
-                        data = await input_queue.get()
-                        text = data.get("text", "")
-                        if not text:
-                            continue
+                while True:
+                    data = await input_queue.get()
+                    text = data.get("text", "")
+                    if not text:
+                        continue
 
+                    # 单条消息处理失败不影响后续消息（避免整个管道退出）
+                    try:
                         self.add_user_input(text, client_id)
                         await self._broadcast_event({
                             "event_type": "USER_INPUT",
@@ -2413,10 +2414,20 @@ function denyPermission() {
                                 "source": "link_brain",
                                 "timestamp": time.time()
                             })
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    print(f"process_task 异常: {e}")
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        # 单条消息处理失败不影响后续消息（避免整个管道退出）
+                        print(f"process_task 单条消息处理异常: {e}")
+                        try:
+                            await websocket.send_json({
+                                "type": "event",
+                                "data": {"event_type": "ERROR",
+                                         "message": f"处理消息时出错: {e}",
+                                         "timestamp": time.time()}
+                            })
+                        except Exception:
+                            pass
 
             # 并行运行两个任务
             try:
