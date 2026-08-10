@@ -7,6 +7,8 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 from enum import Enum
+import ast
+import operator
 
 
 class TriggerType(Enum):
@@ -316,40 +318,117 @@ class TriggerChecker:
         
         return False
     
+    @staticmethod
+    def _safe_eval(expression: str, context: Dict[str, Any]) -> Any:
+        """安全评估布尔表达式：仅允许字面量/比较/布尔运算/属性访问，
+        禁止函数调用、下标、属性访问链（防 __subclasses__ 逃逸）、import 等。
+
+        返回评估结果；非法表达式抛 ValueError。
+        """
+        _BIN_OPS = {
+            ast.Add: operator.add, ast.Sub: operator.sub,
+            ast.Mult: operator.mul, ast.Div: operator.truediv,
+            ast.Mod: operator.mod, ast.Pow: operator.pow,
+        }
+        _UNARY_OPS = {ast.USub: operator.neg, ast.UAdd: operator.pos, ast.Not: operator.not_}
+        _CMP_OPS = {
+            ast.Eq: operator.eq, ast.NotEq: operator.ne,
+            ast.Lt: operator.lt, ast.LtE: operator.le,
+            ast.Gt: operator.gt, ast.GtE: operator.ge,
+            ast.In: lambda a, b: a in b,
+        }
+        # 明确允许的纯函数内置（无 IO/系统访问能力）
+        _SAFE_FUNCS = {
+            'len': len, 'abs': abs, 'bool': bool, 'str': str,
+            'int': int, 'float': float, 'min': min, 'max': max,
+            'sum': sum, 'round': round, 'all': all, 'any': any,
+            'list': list, 'tuple': tuple, 'sorted': sorted,
+        }
+
+        def _eval_node(node):
+            if isinstance(node, ast.Expression):
+                return _eval_node(node.body)
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.BoolOp):
+                values = [_eval_node(v) for v in node.values]
+                if isinstance(node.op, ast.And):
+                    return all(values)
+                if isinstance(node.op, ast.Or):
+                    return any(values)
+                raise ValueError("不支持的操作")
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in _SAFE_FUNCS:
+                    args = [_eval_node(a) for a in node.args]
+                    kwargs = {kw.arg: _eval_node(kw.value) for kw in node.keywords if kw.arg}
+                    return _SAFE_FUNCS[node.func.id](*args, **kwargs)
+                raise ValueError("函数调用已被禁用（仅允许安全内置函数）")
+            if isinstance(node, ast.Compare):
+                left = _eval_node(node.left)
+                for op, comparator in zip(node.ops, node.comparators):
+                    right = _eval_node(comparator)
+                    op_type = type(op)
+                    if op_type not in _CMP_OPS:
+                        raise ValueError(f"不支持的比较操作: {op_type.__name__}")
+                    if not _CMP_OPS[op_type](left, right):
+                        return False
+                    left = right
+                return True
+            if isinstance(node, ast.BinOp):
+                op_type = type(node.op)
+                if op_type not in _BIN_OPS:
+                    raise ValueError(f"不支持的运算: {op_type.__name__}")
+                return _BIN_OPS[op_type](_eval_node(node.left), _eval_node(node.right))
+            if isinstance(node, ast.UnaryOp):
+                op_type = type(node.op)
+                if op_type not in _UNARY_OPS:
+                    raise ValueError(f"不支持的一元运算: {op_type.__name__}")
+                return _UNARY_OPS[op_type](_eval_node(node.operand))
+            if isinstance(node, ast.Name):
+                if node.id in context:
+                    return context[node.id]
+                raise ValueError(f"未知变量: {node.id}")
+            if isinstance(node, ast.Attribute):
+                # 仅允许 context 中对象的单层属性访问（如 current_time.hour），
+                # 禁止链式访问（如 a.b.c 或 __class__ 等 dunder），防逃逸
+                if isinstance(node.value, ast.Name):
+                    base = node.value.id
+                    if base in context and not node.attr.startswith('__'):
+                        obj = context[base]
+                        try:
+                            return getattr(obj, node.attr)
+                        except AttributeError:
+                            raise ValueError(f"属性不存在: {base}.{node.attr}")
+                raise ValueError("仅支持上下文变量的单层属性访问")
+            if isinstance(node, (ast.List, ast.Tuple)):
+                items = [_eval_node(elt) for elt in node.elts]
+                return items if isinstance(node, ast.List) else tuple(items)
+            raise ValueError(f"不支持的语言结构: {type(node).__name__}")
+
+        tree = ast.parse(expression, mode="eval")
+        return _eval_node(tree)
+
     def _check_script_condition(self, condition_config: Dict[str, Any], current_time: datetime) -> bool:
         """检查脚本条件（安全简化实现）"""
-        # 注意：在实际生产环境中，执行用户脚本需要严格的安全措施
-        # 这里提供简化的脚本评估
-        
+        # 注意：仅允许简单的布尔表达式，用 AST 白名单评估，杜绝任意代码执行
+
         script_type = condition_config.get("script_type", "python_expr")
         script_content = condition_config.get("script", "")
-        
+
         if script_type == "python_expr":
-            # 只允许简单的Python表达式
+            # 只允许简单的Python表达式（AST 白名单，禁止函数调用/属性链逃逸）
             try:
-                # 限制可用的内置函数
-                safe_builtins = {
-                    'abs': abs, 'all': all, 'any': any, 'bool': bool,
-                    'dict': dict, 'float': float, 'int': int, 'len': len,
-                    'list': list, 'max': max, 'min': min, 'pow': pow,
-                    'round': round, 'str': str, 'sum': sum, 'tuple': tuple,
-                }
-                
-                # 创建安全的命名空间
-                namespace = {
-                    '__builtins__': safe_builtins,
+                context = {
                     'datetime': datetime,
                     'current_time': current_time,
                 }
-                
-                # 评估表达式
-                result = eval(script_content, namespace)
+                result = self._safe_eval(script_content, context)
                 return bool(result)
-                
+
             except Exception as e:
                 self._log("error", f"评估脚本条件失败: {str(e)}")
                 return False
-        
+
         return False
     
     def _check_location_trigger(self, reminder: Any, current_time: datetime) -> bool:
@@ -476,27 +555,24 @@ class TriggerChecker:
         }
         
         try:
-            # 解析条件表达式（简化实现）
-            # 在实际实现中，应该使用更复杂的解析器
-            
-            # 这里简单地将条件表达式视为Python布尔表达式
+            # 解析条件表达式（简化实现）：用 AST 白名单安全评估，杜绝任意代码执行
             safe_globals = {
                 'True': True,
                 'False': False,
                 'None': None,
                 'datetime': datetime,
             }
-            
+
             # 添加上下文变量
             if context:
                 safe_globals.update(context)
-            
-            # 评估表达式
-            eval_result = eval(condition_expression, {"__builtins__": {}}, safe_globals)
-            
+
+            # 评估表达式（AST 白名单，禁止函数调用/属性链逃逸）
+            eval_result = self._safe_eval(condition_expression, safe_globals)
+
             result["success"] = True
             result["result"] = bool(eval_result)
-            
+
         except Exception as e:
             result["error"] = str(e)
         
