@@ -536,6 +536,35 @@ class BrainEngine:
 
                 if not is_tool_call:
                     self._log("info", f"  → 纯文本回复 (长度 {len(text)})")
+                    # DeepSeek Reasoner 的 reasoning_content 与 content 共享 max_tokens 输出预算。
+                    # 思考过长会把预算耗尽，content 被截断为空 → 触发上层兜底"我已经收到你的消息"。
+                    # 补救：追加约束提示重试一次，提高 max_tokens 并禁止继续思考，让剩余预算专注产出回复。
+                    if not text and reasoning and round_num == 0:
+                        self._log("warning",
+                                  f"思考过程({len(reasoning)}字)耗尽输出预算，回复为空，重试(提高max_tokens+约束思考)")
+                        messages.append({
+                            "role": "user",
+                            "content": "你上一轮的思考过程过长，把回复的 token 预算耗尽了，最终回复为空被截断。"
+                                       "这一轮请停止深入思考，不要重新推导，直接用文字输出你的最终答案。",
+                        })
+                        try:
+                            resp2 = self.model_adapter.chat_completion(
+                                messages, temperature=0.7,
+                                max_tokens=8192,
+                                tools=None,  # 重试专注纯文本回复，避免再进入工具调用
+                                stream_callback=stream_callback if use_stream else None,
+                            )
+                            text2 = resp2.text or ""
+                            reasoning2 = resp2.metadata.get("reasoning", "")
+                            if reasoning2:
+                                all_reasoning.append(reasoning2)
+                            if text2:
+                                self._log("info", f"  → 重试后回复 (长度 {len(text2)})")
+                                full_reasoning = "\n".join(all_reasoning) if all_reasoning else reasoning2
+                                return {"text": text2, "reasoning": full_reasoning}
+                            self._log("warning", "重试后回复仍为空")
+                        except Exception as re_:
+                            self._log("error", f"空回复重试失败: {re_}")
                     # 返回累积的完整思考（多轮工具调用时思考分散在各轮）
                     full_reasoning = "\n".join(all_reasoning) if all_reasoning else reasoning
                     return {"text": text, "reasoning": full_reasoning}  # 纯文本回复，完成
