@@ -1091,6 +1091,11 @@ ws.onmessage = e => {
   if (d.type === 'reasoning_chunk') {
     if (!document.getElementById('stream-reasoning')) {
       removeTyping();
+      // 包一层 .msg.thinking 容器，避免 details 直接作为 chatBox 的
+      // flex 子项导致 open 内容区高度塌陷（overflow:hidden + flex 子项 bug）
+      var thinkMsg = document.createElement('div');
+      thinkMsg.className = 'msg thinking';
+      thinkMsg.id = 'stream-reasoning-msg';
       var det = document.createElement('details');
       det.id = 'stream-reasoning';
       det.open = true;
@@ -1135,9 +1140,10 @@ ws.onmessage = e => {
       meta.appendChild(copyThinkBtn);
       meta.appendChild(expandBtn);
       det.appendChild(sum); det.appendChild(wrap); det.appendChild(meta);
+      thinkMsg.appendChild(det);
       var typingEl = chatBox.querySelector('.typing');
-      if (typingEl) chatBox.insertBefore(det, typingEl);
-      else chatBox.appendChild(det);
+      if (typingEl) chatBox.insertBefore(thinkMsg, typingEl);
+      else chatBox.appendChild(thinkMsg);
       // 思考活跃标记：提示用户思考进行中
       det.classList.add('think-active');
     }
@@ -1224,7 +1230,7 @@ ws.onmessage = e => {
       // 清除思考区所有相关 id（含子元素），避免下一条消息命中旧元素
       var _rs = document.getElementById('stream-reasoning');
       if (_rs) _rs.removeAttribute('id');
-      ['stream-reasoning-wrap', 'stream-reasoning-content',
+      ['stream-reasoning-msg', 'stream-reasoning-wrap', 'stream-reasoning-content',
        'stream-reasoning-count', 'stream-reasoning-expand',
        'stream-reasoning-copy'].forEach(function(rid) {
         var el = document.getElementById(rid);
