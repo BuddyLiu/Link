@@ -883,15 +883,35 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </div>
 
 <script>
-const ws = new WebSocket('ws://' + location.host + '/ws');
+const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
 const chatBox = document.getElementById('chat-box');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const TYPE_SPEED = 30; // ms per character
 var historyPage = 1, historyLoading = false, historyEnd = false;
 
-ws.onopen = () => { addMessage('system', '已连接到 LINK'); loadHistory(); updateStatus(); };
-ws.onclose = () => addMessage('system', '连接已断开');
+// WebSocket 自动重连：断线后指数退避重试，避免页面失去交互能力
+var _wsReconnectTimer = null;
+var _wsReconnectAttempts = 0;
+
+function reconnectWS() {
+  if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
+  if (_wsReconnectAttempts >= 5) {
+    addMessage('system', '⚠️ 多次重连失败，请手动刷新页面');
+    return;
+  }
+  var delay = Math.min(1000 * Math.pow(2, _wsReconnectAttempts), 8000);
+  _wsReconnectAttempts++;
+  addMessage('system', '连接断开，' + (delay / 1000) + 's 后自动重连...');
+  _wsReconnectTimer = setTimeout(function() {
+    addMessage('system', '正在重新连接...');
+    window.location.reload();
+  }, delay);
+}
+
+ws.onopen = () => { _wsReconnectAttempts = 0; addMessage('system', '已连接到 LINK'); loadHistory(); updateStatus(); };
+ws.onclose = () => { addMessage('system', '连接已断开'); reconnectWS(); };
+ws.onerror = () => { /* onclose 会触发重连，此处避免重复提示 */ };
 
 async function updateStatus() {
   try {
@@ -905,7 +925,7 @@ async function updateStatus() {
     var health = (b.health || {}).overall_status || '?';
     var memStats = (m.stats || {});
     var totalMem = memStats.total_memories || 0;
-    if (m.stats && m.stats.graph) totalMem += ' (' + m.stats.graph.nodes + '图)';
+    if (memStats.graph) totalMem += ' (' + memStats.graph.nodes + '图)';
     var uptime = d.web ? d.web.uptime + 's' : '?';
     document.getElementById('status-model').innerHTML =
       '<span style="color:#6366f1">' + provider + '</span> / ' + model + ' [' + health + ']';
@@ -1395,7 +1415,13 @@ function send() {
   const text = input.value.trim();
   if (!text) return;
   // 防连点：已禁用（等待回复）时忽略
-  if (sendBtn.disabled && !window._sendReentrant) return;
+  if (sendBtn.disabled) return;
+  // 连接断开时给出提示，避免静默失败
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addMessage('system', '⚠️ 连接已断开，请稍后刷新页面重试');
+    showToast('连接已断开');
+    return;
+  }
   input.value = '';
   autoResizeInput();
   addMessage('user', text);
@@ -1832,6 +1858,17 @@ function removeTyping() {
   if (typingTimer) { clearTimeout(typingTimer); typingTimer = null; }
   const el = chatBox.querySelector('.typing');
   if (el) el.remove();
+}
+
+// 轻量 toast 提示（#toast 元素已在 HTML 中定义）
+var _toastTimer = null;
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function() { t.classList.remove('show'); }, 1800);
 }
 
 function escapeHtml(s) {
