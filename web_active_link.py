@@ -1221,10 +1221,15 @@ ws.onmessage = e => {
       streamEl.removeAttribute('id');
       var _bub = streamEl.querySelector('.bubble');
       if (_bub) _bub.removeAttribute('id');
+      // 清除思考区所有相关 id（含子元素），避免下一条消息命中旧元素
       var _rs = document.getElementById('stream-reasoning');
       if (_rs) _rs.removeAttribute('id');
-      var _rc = document.getElementById('stream-reasoning-content');
-      if (_rc) _rc.removeAttribute('id');
+      ['stream-reasoning-wrap', 'stream-reasoning-content',
+       'stream-reasoning-count', 'stream-reasoning-expand',
+       'stream-reasoning-copy'].forEach(function(rid) {
+        var el = document.getElementById(rid);
+        if (el) el.removeAttribute('id');
+      });
       streamContentId = null;
       _streamTyped = 0;
       restoreSendBtn();
