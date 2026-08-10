@@ -265,8 +265,21 @@ class TriggerChecker:
             
             elif operator == "matches_regex":
                 import re
-                pattern = re.compile(str(expected_value))
-                return bool(pattern.search(str(current_value)))
+                # ReDoS 防护：限制正则与输入长度，拦截病态嵌套量词
+                pattern_str = str(expected_value)
+                input_str = str(current_value)
+                if len(pattern_str) > 200:
+                    self._log("warning", f"matches_regex 模式超长({len(pattern_str)}字)被拒绝")
+                    return False
+                if len(input_str) > 10000:
+                    self._log("warning", "matches_regex 输入超长被拒绝")
+                    return False
+                # 检测病态嵌套量词（如 (a+)+b、([a-z]+)*），指数级回溯风险
+                if re.search(r'\([^)]*[+*][^)]*\)\s*[+*]', pattern_str):
+                    self._log("warning", "matches_regex 疑似病态正则(嵌套量词)被拒绝")
+                    return False
+                pattern = re.compile(pattern_str)
+                return bool(pattern.search(input_str))
             
             elif operator == "is_true":
                 return bool(current_value)

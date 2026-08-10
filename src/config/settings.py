@@ -185,7 +185,11 @@ class Settings(BaseSettings):
         return self
     
     def to_dict(self) -> Dict[str, Any]:
-        """将配置转换为字典"""
+        """将配置转换为字典（密钥字段脱敏，防止写文件/日志泄露）"""
+        external = self.external.model_dump()
+        for key in ("openweathermap_api_key", "google_calendar_api_key", "newsapi_api_key"):
+            if external.get(key):
+                external[key] = self._mask_secret(str(external[key]))
         return {
             "system": self.system.model_dump(),
             "model": self.model.model_dump(),
@@ -195,8 +199,15 @@ class Settings(BaseSettings):
             "planning": self.planning.model_dump(),
             "reflection": self.reflection.model_dump(),
             "reminder": self.reminder.model_dump(),
-            "external": self.external.model_dump(),
+            "external": external,
         }
+
+    @staticmethod
+    def _mask_secret(value: str) -> str:
+        """掩码密钥：只留前4后4字符，中间用 * 代替"""
+        if not value or len(value) < 8:
+            return "***"
+        return value[:4] + "*" * (len(value) - 8) + value[-4:]
     
     def save_to_file(self, filepath: str = "./config/settings.json"):
         """保存配置到文件"""

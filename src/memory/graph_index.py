@@ -8,6 +8,7 @@
 import json
 import os
 import time
+from collections import deque
 from typing import List, Dict, Any, Optional, Tuple
 
 
@@ -120,8 +121,8 @@ class GraphIndex:
             所有被激活节点列表，按激活值降序，每项为 (node_id, activation)
         """
         activated: Dict[str, float] = {}
-        # BFS 队列: (node_id, current_activation, depth)
-        queue: List[Tuple[str, float, int]] = []
+        # BFS 队列: (node_id, current_activation, depth)，deque 保证 pop 为 O(1)
+        queue: deque = deque()
 
         # 初始化种子
         for node_id, score in seeds:
@@ -133,7 +134,7 @@ class GraphIndex:
 
         # BFS 扩散
         while queue:
-            node_id, score, depth = queue.pop(0)
+            node_id, score, depth = queue.popleft()
 
             if depth >= max_depth:
                 continue

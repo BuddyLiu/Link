@@ -214,8 +214,9 @@ class EmbeddingService:
         """确定性随机向量后备方案"""
         import hashlib
         seed = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
-        np.random.seed(seed)
-        return np.random.randn(self.dimension).tolist()
+        # 用局部 RNG（default_rng），不污染全局 numpy 随机状态（线程安全）
+        rng = np.random.default_rng(seed)
+        return rng.standard_normal(self.dimension).tolist()
     
     def embed(self, text: str) -> List[float]:
         """
@@ -239,8 +240,8 @@ class EmbeddingService:
             # 返回随机向量作为后备
             import hashlib
             seed = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
-            np.random.seed(seed)
-            return np.random.randn(self.dimension).tolist()
+            rng = np.random.default_rng(seed)
+            return rng.standard_normal(self.dimension).tolist()
     
     def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
         """

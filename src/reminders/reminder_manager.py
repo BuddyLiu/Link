@@ -307,11 +307,10 @@ class ReminderManager:
         # 保存提醒
         if self._save_reminder(reminder):
             self._log("info", f"提醒已添加: {reminder_id} - {title}")
-            
-            # 清除缓存
-            if user_id in self.active_reminders_cache:
-                del self.active_reminders_cache[user_id]
-            
+
+            # 清除缓存（所有带状态的键；原代码误删裸 user_id 键）
+            self._invalidate_cache(user_id)
+
             return reminder
         else:
             self._log("error", f"保存提醒失败: {reminder_id}")
@@ -578,16 +577,20 @@ class ReminderManager:
             # 保存更新
             if self._update_reminder_in_storage(reminder):
                 self._log("info", f"提醒已更新: {reminder_id}")
-                
-                # 清除缓存
-                cache_key = f"{user_id}_all"
-                if cache_key in self.active_reminders_cache:
-                    del self.active_reminders_cache[cache_key]
-                
+
+                # 清除缓存（所有带状态的键）
+                self._invalidate_cache(user_id)
+
                 return True
         
         return False
-    
+
+    def _invalidate_cache(self, user_id: str) -> None:
+        """清除某用户所有缓存键（含带状态过滤的键），避免返回过期数据"""
+        to_del = [k for k in self.active_reminders_cache if k.startswith(f"{user_id}_")]
+        for k in to_del:
+            del self.active_reminders_cache[k]
+
     def _update_reminder_in_storage(self, reminder: Reminder) -> bool:
         """在存储中更新提醒"""
         if self.db_conn:
@@ -664,12 +667,10 @@ class ReminderManager:
         
         if deleted:
             self._log("info", f"提醒已删除: {reminder_id}")
-            
-            # 清除缓存
-            cache_key = f"{user_id}_all"
-            if cache_key in self.active_reminders_cache:
-                del self.active_reminders_cache[cache_key]
-            
+
+            # 清除缓存（所有带状态的键）
+            self._invalidate_cache(user_id)
+
             return True
         else:
             self._log("warning", f"提醒不存在或无权限: {reminder_id}")
@@ -867,7 +868,12 @@ class ReminderManager:
                     if reminder.status == ReminderStatus.TRIGGERED:
                         reminder.status = ReminderStatus.ACTIVE
                         reminder.updated_at = datetime.now()
+                        # 推迟下次触发时间（60秒后），避免立即重触发形成紧循环
+                        from datetime import timedelta as _td
+                        reminder.next_trigger_time = datetime.now() + _td(seconds=60)
                         self._update_reminder_in_storage(reminder)
+                        self._log("debug",
+                                  f"发送失败，下次重试时间推迟到 {reminder.next_trigger_time}")
                     results["failed"] += 1
                     results["details"].append({
                         "reminder_id": reminder.id,
