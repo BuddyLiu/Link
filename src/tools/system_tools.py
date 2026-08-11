@@ -246,7 +246,10 @@ class ReadFileTool(SystemTool):
             except (FileNotFoundError, OSError):
                 raise FileNotFoundError(f"无法访问文件: {path}")
             if file_size > 10 * 1024 * 1024:  # 10MB限制
-                raise ValueError(f"文件太大 ({file_size} bytes)，超过10MB限制")
+                raise ValueError(
+                    f"文件太大 ({file_size / 1024 / 1024:.1f}MB)，超过10MB限制\n"
+                    f"建议：用 execute_command('wc -l {path}') 查行数，"
+                    f"或用 read_file offset/limit 参数分块读取（如 offset=1&limit=200）")
 
             # 尝试以文本模式读取（TOCTOU: open 可能失败如果文件被中间删除）
             try:
@@ -502,7 +505,9 @@ class ExecuteCommandTool(SystemTool):
             }
 
         except subprocess.TimeoutExpired:
-            raise ValueError(f"⏱ 命令执行超时 (超过{timeout}秒): {command[:100]}")
+            raise ValueError(
+                f"⏱ 命令执行超时 (超过{timeout}秒): {command[:100]}\n"
+                f"建议：可增大 timeout 参数（上限60秒），或改用更快的命令（如 head/tail 替代 cat）")
         except PermissionError:
             raise
         except ValueError:
@@ -592,7 +597,8 @@ class WriteFileTool(SystemTool):
 
         if len(content) > self.MAX_WRITE_SIZE:
             raise ValueError(
-                f"写入内容太大 ({len(content)} 字节)，超过 {self.MAX_WRITE_SIZE} 字节的限制"
+                f"写入内容太大 ({len(content)} 字节)，超过 {self.MAX_WRITE_SIZE} 字节的限制\n"
+                f"建议：拆分成多次 write_file 调用，或先生成文件骨架再分批追加"
             )
 
         path.parent.mkdir(parents=True, exist_ok=True)

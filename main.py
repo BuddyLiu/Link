@@ -2653,12 +2653,12 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "save_user_fact",
-                "description": "保存用户提到的个人信息到记忆",
+                "description": "保存用户提到的个人信息到长期记忆。用户透露个人信息（姓名/职业/手机号/偏好/地址/年龄/生日/技能/项目等）时调用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "category": {"type": "string", "enum": ["姓名", "职业", "手机号", "偏好", "其他"]},
-                        "value": {"type": "string"},
+                        "category": {"type": "string", "description": "信息类别（可用：姓名/职业/手机号/偏好/地址/年龄/生日/技能/项目/其他）"},
+                        "value": {"type": "string", "description": "具体信息内容"}
                     },
                     "required": ["category", "value"]
                 }
@@ -3103,9 +3103,9 @@ class LINK:
         system_prompt = (
             "你是一个AI助手LINK，用中文回答。\n\n"
             "## 工具使用规则\n"
-            "- 用户提到个人信息（姓名/职业/手机号/偏好）→ 调用 save_user_fact\n"
+            "- 用户透露个人信息（姓名/职业/手机号/偏好/地址/生日等）→ 调用 save_user_fact\n"
             "- 用户要求搜索/查新闻/查天气/你不知道的信息 → 调用 search_web\n"
-            "- 文件操作优先用文件工具（read_file / write_file / edit_file / delete_file）\n"
+            "- 文件操作优先用文件工具（read_file / write_file / edit_file / delete_file / grep_files）\n"
             "\n"
             "## 工作流程（重要）\n"
             "当用户要求修改代码、调研项目、或需要多步骤操作时：\n"
