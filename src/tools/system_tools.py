@@ -201,6 +201,7 @@ class ReadFileTool(SystemTool):
         super().__init__("read_file", "读取文件内容", parameters)
     
     def execute(self, **kwargs) -> str:
+        import datetime as _dt
         path = kwargs["path"]
         encoding = kwargs.get("encoding", "utf-8")
 
@@ -237,15 +238,29 @@ class ReadFileTool(SystemTool):
             max_length = 50000
             if len(content) > max_length:
                 content = content[:max_length] + f"\n\n...(已截断，文件总长度: {len(content)} 字符)"
-            
-            return content
+
+            # 文件元信息头：帮助模型确认读到了正确的文件（大小/行数/时间）
+            try:
+                st = path_obj.stat()
+                line_count = content.count("\n") + 1
+                if st.st_size >= 1024 * 1024:
+                    size_str = f"{st.st_size / 1024 / 1024:.1f}MB"
+                elif st.st_size >= 1024:
+                    size_str = f"{st.st_size / 1024:.1f}KB"
+                else:
+                    size_str = f"{st.st_size}B"
+                header = (f"--- {path_obj.name} | {size_str} | {line_count}行"
+                          f" | {_dt.datetime.fromtimestamp(st.st_mtime).strftime('%m-%d %H:%M')} ---\n")
+            except Exception:
+                header = f"--- {path_obj.name} ---\n"
+            return header + content
             
         except UnicodeDecodeError:
             # 尝试其他编码
             try:
                 with open(path_obj, 'r', encoding='latin-1') as f:
                     content = f.read()
-                return content[:50000]
+                return f"--- {path_obj.name} (二进制/未知编码，已尝试 latin-1) ---\n" + content[:50000]
             except Exception as e:
                 logger.error(f"读取文件失败: {str(e)}")
                 raise ValueError(f"无法读取文件，可能是二进制文件或不支持的编码: {str(e)}")
