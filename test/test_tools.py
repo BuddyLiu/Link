@@ -347,7 +347,9 @@ class TestListFilesTool:
     def test_directory(self, sample_project, tool_manager):
         result = tool_manager.execute_tool("list_files", path=str(sample_project))
         assert isinstance(result, list)
-        assert "src" in result or "README.md" in result or "data.txt" in result
+        joined = "\n".join(result)
+        # 条目含文件名 + 元信息（大小/时间），子串匹配验证
+        assert any("src" in r for r in result) or "README.md" in joined or "data.txt" in joined
 
     def test_recursive(self, sample_project, tool_manager):
         result = tool_manager.execute_tool("list_files", path=str(sample_project),
@@ -369,7 +371,7 @@ class TestListFilesTool:
         try:
             result = tool_manager.execute_tool("list_files")
             assert isinstance(result, list)
-            assert "default_path_probe.txt" in result
+            assert any("default_path_probe.txt" in r for r in result)
         finally:
             probe.unlink(missing_ok=True)
 

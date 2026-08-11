@@ -141,13 +141,39 @@ class ListFilesTool(SystemTool):
                 raise ValueError(f"路径不是目录: {path}")
             
             files = []
+            try:
+                import datetime as _dt
+            except ImportError:
+                _dt = None
             if recursive:
-                for file_path in path_obj.rglob("*"):
-                    files.append(str(file_path.relative_to(path_obj)))
+                entries = list(path_obj.rglob("*"))[:100]
             else:
-                for item in path_obj.iterdir():
-                    files.append(item.name)
-            
+                entries = list(path_obj.iterdir())[:100]
+
+            for entry in entries:
+                rel = str(entry.relative_to(path_obj)) if recursive else entry.name
+                try:
+                    st = entry.stat()
+                    size = st.st_size
+                    is_dir = entry.is_dir()
+                    kind = "📁" if is_dir else "📄"
+                    # 人类可读大小
+                    if size >= 1024 * 1024:
+                        size_str = f"{size / 1024 / 1024:.1f}MB"
+                    elif size >= 1024:
+                        size_str = f"{size / 1024:.1f}KB"
+                    else:
+                        size_str = f"{size}B"
+                    mtime = ""
+                    if _dt:
+                        try:
+                            mtime = " " + _dt.datetime.fromtimestamp(st.st_mtime).strftime("%m-%d %H:%M")
+                        except (OSError, ValueError, OverflowError):
+                            pass
+                    files.append(f"{kind} {rel} ({size_str}{mtime})")
+                except (OSError, FileNotFoundError):
+                    files.append(f"📄 {rel}")
+
             return files[:100]  # 限制返回数量
             
         except Exception as e:
