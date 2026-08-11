@@ -2971,9 +2971,8 @@ class LINK:
             return "保存失败"
 
         if tool_name == "get_project_info":
-            if self._project_context:
-                return self._project_context
-            return "暂无项目信息"
+            # 有缓存用缓存，无缓存触发一次扫描（避免模型拿到'暂无项目信息'）
+            return self._get_project_context()
 
         if tool_name in name_map:
             tool_id, param_map = name_map[tool_name]
