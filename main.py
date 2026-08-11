@@ -2668,11 +2668,11 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "读取文件内容",
+                "description": "读取文件内容（带文件元信息头：大小/行数/时间）。路径语义：相对路径落到工作目录 ~/LINK-Workspace；读源码目录用绝对路径。适合查看具体文件；不确定文件位置时先用 list_files 或 glob_files。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "文件路径"}
+                        "path": {"type": "string", "description": "文件路径（相对路径→工作目录；源码目录用绝对路径）"}
                     },
                     "required": ["path"]
                 }
@@ -2682,12 +2682,12 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "write_file",
-                "description": "创建或覆盖写入文件",
+                "description": "创建或覆盖写入文件（自动创建父目录）。路径语义：相对路径落到工作目录；写源码目录需先授权。content 需提供完整内容。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "文件路径"},
-                        "content": {"type": "string", "description": "文件内容"}
+                        "path": {"type": "string", "description": "文件路径（相对路径→工作目录；写源码目录需授权）"},
+                        "content": {"type": "string", "description": "完整文件内容"}
                     },
                     "required": ["path", "content"]
                 }
@@ -2697,12 +2697,12 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "edit_file",
-                "description": "编辑文件：字符串匹配替换",
+                "description": "编辑文件：字符串精确匹配替换。old 必须与文件中现有内容完全一致（含缩进）；适合小范围修改。大改动建议用 write_file 整体重写。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "文件路径"},
-                        "old": {"type": "string", "description": "被替换的原内容"},
+                        "old": {"type": "string", "description": "被替换的原内容（必须与文件完全一致）"},
                         "new": {"type": "string", "description": "替换后的内容"}
                     },
                     "required": ["path", "old", "new"]
@@ -2727,11 +2727,11 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "search_web",
-                "description": "搜索互联网信息",
+                "description": "搜索互联网信息（返回 标题+URL+摘要）。当用户问天气/新闻/实时信息/你不知道的内容时，必须调用本工具搜索后再回答，不要说自己不知道。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "搜索关键词"}
+                        "query": {"type": "string", "description": "搜索关键词（尽量具体，如含主题+限定词）"}
                     },
                     "required": ["query"]
                 }
@@ -2741,11 +2741,11 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "glob_files",
-                "description": "按模式匹配文件名（如 **/*.py）",
+                "description": "按文件名模式搜索（返回匹配文件路径列表）。适合找特定命名文件（如 **/*.md、**/test_*.py）；浏览目录用 list_files，找内容用 grep_files。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "文件模式，如 **/*.py"}
+                        "pattern": {"type": "string", "description": "文件模式，如 **/*.py、**/*.md"}
                     },
                     "required": ["pattern"]
                 }
@@ -2755,12 +2755,12 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "grep_files",
-                "description": "在文件中搜索文本（关键词匹配）",
+                "description": "在文件中搜索文本（返回 相对路径:行号: 匹配行预览）。适合在多个文件中定位关键词（比逐个 read_file 高效）；单个文件查看用 read_file。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string", "description": "搜索关键词"},
-                        "path": {"type": "string", "description": "搜索路径，默认当前目录"},
+                        "path": {"type": "string", "description": "搜索路径，默认工作目录"},
                         "include": {"type": "string", "description": "文件后缀过滤，如 .py,.txt"},
                         "max_results": {"type": "integer", "description": "最大结果数，默认20"}
                     },
@@ -2789,11 +2789,11 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "list_files",
-                "description": "列出目录中的文件",
+                "description": "列出目录内容（带类型图标/大小/修改时间，如 📄 report.md (2KB 08-11 23:19)）。适合浏览目录、判断文件相关性；找特定名字用 glob_files，找内容用 grep_files。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "要列出的目录路径"},
+                        "path": {"type": "string", "description": "要列出的目录路径（默认工作目录）"},
                         "recursive": {"type": "boolean", "description": "是否递归列出子目录"}
                     }
                 }
@@ -2816,11 +2816,11 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "calculate",
-                "description": "执行数学计算",
+                "description": "执行数学计算。支持算术(+ - * / **)、取模%、整除//、位运算(^ & | << >>)；函数 sqrt/sin/cos/tan/asin/acos/atan/log/exp/floor/ceil 等；常量 pi/e。注意：幂运算用 **（^ 是异或）；科学计数法可用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "expression": {"type": "string", "description": "数学表达式，如 2 + 3 * 4"}
+                        "expression": {"type": "string", "description": "数学表达式，如 2**10、sqrt(16)、2*pi、degrees(atan(1))"}
                     },
                     "required": ["expression"]
                 }
@@ -2841,12 +2841,12 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "execute_command",
-                "description": "在终端执行系统命令（仅限安全命令：ls/cat/pwd/git等；禁止rm/sudo/mkfs等危险操作）",
+                "description": "在终端执行系统命令（在工作目录 ~/LINK-Workspace 下执行）。仅限安全命令白名单：ls/cat/head/tail/echo/pwd/which/date/uptime/whoami/uname/hostname/env/git(status/log/diff/branch/show/blame)/python --version/pip list/tree/du/df/file/stat/wc/sort/cut/grep/curl/ping/dig。禁止：shell元字符(; | & $ `)、提权(sudo/su)、危险命令(rm -rf/dd/mkfs/shutdown)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "command": {"type": "string", "description": "要执行的命令"},
-                        "timeout": {"type": "integer", "description": "超时秒数，默认30", "default": 30}
+                        "command": {"type": "string", "description": "要执行的命令（单条命令，禁止多语句拼接）"},
+                        "timeout": {"type": "integer", "description": "超时秒数，默认30，上限60", "default": 30}
                     },
                     "required": ["command"]
                 }
