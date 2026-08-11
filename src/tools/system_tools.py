@@ -196,14 +196,35 @@ class ReadFileTool(SystemTool):
                 "description": "文件编码",
                 "required": False,
                 "default": "utf-8"
+            },
+            "offset": {
+                "type": "integer",
+                "description": "起始行号（从1开始），用于分块读取大文件",
+                "required": False,
+                "default": 1
+            },
+            "limit": {
+                "type": "integer",
+                "description": "读取行数（默认全部）",
+                "required": False,
+                "default": 0
             }
         }
         super().__init__("read_file", "读取文件内容", parameters)
-    
+
     def execute(self, **kwargs) -> str:
         import datetime as _dt
         path = kwargs["path"]
         encoding = kwargs.get("encoding", "utf-8")
+        try:
+            offset = int(kwargs.get("offset", 1) or 1)
+        except (ValueError, TypeError):
+            offset = 1
+        offset = max(1, offset)
+        try:
+            limit = int(kwargs.get("limit", 0) or 0)
+        except (ValueError, TypeError):
+            limit = 0
 
         # 权限检查（相对路径解析到工作目录）
         p = resolve_tool_path(path)
@@ -230,26 +251,41 @@ class ReadFileTool(SystemTool):
             # 尝试以文本模式读取（TOCTOU: open 可能失败如果文件被中间删除）
             try:
                 with open(path_obj, 'r', encoding=encoding) as f:
-                    content = f.read()
+                    all_lines = f.readlines()
             except (FileNotFoundError, OSError):
                 raise FileNotFoundError(f"读取文件时文件被移除: {path}")
-            
+
+            total_lines = len(all_lines)
+            # 分块读取：offset/limit 按行切片
+            if offset > 1 or limit > 0:
+                start = offset - 1
+                end = (start + limit) if limit > 0 else total_lines
+                selected = all_lines[start:end]
+                content = "".join(selected)
+            else:
+                selected = all_lines
+                content = "".join(all_lines)
+
             # 限制返回内容长度
             max_length = 50000
-            if len(content) > max_length:
-                content = content[:max_length] + f"\n\n...(已截断，文件总长度: {len(content)} 字符)"
+            truncated_by_chars = len(content) > max_length
+            if truncated_by_chars:
+                content = content[:max_length] + f"\n\n...(字符截断)"
 
             # 文件元信息头：帮助模型确认读到了正确的文件（大小/行数/时间）
             try:
                 st = path_obj.stat()
-                line_count = content.count("\n") + 1
+                line_count = total_lines
                 if st.st_size >= 1024 * 1024:
                     size_str = f"{st.st_size / 1024 / 1024:.1f}MB"
                 elif st.st_size >= 1024:
                     size_str = f"{st.st_size / 1024:.1f}KB"
                 else:
                     size_str = f"{st.st_size}B"
-                header = (f"--- {path_obj.name} | {size_str} | {line_count}行"
+                shown_start = offset
+                shown_end = min(total_lines, (offset - 1 + (limit if limit > 0 else total_lines)))
+                header = (f"--- {path_obj.name} | {size_str} | 共{total_lines}行"
+                          f" | 显示{shown_start}-{shown_end}行"
                           f" | {_dt.datetime.fromtimestamp(st.st_mtime).strftime('%m-%d %H:%M')} ---\n")
             except Exception:
                 header = f"--- {path_obj.name} ---\n"

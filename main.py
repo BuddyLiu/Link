@@ -2668,11 +2668,14 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "读取文件内容（带文件元信息头：大小/行数/时间）。路径语义：相对路径落到工作目录 ~/LINK-Workspace；读源码目录用绝对路径。适合查看具体文件；不确定文件位置时先用 list_files 或 glob_files。",
+                "description": "读取文件内容（返回文件元信息头：大小/总行数/显示行范围/时间）。支持 offset/limit 分块读取大文件。路径语义：相对路径落到工作目录 ~/LINK-Workspace；读源码目录用绝对路径。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "文件路径（相对路径→工作目录；源码目录用绝对路径）"}
+                        "path": {"type": "string", "description": "文件路径（相对路径→工作目录；源码目录用绝对路径）"},
+                        "encoding": {"type": "string", "description": "文件编码，默认 utf-8"},
+                        "offset": {"type": "integer", "description": "起始行号（从1开始），分块读取用"},
+                        "limit": {"type": "integer", "description": "读取行数，默认全部"}
                     },
                     "required": ["path"]
                 }
