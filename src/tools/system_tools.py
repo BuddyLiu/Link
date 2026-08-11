@@ -885,11 +885,17 @@ class SearchWebTool(SystemTool):
         if not results:
             return f"搜索 '{query}' 未找到结果"
 
-        # 格式化输出
+        # 格式化输出（含来源域名，帮助模型判断可信度）
         lines = [f"搜索结果 ({len(results[:max_results])} 条) 来源: {used_source}\n"]
         for i, r in enumerate(results[:max_results], 1):
             lines.append(f"{i}. {r['title']}")
             lines.append(f"   {r['url']}")
+            try:
+                domain = urllib.parse.urlparse(r['url']).netloc
+                if domain:
+                    lines.append(f"   来源: {domain}")
+            except Exception:
+                pass
             if r['snippet']:
                 lines.append(f"   {r['snippet']}")
             lines.append("")

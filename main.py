@@ -2734,7 +2734,9 @@ class LINK:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "搜索关键词（尽量具体，如含主题+限定词）"}
+                        "query": {"type": "string", "description": "搜索关键词（尽量具体，如含主题+限定词）"},
+                        "max_results": {"type": "integer", "description": "最大结果数，默认5"},
+                        "source": {"type": "string", "description": "搜索源: web(默认) / bing"}
                     },
                     "required": ["query"]
                 }
