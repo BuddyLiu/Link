@@ -1442,12 +1442,17 @@ class LINK:
                 user_facts.append(m)
 
             # 按类别分组展示（名称/职业/偏好/联系方式/其他）
+            # 兼容 save_user_fact 的存储格式（用户姓名: xxx / 用户偏好: xxx）
             import re as _re
             categories = {
-                "称呼": lambda c: _re.search(r'用户叫|名字叫|名为', c),
-                "职业": lambda c: any(k in c for k in ("职业", "工程师", "开发", "设计师", "产品经理", "经理", "架构师", "运营", "市场", "销售")),
-                "偏好": lambda c: any(k in c for k in ("偏好", "喜欢", "爱好", "不爱", "讨厌")),
-                "联系方式": lambda c: "手机号" in c or _re.search(r'1[3-9]\d{9}', c),
+                "称呼": lambda c: _re.search(r'用户叫|名字叫|名为|用户姓名', c),
+                "职业": lambda c: _re.search(r'用户职业', c) or any(
+                    k in c for k in ("职业", "工程师", "开发", "设计师", "产品经理",
+                                     "经理", "架构师", "运营", "市场", "销售", "程序员")),
+                "偏好": lambda c: _re.search(r'用户偏好', c) or any(
+                    k in c for k in ("偏好", "喜欢", "爱好", "不爱", "讨厌", "擅长")),
+                "联系方式": lambda c: _re.search(r'用户手机号', c) or "手机号" in c
+                                     or _re.search(r'1[3-9]\d{9}', c),
             }
             grouped = {k: [] for k in categories}
             other = []
