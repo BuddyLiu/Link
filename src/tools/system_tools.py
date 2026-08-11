@@ -572,10 +572,11 @@ class GrepFilesTool(SystemTool):
 
     def __init__(self):
         parameters = {
-            "pattern": {"type": "string", "description": "搜索关键词", "required": True},
+            "pattern": {"type": "string", "description": "搜索关键词（不区分大小写子串）", "required": True},
             "path": {"type": "string", "description": "搜索路径（默认当前目录）", "required": False, "default": "."},
             "include": {"type": "string", "description": "文件后缀过滤，如 '.py,.txt'", "required": False, "default": ""},
             "max_results": {"type": "integer", "description": "最大结果数", "required": False, "default": 20},
+            "context_lines": {"type": "integer", "description": "匹配行前后上下文行数", "required": False, "default": 0},
         }
         super().__init__("grep_files", "在文件中搜索文本", parameters)
 
@@ -594,6 +595,11 @@ class GrepFilesTool(SystemTool):
             max_results = int(kwargs.get("max_results", 20) or 20)
         except (ValueError, TypeError):
             max_results = 20
+        try:
+            context_lines = int(kwargs.get("context_lines", 0) or 0)
+        except (ValueError, TypeError):
+            context_lines = 0
+        context_lines = max(0, min(context_lines, 5))  # 上限5行防膨胀
 
         if not search_path.exists():
             raise FileNotFoundError(f"路径不存在: {search_path}")
@@ -601,6 +607,8 @@ class GrepFilesTool(SystemTool):
         allowed_exts = [e.strip().lower() for e in include.split(",") if e.strip()] if include else None
 
         results = []
+        files_scanned = 0
+        files_matched = 0
         try:
             for fpath in search_path.rglob("*"):
                 if not fpath.is_file():
@@ -613,26 +621,44 @@ class GrepFilesTool(SystemTool):
                 try:
                     if fpath.stat().st_size > 1024 * 1024:  # 跳过 >1MB 的文件
                         continue
+                    files_scanned += 1
                     with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                        for ln, line in enumerate(f, 1):
-                            if pattern.lower() in line.lower():
-                                preview = line.strip()[:120]
-                                rel = fpath.relative_to(search_path)
-                                results.append(f"{rel}:{ln}: {preview}")
-                                if len(results) >= max_results:
-                                    raise StopIteration
-                                break  # 每个文件只匹配一次，显示第一处
+                        lines = f.readlines()
+                    rel = str(fpath.relative_to(search_path))
+                    file_hits = 0
+                    for ln, line in enumerate(lines, 1):
+                        if pattern.lower() in line.lower():
+                            if context_lines > 0:
+                                # 上下文块：前后各 context_lines 行
+                                block = []
+                                start = max(0, ln - 1 - context_lines)
+                                end = min(len(lines), ln + context_lines)
+                                for ctx_ln in range(start, end):
+                                    mark = ">" if ctx_ln == ln - 1 else " "
+                                    block.append(f"  {mark} {ctx_ln + 1}: {lines[ctx_ln].rstrip()[:120]}")
+                                results.append(f"{rel}:{ln}:\n" + "\n".join(block))
+                            else:
+                                results.append(f"{rel}:{ln}: {line.strip()[:120]}")
+                            file_hits += 1
+                            if len(results) >= max_results:
+                                raise StopIteration
+                            # 每文件最多 5 处匹配，避免单文件刷屏
+                            if file_hits >= 5:
+                                break
+                    if file_hits > 0:
+                        files_matched += 1
                 except (IOError, UnicodeDecodeError):
                     continue
         except StopIteration:
             pass
 
         if not results:
-            return f"在 {search_path} 中未找到 '{pattern}'"
+            return f"在 {search_path} 中未找到 '{pattern}'（扫描 {files_scanned} 个文件）"
 
         output = "\n".join(results)
+        output = f"匹配 {pattern}: {len(results)} 处 / {files_matched} 个文件（扫描 {files_scanned} 个）\n" + output
         if len(results) >= max_results:
-            output += f"\n...（仅显示前 {max_results} 条）"
+            output += f"\n...（已达 {max_results} 条上限，可加 include 缩小范围）"
         return output
 
 

@@ -2755,14 +2755,15 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "grep_files",
-                "description": "在文件中搜索文本（返回 相对路径:行号: 匹配行预览）。适合在多个文件中定位关键词（比逐个 read_file 高效）；单个文件查看用 read_file。",
+                "description": "在文件中搜索文本（不区分大小写，返回 路径:行号: 匹配行 + 匹配统计）。支持 context_lines 参数带上下文行。适合多文件定位关键词；单个文件查看用 read_file。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "搜索关键词"},
+                        "pattern": {"type": "string", "description": "搜索关键词（不区分大小写）"},
                         "path": {"type": "string", "description": "搜索路径，默认工作目录"},
                         "include": {"type": "string", "description": "文件后缀过滤，如 .py,.txt"},
-                        "max_results": {"type": "integer", "description": "最大结果数，默认20"}
+                        "max_results": {"type": "integer", "description": "最大结果数，默认20"},
+                        "context_lines": {"type": "integer", "description": "匹配行前后上下文行数（0-5），默认0"}
                     },
                     "required": ["pattern"]
                 }
