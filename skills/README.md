@@ -23,17 +23,21 @@
 简单意图（问候/时间/帮助/天气/提醒）
   → 系统规则自动处理，元模型直接友好回复（link-meta.md 一、四、五）
 
+知识/对话类（解释概念/闲聊）
+  → 直接回答，绝不创建任务（link-meta.md 综合决策）
+
 未知内容/实时信息
   → search_web 或外部查询（link-tools.md #9 / link-meta.md 五）
 
 文件/代码操作
-  → 文件工具（link-tools.md #2-8）或 FILE_* 标记（link-actions.md 三）
+  → 浏览: list_files → 找名: glob_files → 找内容: grep_files → 读: read_file
+    （link-tools.md #2-8 / link-actions.md 三）
 
-规划/多步骤/项目
-  → CREATE_TASK 或自行分步（link-meta.md 三 / link-actions.md 一）
+规划/多步骤/项目（用户明确要求安排/组织/计划）
+  → CREATE_TASK（link-meta.md 三 / link-actions.md 一）
 
 记住用户信息
-  → save_user_fact（link-tools.md #1）
+  → save_user_fact（自由类别，link-tools.md #1）
 
 安全系统命令
   → execute_command（link-tools.md #10）
