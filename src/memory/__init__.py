@@ -89,8 +89,6 @@ class MemoryManager:
         import re
         # 归一化类别：提取事实的类别键
         cat_key = self._extract_fact_category(fact)
-        if not cat_key:
-            return None
         try:
             all_mem = self.store.get_all_memories(limit=2000) or []
         except Exception:
@@ -99,26 +97,30 @@ class MemoryManager:
             if m.metadata.get("type") != MemoryType.FACT.value:
                 continue
             content = m.content or ""
-            if content == fact:  # 完全相同
+            if content == fact:  # 完全相同（无条件去重，含无类别事实）
                 return m.id
             # 同类别且核心值相似（内容格式可能不同：'用户叫陈晨' vs '姓名：陈晨'）
-            if self._fact_similar(fact, content):
+            if cat_key and self._fact_similar(fact, content):
                 return m.id
         return None
 
     @staticmethod
     def _extract_fact_category(fact: str) -> Optional[str]:
-        """提取事实的类别键（姓名/职业/偏好/联系方式等）"""
+        """提取事实的类别键（姓名/职业/偏好/联系方式/年龄/地址等）"""
         import re
-        for marker in ("姓名", "职业", "偏好", "爱好", "手机号", "邮箱", "生日", "地址"):
+        for marker in ("姓名", "职业", "偏好", "爱好", "手机号", "邮箱", "生日",
+                       "地址", "年龄", "技能", "项目"):
             if marker in fact:
                 return marker
         # 用户叫X / 我的名字叫X → 姓名类
         if re.search(r'用户叫|名字叫|我的名字', fact):
             return "姓名"
         # 喜欢X / 不爱X → 偏好类
-        if any(k in fact for k in ("喜欢", "不爱", "讨厌", "擅长")):
+        if any(k in fact for k in ("喜欢", "不爱", "讨厌", "擅长", "热衷于")):
             return "偏好"
+        # 其他类（用户其他: xxx）
+        if fact.startswith("用户其他"):
+            return "其他"
         return None
 
     @staticmethod
@@ -128,8 +130,8 @@ class MemoryManager:
         # 提取第一个匹配的值（如 陈晨 / 前端工程师）
         def extract_val(s):
             # 去掉类别前缀和标点
-            s = re.sub(r'^(用户|我的|我)(?:叫|名字叫|职业是|是|手机号|偏好|爱好|邮箱|生日|地址|年龄)?[:：\s]*', '', s)
-            s = re.sub(r'^(姓名|职业|偏好|爱好|手机号|邮箱|生日|地址)[:：\s]*', '', s)
+            s = re.sub(r'^(用户|我的|我)(?:叫|名字叫|职业是|是|手机号|偏好|爱好|邮箱|生日|地址|年龄|技能|项目|其他)?[:：\s]*', '', s)
+            s = re.sub(r'^(姓名|职业|偏好|爱好|手机号|邮箱|生日|地址|年龄|技能|项目|其他)[:：\s]*', '', s)
             s = re.sub(r'^叫', '', s)
             s = s.strip().strip('，。,.！!？?')
             return s

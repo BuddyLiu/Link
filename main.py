@@ -1270,41 +1270,22 @@ class LINK:
             return
         facts = []
 
-        # 方法1: 正则提取（高精确度，无需LLM）
-        facts += self._regex_extract_facts(user_input)
-
-        # 方法2: LLM提取（覆盖复杂表述，仅在输入含个人信息信号时启用，
-        # 避免每次对话都调 LLM 提取器产生无意义调用）
+        # 方法1: 用大模型 Function Calling 提取结构化 JSON 事实（替代正则，覆盖更广）
+        # 仅在输入含个人信息信号时调用，避免每次对话都调 LLM
         import re as _re
         has_personal_signal = bool(
             _re.search(r'我(?:叫|是|做|喜欢|爱|住在|毕业于|出生于|来自|用|在)|我的(?:名字|职业|手机|电话|邮箱|生日|地址|年龄|爱好)|用户(?:叫|姓名|职业|偏好)',
                        user_input))
         if self.brain_engine and has_personal_signal:
             try:
-                # 要求标准格式 '用户{类别}: {值}'（与正则/save_user_fact 一致），
-                # 减少格式漂移导致的重复（'姓名：陈晨' vs '用户姓名: 陈晨'）
-                prompt = (
-                    f"从用户的话中提取关于用户的事实：{user_input}\n"
-                    "只输出事实，每行一个，格式为：用户{类别}: {值}。\n"
-                    "类别用：姓名/职业/偏好/手机号/邮箱/生日/地址/技能/其他。\n"
-                    "没有用户个人信息则只回复：无。"
-                )
-                llm_out = self.brain_engine.simple_query(
-                    prompt,
-                    system_prompt="你是个人信息提取器。只输出标准格式的事实行，不要解释。"
-                )
-                if llm_out and llm_out.strip() not in ("无", ""):
-                    for line in llm_out.strip().split("\n"):
-                        line = line.strip().strip('-* ')
-                        if line and len(line) > 4 \
-                           and "助手" not in line \
-                           and "Assistant" not in line \
-                           and "LINK" not in line.upper() \
-                           and (not line.endswith("。") or len(line) > 8):
-                            if line not in facts:
-                                facts.append(line)
+                facts = self._extract_facts_via_tool(user_input) or []
             except Exception as e:
-                self.logger.debug(f"LLM 事实提取失败，仅保留正则提取: {e}")
+                self.logger.debug(f"工具提取失败，回退正则: {e}")
+                facts = self._regex_extract_facts(user_input)
+
+        # 方法2: 工具提取失败/无信号时，正则作为轻量兜底（仅提取常见模式）
+        if not facts:
+            facts = self._regex_extract_facts(user_input)
 
         # 过滤垃圾 + 语义去重：太短/非用户信息剔除；同类相似事实合并
         clean_facts = []
@@ -1340,6 +1321,57 @@ class LINK:
         if saved:
             self.logger.info(f"记忆记录器保存 {saved} 条用户事实")
             self._update_user_profile()
+
+    def _extract_facts_via_tool(self, user_input: str) -> list:
+        """用 Function Calling 工具让大模型结构化提取用户信息。
+
+        模型返回 {facts: [{category, value, confidence}]} JSON（原生校验），
+        LINK 解析为 '用户{类别}: {值}' 格式入库。替代正则提取，覆盖复杂表述。
+        返回 None 表示无法提取（无工具调用或 JSON 解析失败）。
+        """
+        if not self.brain_engine or not self.brain_engine.model_adapter:
+            return None
+        try:
+            import json as _json
+            messages = [{
+                "role": "system",
+                "content": "你是个人信息提取器。从用户消息中提取关于用户的个人信息，"
+                           "用 extract_user_facts 工具返回。类别用：姓名/职业/偏好/手机号/"
+                           "邮箱/生日/地址/年龄/技能/项目/其他。没有个人信息返回空列表。"
+            }, {"role": "user", "content": user_input}]
+            resp = self.brain_engine.chat_completion(
+                messages,
+                temperature=0.1,
+                max_tokens=1024,
+                tools=[self.EXTRACT_FACTS_TOOL],
+            )
+            tool_calls = (resp.metadata or {}).get("tool_calls", [])
+            if not tool_calls:
+                return None
+            # 取第一个 extract_user_facts 调用的参数
+            for tc in tool_calls:
+                name = tc.get("function", {}).get("name", "")
+                if name != "extract_user_facts":
+                    continue
+                args_str = tc["function"].get("arguments", "")
+                try:
+                    args = _json.loads(args_str)
+                except _json.JSONDecodeError:
+                    continue
+                facts = args.get("facts", [])
+                # 转成 '用户{类别}: {值}' 格式（与 save_user_fact 一致，利于去重）
+                result = []
+                for f in facts:
+                    cat = (f.get("category") or "其他").strip()
+                    val = (f.get("value") or "").strip()
+                    if not val or len(val) < 2:
+                        continue
+                    result.append(f"用户{cat}: {val}")
+                return result
+            return None
+        except Exception as e:
+            self.logger.debug(f"extract_user_facts 工具调用失败: {e}")
+            return None
 
     def _facts_semantically_equal(self, a: str, b: str) -> bool:
         """判断两条事实是否指向同一信息（同类别 + 核心值相似）。
@@ -2913,6 +2945,47 @@ class LINK:
             }
         },
     ]
+
+    # 专用信息提取工具：供 _extract_facts_from_conversation 内部调用，
+    # 不暴露给主对话循环（避免模型在普通对话中随意触发）。
+    # 模型返回结构化 JSON facts，LINK 解析入库 — 替代正则提取（正则局限大）。
+    EXTRACT_FACTS_TOOL = {
+        "type": "function",
+        "function": {
+            "name": "extract_user_facts",
+            "description": "从用户消息中提取个人信息，返回结构化事实列表。无个人信息时返回空列表。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "facts": {
+                        "type": "array",
+                        "description": "提取到的事实列表",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "category": {
+                                    "type": "string",
+                                    "enum": ["姓名", "职业", "偏好", "手机号", "邮箱",
+                                             "生日", "地址", "年龄", "技能", "项目", "其他"],
+                                    "description": "信息类别"
+                                },
+                                "value": {"type": "string", "description": "具体信息内容"},
+                                "confidence": {
+                                    "type": "number",
+                                    "description": "提取置信度 0-1",
+                                    "minimum": 0,
+                                    "maximum": 1
+                                }
+                            },
+                            "required": ["category", "value"]
+                        }
+                    }
+                },
+                "required": ["facts"]
+            }
+        }
+    }
+
 
     def _report_progress(self, icon: str, message: str):
         """发送进度消息到前端（如果设置了回调）"""

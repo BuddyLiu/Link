@@ -12,6 +12,7 @@
 
 import os
 import sys
+import json
 import tempfile
 import importlib.util
 from pathlib import Path
@@ -140,6 +141,73 @@ def test_regex_job_stops_at_punctuation():
     assert job_re.search("我的职业是前端工程师").group(1) == "前端工程师"
 
 
+# =============================================================================
+# LLM JSON 结构化提取（extract_user_facts 工具）测试
+# =============================================================================
+
+class _MockExtractAdapter:
+    """模拟适配器：返回 extract_user_facts 的 tool_calls"""
+
+    def __init__(self, tool_calls_args):
+        self._args = tool_calls_args
+        self.model_name = "deepseek-reasoner"
+
+    def chat_completion(self, messages, temperature=0.7, max_tokens=1024, **kwargs):
+        from src.core.model_engine.model_adapter import ModelResponse
+        tc = [{"id": "1", "type": "function",
+               "function": {"name": "extract_user_facts", "arguments": self._args}}]
+        return ModelResponse(text="", model=self.model_name, tokens_used=10,
+                             finish_reason="tool_calls",
+                             metadata={"tool_calls": tc})
+
+
+class _MockPlainAdapter:
+    """模拟适配器：返回纯文本（未调用工具）"""
+
+    def chat_completion(self, messages, temperature=0.7, max_tokens=1024, **kwargs):
+        from src.core.model_engine.model_adapter import ModelResponse
+        return ModelResponse(text="无", model="deepseek-reasoner", tokens_used=10,
+                             finish_reason="stop", metadata={})
+
+
+def _make_link_with_adapter(adapter):
+    """构造带 mock 适配器的 LINK 实例（只测 _extract_facts_via_tool）"""
+    from main import LINK
+    link = LINK.__new__(LINK)
+    link.brain_engine = type("BE", (), {
+        "model_adapter": adapter,
+        "chat_completion": adapter.chat_completion,
+    })()
+    link.logger = type("L", (), {"debug": lambda *a, **k: None})()
+    return link
+
+
+def test_extract_via_tool_parses_json():
+    """工具返回 JSON → 解析为 '用户{类别}: {值}' 格式"""
+    args = json.dumps({"facts": [
+        {"category": "姓名", "value": "孙悦"},
+        {"category": "职业", "value": "产品经理"},
+        {"category": "地址", "value": "深圳"},
+        {"category": "偏好", "value": "爬山"},
+    ]})
+    link = _make_link_with_adapter(_MockExtractAdapter(args))
+    result = link._extract_facts_via_tool("我叫孙悦，是一名产品经理，在深圳工作，喜欢爬山")
+    assert result == ["用户姓名: 孙悦", "用户职业: 产品经理",
+                      "用户地址: 深圳", "用户偏好: 爬山"]
+
+
+def test_extract_via_tool_no_tool_call():
+    """模型未调用工具 → 返回 None（触发正则兜底）"""
+    link = _make_link_with_adapter(_MockPlainAdapter())
+    assert link._extract_facts_via_tool("我叫孙悦") is None
+
+
+def test_extract_via_tool_invalid_json():
+    """工具返回非法 JSON → 返回 None（安全兜底）"""
+    link = _make_link_with_adapter(_MockExtractAdapter("{invalid json"))
+    assert link._extract_facts_via_tool("我叫孙悦") is None
+
+
 if __name__ == "__main__":
     test_duplicate_same_category_dedup()
     test_exact_duplicate_dedup()
@@ -151,4 +219,7 @@ if __name__ == "__main__":
     test_semantic_not_equal_different_categories()
     test_regex_name_stops_at_punctuation()
     test_regex_job_stops_at_punctuation()
+    test_extract_via_tool_parses_json()
+    test_extract_via_tool_no_tool_call()
+    test_extract_via_tool_invalid_json()
     print("✅ test_memory_dedup 全部通过")
