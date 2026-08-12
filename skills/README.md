@@ -1,7 +1,27 @@
 # LINK 能力 Skill 文档索引
 
 > **用途**：供元远程大模型（DeepSeek 等）在 LINK 交互过程中查阅，了解可调用的全部能力。
-> **使用方式**：根据任务类型打开对应文档，按其中规范调用。
+> **使用方式**：`.skill.md` 文件由 LINK 运行时按用户意图**自动加载**（见下"Skill 加载机制"）；本 README 提供索引与决策表。
+
+---
+
+## Skill 加载机制
+
+LINK 借鉴主流 AI 智能体（Claude Code 等）的 skill 设计，实现了**运行时按需加载**：
+
+- 每个 skill 是带 frontmatter 的 `*.skill.md` 文件
+- frontmatter 含 `name`（技能名）/ `description`（简介）/ `trigger`（触发关键词）/ `core`（注入 system prompt 的精简指令）
+- LINK 每次交互按用户输入匹配 `trigger`，把匹配 skill 的 `core` 注入 system prompt（渐进披露，≤1200 字符）
+- 完整文档 `body` 保留供开发者参考，不全部注入（节省 token）
+
+实现：`src/core/skills/skill_loader.py`（解析/匹配/注入）。
+
+### 新增/修改 Skill
+
+1. 创建 `skills/<name>.skill.md`
+2. 写 frontmatter：`name`、`description`、`trigger`（逗号分隔关键词）、`core`（`|` 多行精简指令）
+3. 正文写完整文档
+4. 重启服务生效（skill 加载器启动时读取）
 
 ---
 
@@ -9,9 +29,9 @@
 
 | 文档 | 覆盖能力 | 适用场景 |
 |------|---------|---------|
-| [link-tools.md](link-tools.md) | **Function Calling 14 工具**（文件/网络/命令/计算/记忆/时间/系统/项目） | 在线模式下按需调用工具 |
-| [link-actions.md](link-actions.md) | **离线 ACTION 标记 13 种**（任务/文件/搜索/命令/项目/学习） | 文本模式回复末尾追加操作标记 |
-| [link-meta.md](link-meta.md) | **元能力**（记忆/任务/规划/提醒/外部查询/反思/安全边界） | 理解系统级能力与触发方式 |
+| [link-tools.skill.md](link-tools.skill.md) | **Function Calling 14 工具**（文件/网络/命令/计算/记忆/时间/系统/项目） | 工具选择决策 |
+| [link-actions.skill.md](link-actions.skill.md) | **离线 ACTION 标记 16 种**（任务/文件/搜索/命令/项目/学习） | 文本模式操作标记 |
+| [link-meta.skill.md](link-meta.skill.md) | **元能力**（记忆/任务/规划/提醒/外部查询/反思/安全边界） | 系统级能力与路由 |
 
 ---
 
