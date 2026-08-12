@@ -2636,6 +2636,15 @@ class LINK:
                         "直接从上述信息中查找答案，不要说自己不知道。\n"
                     )
 
+                # 按用户意图加载匹配的 Skill 指令
+                try:
+                    from src.core.skills.skill_loader import get_skill_loader
+                    skill_ctx = get_skill_loader().build_system_context(input_text)
+                    if skill_ctx:
+                        system_prompt += skill_ctx
+                except Exception as e:
+                    self.logger.debug(f"Skill 加载失败（不影响主流程）: {e}")
+
                 history_msgs = self._build_history_messages()
                 response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt, extra_messages=history_msgs)
                 if response and "查询失败" not in response:
@@ -3129,6 +3138,15 @@ class LINK:
                 "## 用户信息\n"
                 f"{memory_context}\n\n"
             )
+
+        # 按用户意图加载匹配的 Skill 指令（借鉴主流 AI 智能体 skill 设计）
+        try:
+            from src.core.skills.skill_loader import get_skill_loader
+            skill_ctx = get_skill_loader().build_system_context(input_text)
+            if skill_ctx:
+                system_prompt += skill_ctx
+        except Exception as e:
+            self.logger.debug(f"Skill 加载失败（不影响主流程）: {e}")
 
         # 构建消息列表
         messages = [{"role": "system", "content": system_prompt}]
