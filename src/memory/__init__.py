@@ -52,14 +52,92 @@ class MemoryManager:
 
     def add_fact_memory(self, fact: str, importance: float = 0.5,
                        tags: List[str] = None) -> str:
-        """添加事实记忆"""
+        """添加事实记忆（含去重：同类事实更新替代，避免重复存储）
+
+        用户信息类事实（姓名/职业/偏好/联系方式等）可能被多个来源重复保存
+        （正则提取/LLM提取/save_user_fact）。这里归一化类别 + 相似度比对，
+        同类已有记录则更新替代旧记录，而非新增重复。
+        """
         metadata = {
             "type": MemoryType.FACT.value,
             "importance": importance,
             "tags": tags or [],
             "timestamp": datetime.now().isoformat()
         }
+        # 去重：仅对用户信息类事实（含 用户/我的/姓名/职业/偏好/手机号 等标识）
+        if self._is_user_fact(fact):
+            try:
+                dup_id = self._find_duplicate_fact(fact)
+                if dup_id:
+                    # 更新现有记录（保留原 id），替代旧值
+                    self.store.update_memory(dup_id, new_content=fact, new_metadata=metadata)
+                    return dup_id
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f"事实去重跳过: {e}")
         return self.store.add_memory(fact, metadata)
+
+    @staticmethod
+    def _is_user_fact(fact: str) -> bool:
+        """判断是否为用户信息类事实（需要去重）"""
+        user_markers = ("用户", "我的", "我叫", "姓名", "职业", "偏好", "爱好",
+                        "手机号", "邮箱", "生日", "地址", "年龄", "技能", "喜欢", "不爱")
+        return any(m in fact for m in user_markers)
+
+    def _find_duplicate_fact(self, fact: str) -> Optional[str]:
+        """在历史 fact 中找同类别、内容相似的事实，返回其 id（无则 None）"""
+        import re
+        # 归一化类别：提取事实的类别键
+        cat_key = self._extract_fact_category(fact)
+        if not cat_key:
+            return None
+        try:
+            all_mem = self.store.get_all_memories(limit=2000) or []
+        except Exception:
+            return None
+        for m in all_mem:
+            if m.metadata.get("type") != MemoryType.FACT.value:
+                continue
+            content = m.content or ""
+            if content == fact:  # 完全相同
+                return m.id
+            # 同类别且核心值相似（内容格式可能不同：'用户叫陈晨' vs '姓名：陈晨'）
+            if self._fact_similar(fact, content):
+                return m.id
+        return None
+
+    @staticmethod
+    def _extract_fact_category(fact: str) -> Optional[str]:
+        """提取事实的类别键（姓名/职业/偏好/联系方式等）"""
+        import re
+        for marker in ("姓名", "职业", "偏好", "爱好", "手机号", "邮箱", "生日", "地址"):
+            if marker in fact:
+                return marker
+        # 用户叫X / 我的名字叫X → 姓名类
+        if re.search(r'用户叫|名字叫|我的名字', fact):
+            return "姓名"
+        # 喜欢X / 不爱X → 偏好类
+        if any(k in fact for k in ("喜欢", "不爱", "讨厌", "擅长")):
+            return "偏好"
+        return None
+
+    @staticmethod
+    def _fact_similar(a: str, b: str) -> bool:
+        """判断两条同类别事实是否指向同一信息（提取核心值比较）"""
+        import re
+        # 提取第一个匹配的值（如 陈晨 / 前端工程师）
+        def extract_val(s):
+            # 去掉类别前缀和标点
+            s = re.sub(r'^(用户|我的|我)(?:叫|名字叫|职业是|是|手机号|偏好|爱好|邮箱|生日|地址|年龄)?[:：\s]*', '', s)
+            s = re.sub(r'^(姓名|职业|偏好|爱好|手机号|邮箱|生日|地址)[:：\s]*', '', s)
+            s = re.sub(r'^叫', '', s)
+            s = s.strip().strip('，。,.！!？?')
+            return s
+        va, vb = extract_val(a), extract_val(b)
+        if not va or not vb:
+            return False
+        # 核心值相同或互为子串（如 "陈晨" vs "陈晨，是一名前端工程师"）
+        return va in vb or vb in va or va == vb
 
     def add_preference_memory(self, preference: str, user_id: str = "default") -> str:
         """添加用户偏好记忆"""
