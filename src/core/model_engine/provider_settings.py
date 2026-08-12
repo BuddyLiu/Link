@@ -32,6 +32,16 @@ def load_settings() -> dict:
             return result
         except (json.JSONDecodeError, IOError):
             pass
+    # 文件缺失/损坏：自动重建默认配置（避免服务静默降级导致适配器未初始化）
+    try:
+        _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SETTINGS_PATH.write_text(
+            json.dumps(DEFAULT_SETTINGS, indent=2, ensure_ascii=False), encoding="utf-8")
+        import logging
+        logging.getLogger("link.provider").warning(
+            f"provider.json 缺失，已重建默认配置。请填写 api_key 后重启服务。")
+    except (IOError, OSError):
+        pass
     return DEFAULT_SETTINGS.copy()
 
 

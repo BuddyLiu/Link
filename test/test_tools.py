@@ -485,6 +485,49 @@ class TestExecuteCommandTool:
         with pytest.raises((ValueError, PermissionError)):
             tool_manager.execute_tool("execute_command", command="sudo ls")
 
+    # ── 分级授权测试（Tier 0/1/2） ──
+
+    def _new_cmd_tool(self):
+        """创建独立的 ExecuteCommandTool（避免污染全局单例）"""
+        from tools.system_tools import ExecuteCommandTool
+        return ExecuteCommandTool()
+
+    def test_tier0_auto_commands(self, tool_manager):
+        """只读命令应分类为 auto（自动执行）"""
+        t = self._new_cmd_tool()
+        for cmd in ["ls -la", "cat notes.md", "git status", "pwd", "date", "grep -r foo ."]:
+            assert t._classify_command(cmd) == "auto", f"{cmd} 应为 auto"
+
+    def test_tier1_confirm_commands(self, tool_manager):
+        """副作用命令应分类为 confirm（需确认）"""
+        t = self._new_cmd_tool()
+        for cmd in ["mkdir newdir", "touch f.txt", "git add .", "pip install requests", "rm file.txt"]:
+            assert t._classify_command(cmd) == "confirm", f"{cmd} 应为 confirm"
+
+    def test_tier2_dangerous(self, tool_manager):
+        """破坏性/提权命令应分类为 dangerous"""
+        t = self._new_cmd_tool()
+        for cmd in ["rm -rf /", "sudo ls", "shutdown -h now", "ls; whoami", "mkfs /dev/sda"]:
+            assert t._classify_command(cmd) == "dangerous", f"{cmd} 应为 dangerous"
+
+    def test_argument_protection(self, tool_manager):
+        """白名单命令 + 危险参数 → dangerous（参数级防护）"""
+        t = self._new_cmd_tool()
+        for cmd in ["cat /etc/passwd", "curl -o /etc/x", "echo x > /etc/hosts", "cp a /usr/bin"]:
+            assert t._classify_command(cmd) == "dangerous", f"{cmd} 应为 dangerous"
+
+    def test_authorize_then_execute(self, tool_manager):
+        """confirm 命令授权后放行（会话内）"""
+        t = self._new_cmd_tool()
+        assert t._classify_command("mkdir newdir") == "confirm"
+        t.authorize_command("mkdir newdir")
+        assert t._classify_command("mkdir newdir") == "auto"
+        # 授权后危险参数仍拦截
+        t2 = self._new_cmd_tool()
+        t2.authorize_command("rm")
+        assert t2._classify_command("rm -rf /") == "dangerous"
+        assert t2._classify_command("rm file.txt") == "auto"
+
 
 # =============================================================================
 # SearchWebTool（基本测试，不依赖网络）

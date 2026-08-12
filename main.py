@@ -2933,11 +2933,11 @@ class LINK:
             "type": "function",
             "function": {
                 "name": "execute_command",
-                "description": "在终端执行系统命令（在工作目录 ~/LINK-Workspace 下执行）。仅限安全命令白名单：ls/cat/head/tail/echo/pwd/which/date/uptime/whoami/uname/hostname/env/git(status/log/diff/branch/show/blame)/python --version/pip list/tree/du/df/file/stat/wc/sort/cut/grep/curl/ping/dig。禁止：shell元字符(; | & $ `)、提权(sudo/su)、危险命令(rm -rf/dd/mkfs/shutdown)。",
+                "description": "在终端执行系统命令（在工作目录 ~/LINK-Workspace 下执行）。command 参数只放命令本身（如 pwd、ls -la），不要包含任何自然语言解释。命令分级：只读命令（ls/cat/git status/date 等）自动执行；有副作用命令（mkdir/touch/git add/pip install 等）需授权。禁止：shell元字符、提权(sudo)、破坏性(rm -rf/dd/shutdown)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "command": {"type": "string", "description": "要执行的命令（单条命令，禁止多语句拼接）"},
+                        "command": {"type": "string", "description": "命令本身（如 pwd、ls -la、git status），只放命令，不要带自然语言"},
                         "timeout": {"type": "integer", "description": "超时秒数，默认30，上限60", "default": 30}
                     },
                     "required": ["command"]
@@ -3147,6 +3147,11 @@ class LINK:
                             pm, resource, rtype, mode,
                             "permanent" if auto_dur == "permanent" else "temporary",
                             auto_dur if auto_dur != "once" else None)
+                        # 命令授权：记录到会话内已授权集合，重试时 confirm 命令放行
+                        if is_command:
+                            cmd_tool = self.tool_manager.get_tool("execute_command")
+                            if cmd_tool and hasattr(cmd_tool, "authorize_command"):
+                                cmd_tool.authorize_command(resource or "")
                         # 重试（once 模式授权后直接重试）
                         return self.tool_manager.execute_tool(tool_id, **kwargs)
 
@@ -3175,6 +3180,11 @@ class LINK:
                             "permanent" if dur == "permanent" else "temporary",
                             dur if dur != "once" else None)
                         self._report_progress("✅", f"已授权 {mode} {resource[:80]}")
+                        # 命令授权：记录到会话内已授权集合，重试时 confirm 命令放行
+                        if is_command:
+                            cmd_tool = self.tool_manager.get_tool("execute_command")
+                            if cmd_tool and hasattr(cmd_tool, "authorize_command"):
+                                cmd_tool.authorize_command(resource or "")
                         return self.tool_manager.execute_tool(tool_id, **kwargs)
                     else:
                         reason = response.get("reason", "用户拒绝") if response else "用户拒绝"

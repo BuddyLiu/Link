@@ -6,6 +6,7 @@ LINK系统工具模块
 import os
 import sys
 import json
+import re
 import platform
 import subprocess
 import datetime
@@ -309,15 +310,21 @@ class ReadFileTool(SystemTool):
 
 
 class ExecuteCommandTool(SystemTool):
-    """执行系统命令工具（多层安全检查+白名单）"""
+    """执行系统命令工具（多层安全检查 + 分级授权）
 
-    # ── 安全命令白名单（前缀匹配，如 ls -la 匹配 ls） ──
-    SAFE_COMMANDS = {
+    分级设计（参考 Claude Code 的 Bypass permissions 安全版）：
+    - Tier 0 自动执行：纯只读、无副作用命令，免确认直接执行
+    - Tier 1 需确认：有轻微副作用命令，触发权限确认后执行
+    - Tier 2 拒绝：破坏性/提权/系统级命令，强制拒绝
+    """
+
+    # ── Tier 0 自动执行（只读、无副作用，免确认） ──
+    AUTO_COMMANDS = {
         # 读文件/信息
-        "ls", "cat", "head", "tail", "echo", "pwd", "which",
-        "date", "cal", "uptime", "whoami", "id", "uname",
+        "ls", "cat", "head", "tail", "pwd", "which",
+        "echo", "date", "cal", "uptime", "whoami", "id", "uname",
         "hostname", "env", "printenv",
-        # Python / 环境
+        # Python / 环境（只读）
         "python --version", "python3 --version",
         "pip list", "pip3 list", "pip freeze",
         # Git 只读
@@ -326,11 +333,54 @@ class ExecuteCommandTool(SystemTool):
         # 文件系统只读
         "tree", "du", "df", "file", "stat",
         "wc", "sort", "cut", "grep",
-        # 杂项安全
+        # 杂项只读
         "clear", "history", "type",
-        # 网络只读
-        "curl", "ping", "dig", "nslookup", "traceroute",
+        # 网络只读（curl 下载到 stdout 只读，见参数防护）
+        "ping", "dig", "nslookup", "traceroute",
+        "find", "locate", "xargs",
     }
+
+    # ── Tier 1 需确认（有副作用，触发权限确认） ──
+    CONFIRM_COMMANDS = {
+        # 文件创建/修改
+        "mkdir", "touch", "cp", "mv", "rm",
+        # 输出重定向到文件（> 写文件，仅工作目录内）
+        "tee",
+        # Git 写操作
+        "git add", "git commit", "git checkout", "git stash",
+        "git tag", "git config",
+        # 包管理/构建（网络下载）
+        "pip install", "pip3 install", "pip uninstall",
+        "npm install", "npm run", "yarn",
+        "make", "cmake", "python", "python3",
+        # 压缩
+        "tar", "zip", "unzip", "gzip", "gunzip",
+        # 网络写（curl/wget 下载保存）
+        "curl", "wget",
+    }
+
+    # ── Tier 0 命令中需降级的危险参数模式（白名单命令+危险参数仍拒绝） ──
+    DANGEROUS_ARGS = [
+        # 读系统敏感文件（cat/head/tail 直接读敏感路径）
+        (("cat", "head", "tail", "less", "more"),
+         ("/etc/shadow", "/etc/passwd", "/etc/sudoers", "/root/",
+          "~/.ssh/", "/etc/ssl/private", "/proc/kcore",
+          "id_rsa", "id_ed25519", ".aws/credentials", "secrets.json",
+          ".env", "api_key", "password")),
+        # 删除系统/根目录（rm 定向防护）
+        (("rm",),
+         ("/", "/*", "~", "/etc", "/usr", "/var", "/bin", "/sbin",
+          "/home", "/*.py", "*.*", "-rf /", "-rf ~")),
+        # 覆盖系统配置文件
+        (("echo", "tee", "cp", "mv"),
+         ("/etc/", "/usr/", "/var/", "/boot/", "/sys/", "/bin/", "/sbin/",
+          "/System", "/Library", "/Applications")),
+        # curl/wget 下载执行（下载后管道到 shell 或写入系统路径）
+        (("curl", "wget"),
+         ("| bash", "| sh", "-o /", "-O /etc", "-o /etc")),
+    ]
+
+    # ── 危险模式（子串匹配，任何出现即拒绝） ──
 
     # ── 危险模式（子串匹配，任何出现即拒绝） ──
     DANGEROUS_PATTERNS = [
@@ -369,11 +419,32 @@ class ExecuteCommandTool(SystemTool):
                 "default": 30
             }
         }
-        super().__init__("execute_command", "执行系统命令（安全受限，仅白名单内命令）", parameters)
+        super().__init__("execute_command", "执行系统命令（分级授权：只读自动/副作用需确认/危险拒绝）", parameters)
         self._project_root = get_workspace_directory()  # 命令在工作目录执行
+        # 会话内已授权命令前缀（confirm 命令经授权后加入，避免重试死循环）
+        self._authorized_commands = set()
+
+    def authorize_command(self, command: str) -> None:
+        """授权某命令前缀（会话内有效），授权后 confirm 命令可执行"""
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return
+        if not tokens:
+            return
+        prefix = tokens[0].lower()
+        # 记录完整命令（含参数）或至少首命令
+        self._authorized_commands.add(command.lower())
+        self._authorized_commands.add(prefix)
 
     def _classify_command(self, command: str) -> str:
-        """将命令分类: 'safe' / 'dangerous' / 'unknown'"""
+        """将命令分类: 'auto' / 'confirm' / 'dangerous' / 'unknown'
+
+        - auto: Tier 0 只读无副作用命令（免确认自动执行）
+        - confirm: Tier 1 有副作用命令（需权限确认）
+        - dangerous: 破坏性/提权命令（强制拒绝）
+        - unknown: 不在任何白名单（默认拒绝，可授权）
+        """
         cmd = command.strip().lstrip()
         cmd_lower = cmd.lower()
 
@@ -383,7 +454,7 @@ class ExecuteCommandTool(SystemTool):
                 logger.warning(f"命令被危险模式拦截: {pattern} in {cmd[:100]}")
                 return "dangerous"
 
-        # 2. 禁止 shell 元字符（多语句拼接）
+        # 2. 禁止 shell 元字符（多语句拼接，shell=False 也会失败但防绕行）
         for mc in self.SHELL_METACHARS:
             if mc in cmd:
                 logger.warning(f"命令含 shell 元字符: {mc} in {cmd[:100]}")
@@ -393,7 +464,6 @@ class ExecuteCommandTool(SystemTool):
         try:
             tokens = shlex.split(cmd)
         except ValueError:
-            # shlex 解析失败（引号不匹配等）
             logger.warning(f"命令 shlex 解析失败: {cmd[:100]}")
             return "dangerous"
         if not tokens:
@@ -405,17 +475,84 @@ class ExecuteCommandTool(SystemTool):
             logger.warning(f"命令为提权操作，已拒绝: {cmd[:100]}")
             return "dangerous"
 
-        # 尝试完整命令前缀匹配（如 "git status"）
-        for prefix in self.SAFE_COMMANDS:
-            if cmd_lower.startswith(prefix):
-                return "safe"
+        # 参数级防护：白名单命令 + 危险参数 → 降级为 dangerous
+        if self._has_dangerous_args(tokens, first_token):
+            logger.warning(f"命令参数含危险内容，已拒绝: {cmd[:100]}")
+            return "dangerous"
 
-        # 退而求其次：仅匹配第一个 token
-        safe_tokens = {p.split()[0] for p in self.SAFE_COMMANDS}
-        if first_token in safe_tokens:
-            return "safe"
+        # 4. 会话内已授权命令（用户确认过副作用命令）→ 放行
+        if any(cmd_lower == a or cmd_lower.startswith(a + " ") or a == first_token
+               for a in self._authorized_commands):
+            return "auto"
+
+        # 5. Tier 0 自动执行命令
+        for prefix in self.AUTO_COMMANDS:
+            if cmd_lower.startswith(prefix):
+                return "auto"
+
+        # 6. Tier 1 需确认命令
+        for prefix in self.CONFIRM_COMMANDS:
+            if cmd_lower.startswith(prefix):
+                return "confirm"
+
+        # 6. 退而求其次：仅匹配第一个 token
+        auto_tokens = {p.split()[0] for p in self.AUTO_COMMANDS}
+        if first_token in auto_tokens:
+            return "auto"
+        confirm_tokens = {p.split()[0] for p in self.CONFIRM_COMMANDS}
+        if first_token in confirm_tokens:
+            return "confirm"
 
         return "unknown"
+
+    def _sanitize_command(self, command: str) -> str:
+        """从含自然语言的输入中提取真正的命令。
+
+        模型可能把整句用户请求传给 command（"执行命令 pwd 看看目录在哪"）。
+        这里识别第一个已知安全命令 token 作为命令起点，提取命令本身。
+        只识别白名单命令（auto+confirm 并集），危险命令不在提取列表中。
+        """
+        cmd = command.strip()
+        if not cmd:
+            return cmd
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            return cmd
+        # 首个 token 已是安全命令 → 原样返回（正常情况）
+        if tokens and self._classify_command(cmd) != "unknown":
+            return cmd
+        # 首个 token 不是安全命令（可能是"执行命令/帮我/查看"）→ 找第一个安全命令 token
+        known = set(self.AUTO_COMMANDS) | set(self.CONFIRM_COMMANDS)
+        known_tokens = {p.split()[0] for p in known}
+        for i, tok in enumerate(tokens):
+            base = tok.lower().lstrip('-')
+            # 跳过提权/危险命令，绝不提取它们
+            if base in ("sudo", "su", "doas", "pkexec"):
+                continue
+            if base in known_tokens:
+                # 提取从该 token 起的参数，剥离中文自然语言 token（非命令参数）
+                extracted_tokens = []
+                for tok in tokens[i:]:
+                    if re.search(r'[一-鿿]', tok) and not tok.startswith('-'):
+                        break  # 中文自然语言（非 - 参数）→ 截断
+                    extracted_tokens.append(tok)
+                extracted = " ".join(extracted_tokens)
+                # 危险参数防护：提取结果仍可能含危险内容
+                if extracted and self._classify_command(extracted) != "dangerous":
+                    return extracted
+                break
+        return cmd
+
+    def _has_dangerous_args(self, tokens: list, first_token: str) -> bool:
+        """参数级防护：白名单命令但含危险参数时拒绝（如 cat /etc/passwd、rm -rf /）"""
+        joined = " ".join(tokens).lower()
+        for cmds, patterns in self.DANGEROUS_ARGS:
+            if first_token in cmds or any(first_token in c.split() for c in cmds):
+                for pat in patterns:
+                    if pat in joined:
+                        return True
+        return False
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         command = kwargs["command"]
@@ -426,18 +563,28 @@ class ExecuteCommandTool(SystemTool):
             timeout = 30
         timeout = min(timeout, 60)  # 上限 60s
 
-        # ── Layer 1：命令分类 ──
+        # 模型可能传整句自然语言（"执行命令 pwd 看看"）→ 提取真正的命令
+        command = self._sanitize_command(command)
+
+        # ── Layer 1：命令分类（分级授权） ──
         classification = self._classify_command(command)
         if classification == "dangerous":
             raise ValueError(
-                f"❌ 命令被安全系统拒绝（检测到危险模式）\n"
+                f"❌ 命令被安全系统拒绝（检测到危险模式/参数）\n"
                 f"命令: {command[:200]}"
             )
         if classification == "unknown":
             raise PermissionError(
                 f"⚠️ 命令不在安全白名单中，已自动拒绝\n"
                 f"命令: {command[:200]}\n"
-                f"安全命令示例: {', '.join(sorted(self.SAFE_COMMANDS)[:10])} ..."
+                f"安全命令示例: {', '.join(sorted(list(self.AUTO_COMMANDS) + list(self.CONFIRM_COMMANDS))[:12])} ..."
+            )
+        if classification == "confirm":
+            # Tier 1 有副作用命令 → 需权限确认（走主流程授权，自动规则或用户确认）
+            raise PermissionError(
+                f"🔒 命令有副作用，需要授权后执行\n"
+                f"命令: {command[:200]}\n"
+                f"建议: 若确认安全，请授权 execute_command"
             )
 
         # ── Layer 2：工作目录限制 ──
