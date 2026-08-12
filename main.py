@@ -1273,13 +1273,25 @@ class LINK:
         # 方法1: 正则提取（高精确度，无需LLM）
         facts += self._regex_extract_facts(user_input)
 
-        # 方法2: LLM提取（覆盖复杂表述）
-        if self.brain_engine:
+        # 方法2: LLM提取（覆盖复杂表述，仅在输入含个人信息信号时启用，
+        # 避免每次对话都调 LLM 提取器产生无意义调用）
+        import re as _re
+        has_personal_signal = bool(
+            _re.search(r'我(?:叫|是|做|喜欢|爱|住在|毕业于|出生于|来自|用|在)|我的(?:名字|职业|手机|电话|邮箱|生日|地址|年龄|爱好)|用户(?:叫|姓名|职业|偏好)',
+                       user_input))
+        if self.brain_engine and has_personal_signal:
             try:
-                prompt = f"从用户的话中提取关于用户的事实：{user_input}\n只输出事实，每行一个。没有则回复无。"
+                # 要求标准格式 '用户{类别}: {值}'（与正则/save_user_fact 一致），
+                # 减少格式漂移导致的重复（'姓名：陈晨' vs '用户姓名: 陈晨'）
+                prompt = (
+                    f"从用户的话中提取关于用户的事实：{user_input}\n"
+                    "只输出事实，每行一个，格式为：用户{类别}: {值}。\n"
+                    "类别用：姓名/职业/偏好/手机号/邮箱/生日/地址/技能/其他。\n"
+                    "没有用户个人信息则只回复：无。"
+                )
                 llm_out = self.brain_engine.simple_query(
                     prompt,
-                    system_prompt="提取用户个人信息，只输出事实，不要解释。"
+                    system_prompt="你是个人信息提取器。只输出标准格式的事实行，不要解释。"
                 )
                 if llm_out and llm_out.strip() not in ("无", ""):
                     for line in llm_out.strip().split("\n"):
@@ -1294,7 +1306,7 @@ class LINK:
             except Exception as e:
                 self.logger.debug(f"LLM 事实提取失败，仅保留正则提取: {e}")
 
-        # 过滤垃圾：太短、非用户信息
+        # 过滤垃圾 + 语义去重：太短/非用户信息剔除；同类相似事实合并
         clean_facts = []
         for f in facts:
             f = f.strip().strip('。，.').strip()
@@ -1302,7 +1314,14 @@ class LINK:
                 continue
             if 'LINK' in f.upper() or '助手' in f or '助理' in f:
                 continue
-            if f not in clean_facts:
+            # 语义去重：与已保留事实同类别且核心值相似则跳过
+            # （解决正则'用户叫陈晨'与LLM'姓名：陈晨'在同一轮重复）
+            is_dup = False
+            for kept in clean_facts:
+                if self._facts_semantically_equal(f, kept):
+                    is_dup = True
+                    break
+            if not is_dup:
                 clean_facts.append(f)
 
         # 保存前检测并删除矛盾事实（如用户职业从A变成B）
@@ -1321,6 +1340,23 @@ class LINK:
         if saved:
             self.logger.info(f"记忆记录器保存 {saved} 条用户事实")
             self._update_user_profile()
+
+    def _facts_semantically_equal(self, a: str, b: str) -> bool:
+        """判断两条事实是否指向同一信息（同类别 + 核心值相似）。
+
+        用于合并不同来源的重复提取：'用户叫陈晨' vs '姓名：陈晨' vs '用户姓名: 陈晨'。
+        复用 MemoryManager 的类别提取与相似度判断，保持逻辑一致。
+        """
+        try:
+            from src.memory import MemoryManager
+            cat_a = MemoryManager._extract_fact_category(a)
+            cat_b = MemoryManager._extract_fact_category(b)
+            if not cat_a or not cat_b or cat_a != cat_b:
+                return False
+            return MemoryManager._fact_similar(a, b)
+        except Exception:
+            # 兜底：仅完全相同
+            return a == b
 
     def _remove_contradicting_facts(self, new_facts: list):
         """检测并删除与已有事实矛盾的事实（职业/偏好等更新时清理旧值）"""
@@ -1360,8 +1396,11 @@ class LINK:
                     continue
                 old_cat = classify_fact(m.content)
                 if old_cat in new_categories:
-                    # 检查是否与新事实相同（避免删除刚加的）
-                    if m.content not in new_facts:
+                    # 用语义判断：同类别且核心值不同 → 真矛盾（职业从A变B），删旧
+                    # 值相同 → 重复（由 add_fact_memory 去重处理），不删
+                    is_same = any(
+                        self._facts_semantically_equal(m.content, f) for f in new_facts)
+                    if not is_same:
                         self.memory_engine.store.delete_memory(m.id)
                         deleted += 1
             if deleted:
@@ -1374,12 +1413,13 @@ class LINK:
         facts = []
         import re
         # 我叫X / 我的名字是X / 名字叫X（不含"我是"，避免误匹配）
-        m = re.search(r'(?:我叫|我的名字叫?|名字叫|人称)(\S{2,6})', text)
+        # 排除标点和空白，防止吞并后续内容（'我叫王强，喜欢...' → 只取'王强'）
+        m = re.search(r'(?:我叫|我的名字叫?|名字叫|人称)([^，。,!！?？、\s]{2,6})', text)
         if m and len(m.group(1)) >= 2 and 'LINK' not in m.group(1).upper():
             facts.append(f"用户叫{m.group(1)}")
         # 职业：我是XXX / 我做XXX / 我的职业是XXX
         # 匹配"我是iOS开发工程师"、"我是一名产品经理"等
-        m = re.search(r'(?:我是|我做|我的职业是)(?:一位?|一名?|个)?(.{2,24}(?:工程师|设计师|产品经理|经理|开发|架构师|运营|市场|销售|产品|测试|运维))', text)
+        m = re.search(r'(?:我是|我做|我的职业是)(?:一位?|一名?|个)?([^，。,!！?？、\s]{2,24}(?:工程师|设计师|产品经理|经理|开发|架构师|运营|市场|销售|产品|测试|运维))', text)
         if m:
             job = m.group(1).strip()
             # 清理开头残留的"名"、"位"等
@@ -1393,8 +1433,8 @@ class LINK:
             if phone:
                 facts.append(f"用户手机号: {phone}")
 
-        # 偏好/爱好：我喜欢X / 我平时X / 我爱X
-        m = re.search(r'(?:我喜欢|我平时|我爱|我热衷于|我爱好)(.{2,20})', text)
+        # 偏好/爱好：我喜欢X / 我平时X / 我爱X（排除标点，防止吞并后续内容）
+        m = re.search(r'(?:我喜欢|我平时|我爱|我热衷于|我爱好)([^，。,!！?？、\s]{2,20})', text)
         if m:
             pref = m.group(1).strip()
             if len(pref) >= 2 and 'LINK' not in pref.upper():
