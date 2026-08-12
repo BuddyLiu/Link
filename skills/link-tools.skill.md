@@ -8,7 +8,7 @@ core: |
   - 读文件 → read_file（大文件用 offset/limit 分块）；写/编辑 → write_file / edit_file（old 需精确匹配）
   - 数学 → calculate（幂用 **，^ 是异或；支持 sin/cos/atan/pi/e）；时间 → get_time；系统 → get_system_info
   - 搜索网络 → search_web（不知道/实时信息必用，不要说自己不知道）
-  - 执行命令 → execute_command（仅白名单 ls/cat/git status 等；禁 sudo/rm/shell元字符）
+  - 执行命令 → execute_command（command 只放命令本身；只读自动执行/副作用需授权/危险拒绝；禁 sudo/rm -rf/shell元字符）
   - 用户个人信息 → save_user_fact（类别自由：姓名/职业/偏好/地址/生日等）
   - 项目技术栈 → get_project_info（自动扫描）
   路径语义：相对路径→工作目录 ~/LINK-Workspace；源码目录只读，写需授权。
@@ -135,10 +135,13 @@ core: |
 ### 10. execute_command — 执行系统命令
 
 - **参数**：
-  - `command`（string，必填）安全命令
+  - `command`（string，必填）**命令本身**（如 `pwd`、`ls -la`、`git status`），只放命令，不要带自然语言
   - `timeout`（integer）超时秒数，默认 30，上限 60
-- **限制**：仅白名单安全命令（`ls`/`cat`/`pwd`/`git status` 等）。**禁止**：`rm`/`sudo`/`mkfs`/`shutdown`/`reboot`、shell 元字符（`;`/`|`/`$`/`` ` ``）、提权（`sudo`/`su`）、危险模式（`rm -rf`/`dd`/`mkfs`）。
-- **注意**：命令在**工作目录**（`~/LINK-Workspace`）执行，不是源码目录。
+- **分级授权**（参考 Bypass permissions 安全版）：
+  - **自动执行**：只读命令（`ls`/`cat`/`head`/`grep`/`pwd`/`git status`/`date`/`find`/`du`/`df` 等）直接执行，免确认
+  - **需确认**：有副作用命令（`mkdir`/`touch`/`cp`/`mv`/`rm`/`git add`/`commit`/`pip install`/`make`/压缩等）触发授权，授权后会话内放行
+  - **拒绝**：破坏性/提权（`rm -rf`/`dd`/`mkfs`/`shutdown`/`sudo`/`su`）、shell 元字符（`;`/`|`/`&`/`$`）、危险参数（`cat /etc/passwd`/`curl -o /etc/`/`echo > /etc/hosts`）
+- **注意**：命令在**工作目录**（`~/LINK-Workspace`）执行，不是源码目录。command 若被传成整句自然语言，LINK 会自动提取真正的命令。
 
 ### 11. calculate — 数学计算
 
