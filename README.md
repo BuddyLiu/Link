@@ -11,50 +11,38 @@ LINK 智能体基座 — 一个模块化、可扩展的智能体系统，旨在�
 
 ## 📁 统一启动入口
 
-项目提供了一个统一的启动入口，支持多种运行模式：
+> 📖 **完整启动教程（双服务 8899/8011 + 常见问题排查）见 [docs/startup-guide.md](docs/startup-guide.md)**
+
+**唯一入口**：`link_manager.py` 管理控制台。启动它即自动拉起 Web 服务(8011)，一个命令全就绪。
 
 ### 启动方式
 
 ```bash
-# 启动主动运行模式（默认，事件驱动，类似iOS RunLoop）
-python run_link.py
+# 一键启动：管理台(8899) + Web服务(8011) 自动全部拉起
+venv/bin/python link_manager.py
 
-# 启动传统CLI模式（响应式，无主动监控）
-python run_link.py cli
+# 仅启动管理台，不自动拉起 Web
+venv/bin/python link_manager.py --no-auto-start
 
-# 启动Web服务模式
-python run_link.py web --host 0.0.0.0 --port 8030
-
-# 运行测试套件
-python run_link.py test
-
-# 运行自动执行演示
-python run_link.py demo
-
-# 启动简单Web界面
-python run_link.py simple-web
+# 自定义端口
+venv/bin/python link_manager.py --host 127.0.0.1 --port 8899
 ```
 
 ### 命令行选项
 
 ```
 用法：
-  python run_link.py [模式] [选项]
+  venv/bin/python link_manager.py [选项]
 
-可用模式：
-  active       - 主动运行模式（默认，事件驱动，类似iOS RunLoop）
-  cli          - 传统命令行模式（响应式，无主动监控）
-  web          - Web服务模式
-  test         - 运行测试套件
-  demo         - 运行自动执行演示
-  simple-web   - 运行简单Web界面
+选项：
+  --host HOST          监听地址（默认: 127.0.0.1）
+  --port PORT          管理端口（默认: 8899）
+  --no-auto-start      不自动拉起 LINK(8011)，仅启动管理台
+  --help               显示帮助信息
 
-常用选项：
-  --debug              启用调试模式
-  --host HOST          Web服务主机地址（默认: 127.0.0.1）
-  --port PORT          Web服务端口（默认: 8000）
-  --active-config FILE 主动模式配置文件路径
-  --help              显示帮助信息
+访问：
+  http://localhost:8899/    管理控制台（启停 LINK、实时日志）
+  http://localhost:8011/    LINK Web 服务（对话界面）
 ```
 
 ## 🏗️ 项目架构
@@ -63,12 +51,10 @@ python run_link.py simple-web
 
 ```
 LINK/
-├── main/                    # 启动入口和演示脚本
-│   ├── run_link.py       # 🔥 统一启动入口（主要使用这个）
-│   ├── main.py             # 传统主程序（第三阶段）
-│   ├── active_link_enhanced.py    # 主动运行模式实现
-│   ├── main_with_active.py           # 包含主动模式的主程序
-│   └── 其他启动脚本...
+├── link_manager.py       # 🔥 唯一启动入口（管理台 8899，自动拉起 Web 8011）
+├── web_active_link.py    # Web 服务本体（8011）
+├── main.py               # 核心主程序（LINK 类）
+├── test_reset.py         # 手动 E2E 测试工具
 ├── src/                    # 源代码
 │   ├── config/            # 配置管理系统
 │   ├── core/              # 核心引擎
@@ -117,7 +103,7 @@ LINK/
 
 1. 克隆项目并进入目录：
    ```bash
-   cd /Users/bo.liu/Downloads/2026/ContinuouslyUpdated/Code/LINK
+   cd /Users/liubo/Codes/LINK
    ```
 
 2. 创建并激活虚拟环境：
@@ -140,38 +126,21 @@ LINK/
 
 ### 基本使用
 
-1. **启动主动运行模式**（推荐）：
+1. **启动 LINK（管理台 + Web 服务，一键全就绪）**
+
    ```bash
-   python run_link.py
+   venv/bin/python link_manager.py
    ```
 
-2. **传统CLI交互**：
+   打开 `http://localhost:8899/` 看管理台（启停、实时日志），`http://localhost:8011/` 开始对话。
+
+2. **仅启动管理台（不自动拉起 Web）**
+
    ```bash
-   python run_link.py cli
+   venv/bin/python link_manager.py --no-auto-start
    ```
 
-3. **查看帮助信息**：
-   ```bash
-   python run_link.py --help
-   ```
-
-### 使用示例
-
-启动后会显示交互界面，可以尝试以下命令：
-
-```
->>> 现在几点了
-LINK: 当前时间是：2026年03月03日 17:30:45
-
->>> 帮我规划一个周末聚会
-LINK: ✅ 任务创建成功！...
-
->>> 任务列表
-LINK: 📋 活跃任务 (3个):...
-
->>> 规划引擎
-LINK: 🎯 规划引擎信息：...
-```
+> 📖 详细启动方式与常见问题见 [docs/startup-guide.md](docs/startup-guide.md)
 
 ## 🔧 高级配置
 
@@ -193,25 +162,6 @@ LINK: 🎯 规划引擎信息：...
    export OPENAI_API_KEY=your_api_key_here
    ```
 
-### 主动模式配置
-
-创建配置文件 `config/active_config.json`：
-
-```json
-{
-  "event_loop_interval": 100,
-  "priority_levels": 6,
-  "enable_auto_reflection": true,
-  "reminder_check_interval": 60,
-  "max_concurrent_tasks": 5
-}
-```
-
-使用配置启动：
-```bash
-python run_link.py active --active-config config/active_config.json
-```
-
 ## 📚 文档
 
 详细文档请查看 `docs/` 目录：
@@ -227,20 +177,17 @@ python run_link.py active --active-config config/active_config.json
 ### 运行完整测试套件
 
 ```bash
-python run_link.py test
+venv/bin/python -m pytest test/ -q
 ```
 
 ### 运行特定测试
 
 ```bash
-# 主动模式测试
-python -m test.test_active_link
-
 # 规划引擎测试
-python -m test.test_planning_engine
+venv/bin/python -m pytest test/test_planning_engine.py -q
 
 # 任务执行测试
-python -m test.test_task_execution
+venv/bin/python -m pytest test/test_task_execution.py -q
 ```
 
 ## 🔄 开发工作流
@@ -303,4 +250,4 @@ MIT License
 
 ---
 
-**💡 提示**：项目的主要启动入口是 `main/run_link.py`，所有功能都通过这个统一的入口访问。使用 `--help` 参数查看所有可用选项。
+**💡 提示**：项目的唯一启动入口是 `link_manager.py`，启动后自动拉起 Web 服务(8011)。详见 [docs/startup-guide.md](docs/startup-guide.md)。

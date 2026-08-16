@@ -7,6 +7,8 @@ LINK主动运行模式的Web版本
 import asyncio
 import threading
 import time
+import sys
+import os
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, Any, List, Optional, Callable, Union
@@ -14,6 +16,14 @@ from dataclasses import dataclass, field
 from queue import Queue, PriorityQueue
 import json
 import uuid
+
+# 路径修复：直接运行本文件时，确保 src 优先于项目根（避免根目录 config/ 遮蔽 src/config）
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+if _current_dir not in sys.path:
+    sys.path.insert(0, _current_dir)
+_src_dir = os.path.join(_current_dir, "src")
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
 
 # Web框架
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect

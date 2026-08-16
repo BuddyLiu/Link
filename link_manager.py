@@ -26,7 +26,7 @@ import uvicorn
 # ── 配置 ──
 MANAGER_PORT = 8899
 LINK_PORT = 8011
-LINK_CMD = [sys.executable, "run_link.py", "web", "--port", str(LINK_PORT)]
+LINK_CMD = [sys.executable, "web_active_link.py"]
 
 app = FastAPI(title="LINK 管理控制台")
 
@@ -37,6 +37,7 @@ _process_start_time: Optional[float] = None
 _log_buffer: list[dict] = []  # 日志环形缓冲，供新连接回放
 _MAX_BUFFER = 500             # 最多保留 500 条
 _pipe_tasks: list = []        # 日志管道 asyncio.Task 列表（重启时清理）
+_auto_start = True            # 启动管理台时自动拉起 LINK(8011)；--no-auto-start 关闭
 
 
 # ── 进程管理 ──
@@ -423,6 +424,13 @@ async def api_start():
         return {"status": "error", "error": str(e), "msg": f"启动失败: {e}"}
 
 
+@app.on_event("startup")
+async def auto_start_link():
+    """管理台启动时自动拉起 LINK(8011)，实现一键起全部"""
+    if _auto_start:
+        await api_start()
+
+
 @app.post("/api/stop")
 async def api_stop():
     """停止 LINK"""
@@ -565,21 +573,47 @@ def cleanup():
     _process = None
 
 
+def _handle_exit_signal(signum, frame):
+    """SIGTERM/SIGINT 处理器：直接 terminate 子进程后退出。
+
+    注意：Python 的 atexit 在 SIGTERM 下不会触发（进程被默认处理器直接终止），
+    必须在这里显式清理。只调用 Popen.terminate()（内部是 os.kill），
+    不引入 subprocess 调用，避免在信号处理器内重入死锁。
+    """
+    global _process
+    if _process is not None:
+        try:
+            _process.terminate()
+        except Exception:
+            pass
+    os._exit(0)
+
+
 # ── 入口 ──
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LINK 管理控制台")
     parser.add_argument("--port", type=int, default=MANAGER_PORT, help=f"管理端口 (默认 {MANAGER_PORT})")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址 (默认 127.0.0.1)")
+    parser.add_argument("--no-auto-start", action="store_true",
+                        help="不自动拉起 LINK(8011)，仅启动管理台")
     args = parser.parse_args()
+
+    if args.no_auto_start:
+        _auto_start = False
 
     import atexit
     atexit.register(cleanup)
+    # SIGTERM/SIGINT：uvicorn 下 atexit 不触发，显式清理子进程后退出
+    signal.signal(signal.SIGTERM, _handle_exit_signal)
+    signal.signal(signal.SIGINT, _handle_exit_signal)
 
+    auto_hint = "" if _auto_start else "（已禁用自动拉起）"
     print(f"⚙️  LINK 管理控制台启动中...")
     print(f"   • 管理地址: http://{args.host}:{args.port}")
     print(f"   • 管理对象: LINK (port {LINK_PORT})")
     print(f"   • 启动命令: {' '.join(LINK_CMD)}")
+    print(f"   • 自动拉起: {'是' if _auto_start else '否'}{auto_hint}")
     print(f"\n打开浏览器访问 http://{args.host}:{args.port} 进入管理控制台\n")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
