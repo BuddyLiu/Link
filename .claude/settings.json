@@ -239,7 +239,8 @@
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('web_active_link.py', doraise=True\\); print\\('✅ web_active_link.py Syntax OK'\\)\")",
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('src/config/settings.py', doraise=True\\); print\\('✅ settings.py OK'\\)\")",
       "Bash(python3 -c \"import py_compile; py_compile.compile\\('src/reminders/notification_sender.py', doraise=True\\); print\\('✅ notification_sender.py OK'\\)\")",
-      "Bash(curl -s -o /dev/null -w \"8011: HTTP %{http_code}\\\\n\" http://127.0.0.1:8011/)"
+      "Bash(curl -s -o /dev/null -w \"8011: HTTP %{http_code}\\\\n\" http://127.0.0.1:8011/)",
+      "Bash(rm -f data/pids/*)"
     ],
     "additionalDirectories": [
       "/private/tmp",

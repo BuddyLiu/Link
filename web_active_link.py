@@ -593,6 +593,97 @@ class ReminderEventHandler(EventHandler):
             return f"提醒检查错误: {e}"
 
 
+# ── 任务队列（支持非阻塞、排队、状态追踪） ──
+
+@dataclass
+class TaskItem:
+    """单个用户消息处理任务"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    text: str = ""
+    status: str = "pending"  # pending / processing / done / error / cancelled
+    created_at: float = field(default_factory=time.time)
+    result: Optional[str] = None
+    reasoning: Optional[str] = None
+    voice: bool = False  # 语音触发轮次：要求模型附『播报：』总结
+
+
+class TaskManager:
+    """任务队列管理器，串行处理，支持状态查询"""
+
+    def __init__(self):
+        self._queue: asyncio.Queue[TaskItem] = asyncio.Queue()
+        self._tasks: Dict[str, TaskItem] = {}
+        self._current: Optional[TaskItem] = None
+        self._worker_task: Optional[asyncio.Task] = None
+        self._status_callbacks: List[Callable] = []
+
+    def on_status_change(self, cb: Callable):
+        """注册任务状态变化回调"""
+        self._status_callbacks.append(cb)
+
+    def _notify(self, task: TaskItem, total: int):
+        for cb in self._status_callbacks:
+            try:
+                cb(task, total)
+            except Exception:
+                pass
+
+    async def submit(self, text: str, voice: bool = False) -> TaskItem:
+        """提交新任务，放入队列，返回 TaskItem"""
+        task = TaskItem(text=text, voice=voice)
+        self._tasks[task.id] = task
+        await self._queue.put(task)
+        self._notify(task, self._queue.qsize())
+        return task
+
+    def get_task(self, task_id: str) -> Optional[TaskItem]:
+        return self._tasks.get(task_id)
+
+    def list_tasks(self, limit: int = 20) -> List[TaskItem]:
+        pending = [t for t in self._tasks.values() if t.status in ("pending", "processing")]
+        done = [t for t in self._tasks.values() if t.status == "done"]
+        return (pending + done[-limit:])[::-1]
+
+    async def worker(self, process_fn):
+        """后台工作者：不断从队列消费任务并调用 process_fn 处理"""
+        self._worker_task = asyncio.current_task()
+        while True:
+            task = await self._queue.get()
+            if task.status == "cancelled":
+                continue
+            self._current = task
+            task.status = "processing"
+            total = self._queue.qsize() + 1
+            self._notify(task, total)
+
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, process_fn, task.text
+                )
+                task.result = result.get("result") if isinstance(result, dict) else str(result)
+                task.reasoning = result.get("reasoning", "") if isinstance(result, dict) else ""
+                task.status = "done"
+            except Exception as e:
+                task.result = f"❌ 处理出错: {e}"
+                task.status = "error"
+
+            self._current = None
+            self._notify(task, self._queue.qsize())
+
+    def cancel_current(self):
+        """取消当前处理中的任务（标记为 cancelled，不中断执行）"""
+        if self._current and self._current.status == "processing":
+            self._current.status = "cancelled"
+
+    @property
+    def pending_count(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def current_task(self) -> Optional[TaskItem]:
+        return self._current
+
+
 class WebActiveLINK:
     """Web版本的主动运行模式LINK"""
     
@@ -618,6 +709,7 @@ class WebActiveLINK:
         self.app = FastAPI(title="LINK主动模式Web界面")
         self.websocket_clients = []
         self.event_history = []
+        self.task_manager = TaskManager()
         self.max_history = 100
         # 讯飞识别会话（client_id → (音频队列, 会话任务)）
         self._xfyun_queues: Dict[str, Any] = {}
@@ -815,12 +907,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .header a{color:#6366f1;text-decoration:none;font-size:11px;padding:4px 10px;border:1px solid #1a1a2e;border-radius:4px;transition:all .2s}
 .header a:hover{border-color:#6366f1;background:rgba(99,102,241,.1)}
 .header div{display:flex;gap:8px}
-/* Chat box */
-#chat-box{flex:1;overflow-y:auto;padding:24px max(20px, calc(50% - 420px));background:#0a0a0f;scroll-behavior:smooth;display:flex;flex-direction:column}
-#chat-box.instant-scroll{scroll-behavior:auto}
-#chat-box::-webkit-scrollbar{width:4px}
-#chat-box::-webkit-scrollbar-track{background:transparent}
-#chat-box::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+/* Chat box：左右分屏（用户消息左列 / LINK 回复右列） */
+#chat-container{flex:1;display:flex;overflow:hidden;position:relative}
+.chat-column{overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.chat-column::-webkit-scrollbar{width:4px}
+.chat-column::-webkit-scrollbar-track{background:transparent}
+.chat-column::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+#user-column{background:#0a0a0f}
+#assistant-column{background:#0d0d18}
+#column-divider{width:6px;cursor:col-resize;background:#1a1a2e;flex-shrink:0;transition:background .15s}
+#column-divider:hover{background:#6366f1}
+#column-divider.active,#column-divider.dragging{background:#6366f1}
 /* Floating scroll buttons */
 #scroll-nav{position:fixed;z-index:100;cursor:grab;user-select:none}
 #scroll-nav.dragging{cursor:grabbing}
@@ -1027,11 +1124,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <div id="status-model">模型: 加载中...</div>
 <div id="status-memory">记忆: 加载中...</div>
 <div id="status-token">Token: 加载中...</div>
-<div id="status-session">会话: 加载中...</div>
+<div id="status-session">会话: 加载中...</div><div id="queue-status"></div>
 </div>
 </details>
 </div>
-<div id="chat-box"></div>
+<div id="chat-container">
+<div id="user-column" class="chat-column"></div>
+<div id="column-divider"></div>
+<div id="assistant-column" class="chat-column"></div>
+</div>
 <div id="scroll-nav" class="collapsed" style="right:8px;top:50%">
   <div class="nav-content">
     <button id="scroll-top" onclick="scrollToTop()" title="&#x21E7; 顶部" class="scroll-hidden">&#x2191;</button>
@@ -1062,7 +1163,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <script>
 const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-const chatBox = document.getElementById('chat-box');
+const userColumn = document.getElementById('user-column');
+const assistantColumn = document.getElementById('assistant-column');
+const columnDivider = document.getElementById('column-divider');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const TYPE_SPEED = 30; // ms per character
@@ -1253,7 +1356,7 @@ function streamTypeTick() {
   if (_streamRenderCounter % renderEvery === 0 || _streamTyped >= total) {
     try { sb.innerHTML = renderMarkdownPartial(streamContentBuf.slice(0, _streamTyped)) + '<span class="cursor"></span>'; }
     catch(e) { sb.textContent = streamContentBuf.slice(0, _streamTyped) + '|'; }
-    if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+    if (isNearBottom()) assistantColumn.scrollTop = assistantColumn.scrollHeight;
   }
 
   // 动态间隔：
@@ -1281,6 +1384,25 @@ ws.onmessage = e => {
   const d = JSON.parse(e.data);
 
   // 权限请求弹窗
+
+  // 任务队列状态更新
+  if (d.type === 'event' && d.data.event_type === 'TASK_UPDATE') {
+    var qs = document.getElementById('queue-status');
+    if (qs) {
+      var status = d.data.status;
+      var pos = d.data.position || 0;
+      if (status === 'pending') {
+        qs.textContent = '\u23f3 排队中 (第' + pos + '个)';
+        qs.style.color = '#eab308';
+      } else if (status === 'processing') {
+        qs.textContent = '\u23f3 处理中';
+        qs.style.color = '#6366f1';
+      } else if (status === 'done' || status === 'error') {
+        qs.textContent = '';
+      }
+    }
+    return;
+  }
   if (d.type === 'permission_request') {
     _pendingPermRequestId = d.request_id;
     _pendingPermDir = d.suggest_dir || null;
@@ -1316,7 +1438,7 @@ ws.onmessage = e => {
     if (voiceState !== 'off') setVoiceState('thinking');
     if (!document.getElementById('stream-reasoning')) {
       removeTyping();
-      // 包一层 .msg.thinking 容器，避免 details 直接作为 chatBox 的
+      // 包一层 .msg.thinking 容器，避免 details 直接作为对话列的
       // flex 子项导致 open 内容区高度塌陷（overflow:hidden + flex 子项 bug）
       var thinkMsg = document.createElement('div');
       thinkMsg.className = 'msg thinking';
@@ -1373,9 +1495,9 @@ ws.onmessage = e => {
       meta.appendChild(expandBtn);
       det.appendChild(sum); det.appendChild(wrap); det.appendChild(meta);
       thinkMsg.appendChild(det);
-      var typingEl = chatBox.querySelector('.typing');
-      if (typingEl) chatBox.insertBefore(thinkMsg, typingEl);
-      else chatBox.appendChild(thinkMsg);
+      var typingEl = assistantColumn.querySelector('.typing');
+      if (typingEl) assistantColumn.insertBefore(thinkMsg, typingEl);
+      else assistantColumn.appendChild(thinkMsg);
       // 思考活跃标记：提示用户思考进行中
       det.classList.add('think-active');
     }
@@ -1392,7 +1514,7 @@ ws.onmessage = e => {
     }
     // 记录思考接收速率 → 驱动答案打字速度联动
     trackReasoningSpeed(rc);
-    if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+    scrollToBottom();
     return;
   }
 
@@ -1412,10 +1534,8 @@ ws.onmessage = e => {
       bubble.className = 'bubble';
       bubble.id = 'stream-bubble';
       div.appendChild(bubble);
-      chatBox.appendChild(div);
-      // 流式期间禁用 smooth 滚动（避免每次滚动位置变化都触发动画卡顿）
-      chatBox.classList.add('instant-scroll');
-      if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+      assistantColumn.appendChild(div);
+      scrollToBottom();
       streamContentId = 'stream-msg';
     }
     streamContentBuf += d.data;
@@ -1480,7 +1600,7 @@ ws.onmessage = e => {
       var finalBubble = streamEl.querySelector('.bubble');
       if (finalBubble) {
         finalBubble.innerHTML = renderMarkdown(result);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        assistantColumn.scrollTop = assistantColumn.scrollHeight;
       }
       if (!streamEl.querySelector('.copy-btn')) {
         var copyBtn = document.createElement('button');
@@ -1518,7 +1638,7 @@ ws.onmessage = e => {
       streamContentId = null;
       _streamTyped = 0;
       // 流式结束，恢复 smooth 滚动（历史加载等场景仍用）
-      chatBox.classList.remove('instant-scroll');
+      assistantColumn.classList.remove('instant-scroll');
       restoreSendBtn();
       return;
     }
@@ -1647,13 +1767,17 @@ async function loadHistory(page) {
     if (page === 1) {
       // 第一页追加到底部（最新的在最下面）
       for (var i = 0; i < d.messages.length; i++) {
-        chatBox.appendChild(createMsgDiv(d.messages[i]));
+        var _m = d.messages[i];
+        var _col = _m.role === 'user' ? userColumn : (_m.role === 'assistant' ? assistantColumn : userColumn);
+        _col.appendChild(createMsgDiv(_m));
       }
     } else {
       // 更早的页面插到顶部（反向遍历保持顺序）
-      var firstMsg = chatBox.querySelector('.msg');
       for (var i = d.messages.length - 1; i >= 0; i--) {
-        chatBox.insertBefore(createMsgDiv(d.messages[i]), firstMsg);
+        var _m = d.messages[i];
+        var _col = _m.role === 'user' ? userColumn : (_m.role === 'assistant' ? assistantColumn : userColumn);
+        var _firstMsg = _col.querySelector('.msg');
+        _col.insertBefore(createMsgDiv(_m), _firstMsg);
       }
     }
 
@@ -1666,7 +1790,7 @@ async function loadHistory(page) {
       btn.style.cssText = 'padding:6px 16px;background:#f0f2f5;color:#666;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:12px';
       btn.onclick = function() { historyPage++; loadHistory(historyPage); };
       btnDiv.appendChild(btn);
-      chatBox.insertBefore(btnDiv, chatBox.firstChild || null);
+      assistantColumn.insertBefore(btnDiv, assistantColumn.firstChild || null);\n      userColumn.insertBefore(btnDiv.cloneNode(true), userColumn.firstChild || null);
     } else {
       historyEnd = true;
     }
@@ -1674,9 +1798,10 @@ async function loadHistory(page) {
 
     // 首次加载滚到底部；翻页不滚动
     if (page === 1) {
-        chatBox.classList.add('instant-scroll');
-        chatBox.scrollTop = chatBox.scrollHeight;
-        setTimeout(function(){ chatBox.classList.remove('instant-scroll'); }, 50);
+        assistantColumn.classList.add('instant-scroll');
+        assistantColumn.scrollTop = assistantColumn.scrollHeight;
+        userColumn.scrollTop = userColumn.scrollHeight;
+        setTimeout(function(){ assistantColumn.classList.remove('instant-scroll'); }, 50);
         setTimeout(updateScrollButtons, 100);
       }
   } catch(e) { console.error('History load failed:', e); }
@@ -1698,8 +1823,7 @@ function send() {
   autoResizeInput();
   addMessage('user', text);
   showTyping();
-  sendBtn.disabled = true;
-  sendBtn.textContent = '回复中...';
+  // 非阻塞发送：不锁发送按钮，可连续输入排队（队列状态见 #queue-status）
   // 语音模式开着时，文字提问同样走语音播报线（voice:true → 服务端附播报总结）
   ws.send(JSON.stringify({type: 'user_input', text, voice: voiceState !== 'off'}));
 }
@@ -2455,9 +2579,11 @@ function addThinking(reasoning, callback) {
   details.appendChild(scrollWrap);
   details.appendChild(meta);
   div.appendChild(details);
-  const typing = chatBox.querySelector('.typing');
-  if (typing) chatBox.insertBefore(div, typing);
-  else chatBox.appendChild(div);
+  // 思考面板属于 LINK 的回复，固定进右列
+  const targetCol = assistantColumn;
+  const typing = targetCol.querySelector('.typing');
+  if (typing) targetCol.insertBefore(div, typing);
+  else targetCol.appendChild(div);
   scrollToBottom();
 
   var pos = 0;
@@ -2491,7 +2617,7 @@ function addThinking(reasoning, callback) {
 }
 
 function isNearBottom() {
-  return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 120;
+  return assistantColumn.scrollHeight - assistantColumn.scrollTop - assistantColumn.clientHeight < 120;
 }
 // rAF 节流的滚动到底：同一帧内多次调用只执行一次，避免强制同步布局
 var _scrollRaf = false;
@@ -2500,28 +2626,31 @@ function scrollToBottom() {
   _scrollRaf = true;
   requestAnimationFrame(function() {
     _scrollRaf = false;
-    if (isNearBottom()) chatBox.scrollTop = chatBox.scrollHeight;
+    if (isNearBottom()) assistantColumn.scrollTop = assistantColumn.scrollHeight;
+    userColumn.scrollTop = userColumn.scrollHeight;
   });
 }
 function scrollToTop() {
-  chatBox.scrollTop = 0;
+  assistantColumn.scrollTop = 0;
+  userColumn.scrollTop = 0;
 }
 function scrollUpScreen() {
-  chatBox.scrollTop -= chatBox.clientHeight * 0.85;
+  assistantColumn.scrollTop -= assistantColumn.clientHeight * 0.85;
 }
 function scrollDownScreen() {
-  chatBox.scrollTop += chatBox.clientHeight * 0.85;
+  assistantColumn.scrollTop += assistantColumn.clientHeight * 0.85;
 }
 function scrollToBottomBtn() {
-  chatBox.scrollTop = chatBox.scrollHeight;
+  assistantColumn.scrollTop = assistantColumn.scrollHeight;
+  userColumn.scrollTop = userColumn.scrollHeight;
 }
 function updateScrollButtons() {
   var st = document.getElementById('scroll-top');
   var sb = document.getElementById('scroll-bottom');
-  if (st) st.classList.toggle('scroll-hidden', chatBox.scrollTop <= 10);
-  if (sb) sb.classList.toggle('scroll-hidden', chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight <= 20);
+  if (st) st.classList.toggle('scroll-hidden', assistantColumn.scrollTop <= 10);
+  if (sb) sb.classList.toggle('scroll-hidden', assistantColumn.scrollHeight - assistantColumn.scrollTop - assistantColumn.clientHeight <= 20);
   // 滚动到顶部附近时自动加载更早消息（防抖）
-  if (!historyLoading && !historyEnd && chatBox.scrollTop <= 40) {
+  if (!historyLoading && !historyEnd && assistantColumn.scrollTop <= 40) {
     var loadMore = document.getElementById('load-more');
     if (loadMore) {
       clearTimeout(window._autoLoadTimer);
@@ -2532,7 +2661,7 @@ function updateScrollButtons() {
     }
   }
 }
-chatBox.addEventListener('scroll', updateScrollButtons);
+assistantColumn.addEventListener('scroll', updateScrollButtons);
 setTimeout(updateScrollButtons, 500);
 
 // Scroll Nav: drag + snap + expand/collapse
@@ -2611,6 +2740,50 @@ setTimeout(updateScrollButtons, 500);
   });
 })();
 
+// Column divider drag
+(function() {
+  var divider = document.getElementById('column-divider');
+  var userCol = document.getElementById('user-column');
+  var container = document.getElementById('chat-container');
+  if (!divider || !userCol || !container) return;
+  var isDragging = false, startX, startWidth;
+
+  divider.addEventListener('mousedown', function(e) {
+    isDragging = true;
+    startX = e.clientX;
+    startWidth = userCol.offsetWidth;
+    divider.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    var delta = e.clientX - startX;
+    var totalWidth = container.offsetWidth - divider.offsetWidth;
+    var newWidth = Math.max(200, Math.min(totalWidth * 0.8, startWidth + delta));
+    userCol.style.width = newWidth + 'px';
+    userCol.style.flex = 'none';
+    document.getElementById('assistant-column').style.flex = '1';
+  });
+
+  document.addEventListener('mouseup', function() {
+    if (!isDragging) return;
+    isDragging = false;
+    divider.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    // Persist width
+    try { localStorage.setItem('split_user_width', userCol.style.width); } catch(e) {}
+  });
+
+  // Restore saved width
+  try {
+    var saved = localStorage.getItem('split_user_width');
+    if (saved) { userCol.style.width = saved; userCol.style.flex = 'none'; }
+  } catch(e) {}
+})();
 async function copyText(text, btn) {
   try {
     await navigator.clipboard.writeText(text);
@@ -2708,7 +2881,7 @@ function typewriteMessage(role, fullText) {
 
   var div = document.createElement('div');
   div.className = 'msg ' + role;
-  chatBox.appendChild(div);
+  assistantColumn.appendChild(div);
   scrollToBottom();
 
   var bubble = document.createElement('div');
@@ -2834,9 +3007,11 @@ function addMessage(role, content) {
     timeEl.textContent = time;
     div.appendChild(timeEl);
   }
-  const typing = chatBox.querySelector('.typing');
-  if (typing) chatBox.insertBefore(div, typing);
-  else chatBox.appendChild(div);
+  // 左右分屏：用户消息进左列，LINK 回复进右列（见 #chat-container 注释）
+  const targetCol = (role === 'user') ? userColumn : assistantColumn;
+  const typing = targetCol.querySelector('.typing');
+  if (typing) targetCol.insertBefore(div, typing);
+  else targetCol.appendChild(div);
   scrollToBottom();
 }
 
@@ -2852,7 +3027,7 @@ const STATUS_STEPS = [
 ];
 
 function showTyping() {
-  const existing = chatBox.querySelector('.typing');
+  var existing = assistantColumn.querySelector('.typing');
   if (existing) return;
   const div = document.createElement('div');
   div.className = 'msg assistant typing';
@@ -2860,7 +3035,7 @@ function showTyping() {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   div.appendChild(bubble);
-  chatBox.appendChild(div);
+  assistantColumn.appendChild(div);
   scrollToBottom();
   typingStep = 0;
   nextTypingStep();
@@ -2890,7 +3065,7 @@ function nextTypingStep() {
 function removeTyping() {
   if (typingTimer) { clearTimeout(typingTimer); typingTimer = null; }
   if (_typingCharTimer) { clearTimeout(_typingCharTimer); _typingCharTimer = null; }
-  const el = chatBox.querySelector('.typing');
+  const el = assistantColumn.querySelector('.typing');
   if (el) el.remove();
 }
 
@@ -3350,93 +3525,121 @@ function denyPermission() {
                     PRM.get_instance().cancel_all()
 
             async def process_task():
-                """处理任务：消费用户输入并执行 LLM 调用"""
-                while True:
-                    data = await input_queue.get()
-                    text = data.get("text", "")
-                    if not text:
-                        continue
-                    # 语音触发轮次：要求模型附『播报：』总结，前端只播这句（不念全文）
-                    voice = bool(data.get("voice", False))
-
-                    # 单条消息处理失败不影响后续消息（避免整个管道退出）
-                    try:
+                """将用户输入提交到 TaskManager，非阻塞（LLM 调用由 worker_task 串行消费）"""
+                try:
+                    while True:
+                        data = await input_queue.get()
+                        text = data.get("text", "")
+                        if not text:
+                            continue
+                        # 语音触发轮次：要求模型附『播报：』总结，前端只播这句（不念全文）
+                        voice = bool(data.get("voice", False))
                         self.add_user_input(text, client_id)
                         await self._broadcast_event({
                             "event_type": "USER_INPUT",
-                            "message": f"📝 收到用户输入: {text}",
+                            "message": f"\U0001f4dd 收到用户输入: {text}",
                             "source": f"user_{client_id}"
                         })
+                        task = await self.task_manager.submit(text, voice=voice)
+                        await self._broadcast_event({
+                            "event_type": "TASK_UPDATE",
+                            "task_id": task.id, "status": task.status,
+                            "position": self.task_manager.pending_count,
+                            "message": f"\U0001f4e5 任务已入队 (第{self.task_manager.pending_count}个)"
+                        })
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    print(f"process_task 异常: {e}")
 
-                        # 注册权限请求回调（通知前端弹窗）
-                        prm = PRM.get_instance()
-                        def _perm_cb(req):
-                            asyncio.run_coroutine_threadsafe(
-                                websocket.send_json({
-                                    "type": "permission_request",
-                                    "request_id": req.id,
-                                    "resource": req.resource,
-                                    "mode": req.mode,
+            async def worker_task():
+                """后台工作者：从队列串行取任务，做 LLM 调用并广播结果"""
+                prm = PRM.get_instance()
+                try:
+                    while True:
+                        task = await self.task_manager._queue.get()
+                        if task.status == "cancelled":
+                            continue
+                        # 单条任务失败不影响队列后续任务（避免整个工作者退出）
+                        try:
+                            task.status = "processing"
+                            self.task_manager._current = task
+                            await self._broadcast_event({
+                                "event_type": "TASK_UPDATE", "task_id": task.id,
+                                "status": "processing", "message": "⏳ 正在处理..."
+                            })
+                            def _perm_cb(req):
+                                asyncio.run_coroutine_threadsafe(websocket.send_json({
+                                    "type": "permission_request", "request_id": req.id,
+                                    "resource": req.resource, "mode": req.mode,
                                     "resource_type": req.resource_type.value,
                                     "suggest_dir": getattr(req, "suggest_dir", None),
-                                }),
-                                loop
-                            )
-                        prm.register_callback(_perm_cb)
-
-                        # 创建流式回调
-                        _stream_content_buf = ['']
-                        def _stream_cb(ctype, content):
-                            if ctype == "reasoning" and content.strip():
-                                asyncio.run_coroutine_threadsafe(
-                                    websocket.send_json({"type": "reasoning_chunk", "data": content}), loop
-                                )
-                            elif ctype == "content" and content:
-                                _stream_content_buf[0] += content
-                                asyncio.run_coroutine_threadsafe(
-                                    websocket.send_json({"type": "content_chunk", "data": content}), loop
-                                )
-                        # CPU 密集/阻塞任务放到线程池
-                        from functools import partial
-                        _task = partial(self._process_input_direct, text,
-                                        stream_callback=_stream_cb, voice=voice)
-                        brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task)
-
-                        # 取消注册权限回调
-                        prm.unregister_callback(_perm_cb)
-
-                        if brain_resp and brain_resp.get("result"):
-                            # 语音播报句先到（前端可先开口），随后 ASSISTANT 更新文字
-                            if brain_resp.get("spoken"):
-                                await websocket.send_json({
-                                    "type": "spoken",
-                                    "data": brain_resp["spoken"]
+                                }), loop)
+                            prm.register_callback(_perm_cb)
+                            _stream_content_buf = ['']
+                            def _stream_cb(ctype, content):
+                                if ctype == "reasoning" and content.strip():
+                                    asyncio.run_coroutine_threadsafe(
+                                        websocket.send_json({"type":"reasoning_chunk","data":content}), loop)
+                                elif ctype == "content" and content:
+                                    _stream_content_buf[0] += content
+                                    asyncio.run_coroutine_threadsafe(
+                                        websocket.send_json({"type":"content_chunk","data":content}), loop)
+                            from functools import partial
+                            # CPU 密集/阻塞任务放到线程池；voice=语音轮次，要模型附播报总结
+                            _task_fn = partial(self._process_input_direct, task.text,
+                                               stream_callback=_stream_cb, voice=task.voice)
+                            try:
+                                brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task_fn)
+                            finally:
+                                # 无论成功失败都要注销回调，否则回调会泄漏到下一个任务
+                                prm.unregister_callback(_perm_cb)
+                            if brain_resp and brain_resp.get("result"):
+                                task.result = brain_resp["result"]
+                                task.reasoning = brain_resp.get("reasoning", "")
+                                task.status = "done"
+                                # 语音播报句先到（前端可先开口），随后 ASSISTANT 更新文字
+                                if brain_resp.get("spoken"):
+                                    await websocket.send_json({
+                                        "type": "spoken",
+                                        "data": brain_resp["spoken"]
+                                    })
+                                await self._broadcast_event({
+                                    "event_type": "ASSISTANT", "result": brain_resp["result"],
+                                    "reasoning": brain_resp.get("reasoning", ""),
+                                    "source": "link_brain", "timestamp": time.time()
                                 })
+                            else:
+                                task.status = "error"
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            task.status = "error"
+                            print(f"worker_task 单条任务处理异常: {e}")
+                            try:
+                                await websocket.send_json({
+                                    "type": "event",
+                                    "data": {"event_type": "ERROR",
+                                             "message": f"处理消息时出错: {e}",
+                                             "timestamp": time.time()}
+                                })
+                            except Exception:
+                                pass
+                        finally:
+                            self.task_manager._current = None
                             await self._broadcast_event({
-                                "event_type": "ASSISTANT",
-                                "result": brain_resp["result"],
-                                "reasoning": brain_resp.get("reasoning", ""),
-                                "source": "link_brain",
-                                "timestamp": time.time()
+                                "event_type": "TASK_UPDATE", "task_id": task.id,
+                                "status": task.status,
+                                "message": "✅ 任务完成" if task.status == "done" else "❌ 任务失败"
                             })
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        # 单条消息处理失败不影响后续消息（避免整个管道退出）
-                        print(f"process_task 单条消息处理异常: {e}")
-                        try:
-                            await websocket.send_json({
-                                "type": "event",
-                                "data": {"event_type": "ERROR",
-                                         "message": f"处理消息时出错: {e}",
-                                         "timestamp": time.time()}
-                            })
-                        except Exception:
-                            pass
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    print(f"worker_task 异常: {e}")
 
-            # 并行运行两个任务
+            # 并行运行三个任务
             try:
-                await asyncio.gather(receive_task(), process_task())
+                await asyncio.gather(receive_task(), process_task(), worker_task())
             except Exception as e:
                 print(f"WebSocket 处理器异常: {e}")
             finally:
@@ -3449,6 +3652,7 @@ function denyPermission() {
                     except Exception:
                         pass
                 await self._broadcast_stats()
+
     
         @self.app.get("/debug")
         async def get_debug_page():
