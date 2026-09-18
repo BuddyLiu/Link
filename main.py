@@ -790,7 +790,8 @@ class LINK:
     def process_input(self, input_text: str,
                       stream_callback: callable = None,
                       progress_callback: callable = None,
-                      plan_callback: callable = None) -> str:
+                      plan_callback: callable = None,
+                      voice: bool = False) -> str:
         """
         处理用户输入
 
@@ -799,6 +800,7 @@ class LINK:
             stream_callback: 流式回调 (chunk_type, text)，用于实时展示思考过程
             progress_callback: 进度回调 (message)，用于实时展示工具执行过程
             plan_callback: 计划回调 (plan_text)，首次返回任务计划时触发
+            voice: 是否由语音对话触发（True 时要求回复末尾附『播报：』一句话总结）
 
         Returns:
             str: 处理结果
@@ -899,10 +901,11 @@ class LINK:
         if is_online:
             response = self._tool_response(input_text, memory_context,
                                            stream_callback=stream_callback,
-                                           plan_callback=plan_callback)
+                                           plan_callback=plan_callback,
+                                           voice=voice)
         else:
             response = self._process_action_response(
-                self._simple_response(input_text, memory_context), input_text)
+                self._simple_response(input_text, memory_context, voice=voice), input_text)
 
 
         # 存储到对话历史（给下一轮 LLM 调用做上下文）
@@ -2610,13 +2613,15 @@ class LINK:
             self.logger.error(f"外部查询失败({intent}): {e}")
             return f"抱歉，{intent}查询暂时不可用：{e}"
 
-    def _simple_response(self, input_text: str, memory_context: str = "") -> str:
+    def _simple_response(self, input_text: str, memory_context: str = "",
+                         voice: bool = False) -> str:
         """
         LLM驱动的主响应逻辑（无硬编码关键词）
 
         Args:
             input_text: 用户输入文本
             memory_context: 相关记忆上下文
+            voice: 是否由语音对话触发（要求回复末尾附『播报：』一句话总结）
 
         Returns:
             str: 响应文本
@@ -2716,6 +2721,15 @@ class LINK:
                         system_prompt += skill_ctx
                 except Exception as e:
                     self.logger.debug(f"Skill 加载失败（不影响主流程）: {e}")
+
+                # 语音对话轮次：要求回复末尾附『播报：』一句话总结（前端只播这句，不念全文）
+                if voice:
+                    system_prompt += (
+                        "\n\n## 语音播报（本条回复由语音对话触发）\n"
+                        "回复的最后必须单独另起一行，输出以『播报：』开头的一句话总结"
+                        "（≤50字，口语化，像真人聊天那样直接说结论；"
+                        "不要寒暄、不要列举、不要『好的』『以下』『首先』等过渡词，不要换行）。"
+                    )
 
                 history_msgs = self._build_history_messages()
                 response = self.brain_engine.simple_query(input_text, system_prompt=system_prompt, extra_messages=history_msgs)
@@ -3232,7 +3246,8 @@ class LINK:
 
     def _tool_response(self, input_text: str, memory_context: str = "",
                        stream_callback: callable = None,
-                       plan_callback: callable = None) -> str:
+                       plan_callback: callable = None,
+                       voice: bool = False) -> str:
         """使用 Function Calling 的响应（DeepSeek 在线模式）"""
         if not self.brain_engine or not self.brain_engine.model_adapter:
             return self._simple_response(input_text, memory_context)
@@ -3270,6 +3285,15 @@ class LINK:
                 system_prompt += skill_ctx
         except Exception as e:
             self.logger.debug(f"Skill 加载失败（不影响主流程）: {e}")
+
+        # 语音对话轮次：要求回复末尾附『播报：』一句话总结（前端只播这句，不念全文）
+        if voice:
+            system_prompt += (
+                "\n\n## 语音播报（本条回复由语音对话触发）\n"
+                "回复的最后必须单独另起一行，输出以『播报：』开头的一句话总结"
+                "（≤50字，口语化，像真人聊天那样直接说结论；"
+                "不要寒暄、不要列举、不要『好的』『以下』『首先』等过渡词，不要换行）。"
+            )
 
         # 构建消息列表
         messages = [{"role": "system", "content": system_prompt}]

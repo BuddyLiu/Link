@@ -9,6 +9,9 @@ import threading
 import time
 import sys
 import os
+import base64
+import hashlib
+import hmac
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, Any, List, Optional, Callable, Union
@@ -28,8 +31,140 @@ if _src_dir not in sys.path:
 # Web框架
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response, JSONResponse
 import uvicorn
+
+
+# ── edge-tts 文字转语音（后端合成 mp3，前端 <audio> 播放） ──
+# 用微软神经语音引擎替代浏览器 speechSynthesis：断句语义级、英文地道、中英分块各念各的。
+# edge-tts 未安装/合成失败时，前端自动回退浏览器 speechSynthesis，不影响现有功能。
+# 音色/语速默认值在下方，用户可在 /settings 页「语音」页签修改（存 data/settings/tts.json，
+# 该目录已 gitignore，不入库）。默认放慢 10% 更接近真人聊天节奏。
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except ImportError:
+    EDGE_TTS_AVAILABLE = False
+
+# 语言 → 默认微软神经音色（与页面 voice-lang 下拉一一对应）
+_TTS_VOICES = {
+    "zh-CN": "zh-CN-XiaoxiaoNeural",
+    "zh-TW": "zh-TW-HsiaoChenNeural",
+    "en-US": "en-US-AriaNeural",
+}
+# 语言 → 默认语速（edge-tts 百分比；None 用微软默认。放慢 10% 更自然）
+_TTS_RATES = {
+    "zh-CN": "-10%",
+    "zh-TW": "-10%",
+    "en-US": "-10%",
+}
+# 设置页可选音色候选（voice_id, 显示名）——由 GET /api/tts-settings 下发给前端下拉
+_TTS_VOICE_CANDIDATES: Dict[str, List[tuple]] = {
+    "zh-CN": [
+        ("zh-CN-XiaoxiaoNeural", "女声 · 晓晓（自然）"),
+        ("zh-CN-XiaoyiNeural", "女声 · 晓伊（活泼）"),
+        ("zh-CN-YunxiNeural", "男声 · 云希（少年）"),
+        ("zh-CN-YunjianNeural", "男声 · 云健（沉稳）"),
+        ("zh-CN-YunyangNeural", "男声 · 云扬（播音）"),
+    ],
+    "zh-TW": [
+        ("zh-TW-HsiaoChenNeural", "女声 · 曉臻"),
+        ("zh-TW-HsiaoYuNeural", "男声 · 曉雨"),
+    ],
+    "en-US": [
+        ("en-US-AriaNeural", "Female · Aria"),
+        ("en-US-JennyNeural", "Female · Jenny"),
+        ("en-US-GuyNeural", "Male · Guy"),
+        ("en-US-AndrewNeural", "Male · Andrew"),
+    ],
+}
+_TTS_CACHE = {}       # key=lang|voice|rate|text → mp3 bytes（LRU 简单淘汰）
+_TTS_CACHE_MAX = 200
+
+
+def _tts_settings_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "data", "settings", "tts.json")
+
+
+def load_tts_settings() -> Dict[str, Dict[str, str]]:
+    """读取音色设置（data/settings/tts.json）；缺省/损坏时回退默认值"""
+    out = {"voices": dict(_TTS_VOICES), "rates": dict(_TTS_RATES)}
+    try:
+        if os.path.exists(_tts_settings_path()):
+            with open(_tts_settings_path(), encoding="utf-8") as f:
+                saved = json.load(f) or {}
+            out["voices"].update(saved.get("voices") or {})
+            out["rates"].update(saved.get("rates") or {})
+    except Exception as e:
+        print(f"读取音色设置失败: {e}")
+    return out
+
+
+def _is_valid_rate(r: str) -> bool:
+    """edge-tts 语速格式校验：±N%（如 -10%、+25%）"""
+    import re as _re
+    return bool(_re.fullmatch(r"[+-]?\d{1,3}%", r or ""))
+
+
+def save_tts_settings(data: dict) -> Dict[str, Dict[str, str]]:
+    """保存音色设置：只收候选名单内的音色，语速校验 % 格式，坏值一律回退默认"""
+    voices, rates = {}, {}
+    for lang in _TTS_VOICES:
+        cand = {c[0] for c in _TTS_VOICE_CANDIDATES.get(lang, [])}
+        v = (data.get("voices") or {}).get(lang)
+        voices[lang] = v if v in cand else _TTS_VOICES[lang]
+        r = (data.get("rates") or {}).get(lang) or ""
+        rates[lang] = r if _is_valid_rate(r) else _TTS_RATES[lang]
+    out = {"voices": voices, "rates": rates}
+    try:
+        os.makedirs(os.path.dirname(_tts_settings_path()), exist_ok=True)
+        with open(_tts_settings_path(), "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"保存音色设置失败: {e}")
+        raise
+    return out
+
+
+def _tts_cache_key(text: str, lang: str, voice: str, rate: str) -> str:
+    return "|".join((lang, voice, rate, text))
+
+
+def synthesize_tts(text: str, lang: str = "zh-CN",
+                   voice: Optional[str] = None,
+                   rate: Optional[str] = None) -> bytes:
+    """用 edge-tts 合成 mp3，返回音频字节；失败抛异常（前端会回退 speechSynthesis）。
+    voice/rate 不传时读取 tts.json（设置页可改）；设置页试听可显式覆盖单个语言。"""
+    if not EDGE_TTS_AVAILABLE:
+        raise RuntimeError("edge-tts 未安装")
+    cfg = load_tts_settings()
+    voice = voice or cfg["voices"].get(lang, _TTS_VOICES.get(lang, "zh-CN-XiaoxiaoNeural"))
+    rate = rate or cfg["rates"].get(lang) or None
+    key = _tts_cache_key(text, lang, voice, rate or "")
+    cached = _TTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    chunks: list = []
+
+    async def _collect():
+        kw = {}
+        if rate:
+            kw["rate"] = rate
+        communicate = edge_tts.Communicate(text, voice, **kw)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                chunks.append(chunk["data"])
+
+    # sync 路由跑在 FastAPI 线程池，线程内无事件循环，asyncio.run 安全
+    asyncio.run(_collect())
+    mp3 = b"".join(chunks)
+    if not mp3:
+        raise RuntimeError("edge-tts 合成结果为空")
+    if len(_TTS_CACHE) >= _TTS_CACHE_MAX:
+        _TTS_CACHE.pop(next(iter(_TTS_CACHE)))
+    _TTS_CACHE[key] = mp3
+    return mp3
 
 
 class EventPriority(Enum):
@@ -484,6 +619,8 @@ class WebActiveLINK:
         self.websocket_clients = []
         self.event_history = []
         self.max_history = 100
+        # 讯飞识别会话（client_id → (音频队列, 会话任务)）
+        self._xfyun_queues: Dict[str, Any] = {}
         
         # 统计
         self.stats = {
@@ -851,6 +988,25 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .ob-opt label.sel{border-color:#6366f1;background:rgba(99,102,241,.08)}
 .ob-progress{height:3px;background:#1a1a2e}
 .ob-progress-inner{height:100%;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .3s;width:0}
+/* Voice bar：语音对话（聆听线 + 思考线 + 播报线） */
+.voice-bar{flex-shrink:0;background:#0d0d14;border-top:1px solid #1a1a2e;padding:8px max(20px, calc(50% - 420px));display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.voice-btn{width:38px;height:38px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25);background:#13131f;color:rgba(255,255,255,.85);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;line-height:1}
+.voice-btn:hover{border-color:#6366f1;transform:scale(1.08)}
+.voice-btn.off{color:rgba(255,255,255,.45)}
+.voice-btn.active{border-color:#6366f1}
+.voice-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;animation:none}
+/* 三态脉冲：聆听=红 / 思考=蓝 / 播报=绿（仅 opacity+transform，compositor 友好） */
+.voice-btn.listening{background:rgba(239,68,68,.18);border-color:#ef4444;color:#fca5a5;animation:voicePulse 1.2s ease-in-out infinite}
+.voice-btn.thinking{background:rgba(99,102,241,.18);border-color:#6366f1;color:#a5b4fc;animation:voicePulse 1.6s ease-in-out infinite}
+.voice-btn.speaking{background:rgba(34,197,94,.18);border-color:#22c55e;color:#86efac;animation:voicePulse .9s ease-in-out infinite}
+@keyframes voicePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.92)}}
+.voice-mute{width:32px;height:32px;border-radius:8px;border:1px solid #1a1a2e;background:#13131f;color:rgba(255,255,255,.7);font-size:14px;cursor:pointer;transition:all .2s;line-height:1}
+.voice-mute:hover{border-color:#6366f1;color:#fff}
+.voice-mute.off{opacity:.45}
+.voice-bar select{background:#13131f;border:1px solid #1a1a2e;border-radius:6px;color:#9ca3af;font-size:11px;padding:4px 6px;outline:none;cursor:pointer}
+.voice-bar select:focus{border-color:#6366f1}
+#voice-status{font-size:11px;color:#6b7280;white-space:nowrap}
+.voice-interim{font-size:11px;color:#22c55e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:380px;flex:1;min-width:0}
 </style>
 </head>
 <body>
@@ -884,6 +1040,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <button id="scroll-bottom" onclick="scrollToBottomBtn()" title="&#x21E9; 底部" class="scroll-hidden">&#x2193;</button>
   </div>
   <div class="nav-toggle">&#x2195;</div>
+</div>
+<div class="voice-bar">
+<button id="voice-toggle" class="voice-btn off" title="语音对话：开/关麦克风（持续聆听）">&#x1F399;&#xFE0F;</button>
+<button id="voice-mute" class="voice-mute" title="语音播报：开/静音">&#x1F50A;</button>
+<select id="voice-lang" title="识别与播报语言">
+<option value="zh-CN" selected>中文</option>
+<option value="en-US">English</option>
+<option value="zh-TW">&#x7E41;&#x9AD4;</option>
+</select>
+<span id="voice-status">语音未开启</span>
+<span id="voice-interim" class="voice-interim"></span>
 </div>
 <div class="input-area">
 <div style="width:100%;max-width:820px;display:flex;gap:8px;margin:0 auto">
@@ -1146,6 +1313,7 @@ ws.onmessage = e => {
 
   // 推理内容流式到达
   if (d.type === 'reasoning_chunk') {
+    if (voiceState !== 'off') setVoiceState('thinking');
     if (!document.getElementById('stream-reasoning')) {
       removeTyping();
       // 包一层 .msg.thinking 容器，避免 details 直接作为 chatBox 的
@@ -1189,9 +1357,16 @@ ws.onmessage = e => {
       copyThinkBtn.className = 'think-expand-btn';
       copyThinkBtn.textContent = '复制思考';
       copyThinkBtn.id = 'stream-reasoning-copy';
+      // 注意：直接捕获 con 元素而非 getElementById —— ASSISTANT 完成时会清掉
+      // stream-reasoning-content 的 id，靠 id 查询的话完成后按钮会拿到空内容
       copyThinkBtn.onclick = function() {
-        var rcEl = document.getElementById('stream-reasoning-content');
-        copyText(rcEl ? rcEl.textContent : '', copyThinkBtn);
+        copyText(con.textContent, copyThinkBtn);
+      };
+      var speakThinkBtn = document.createElement('button');
+      speakThinkBtn.className = 'think-expand-btn';
+      speakThinkBtn.textContent = '🔊 朗读';
+      speakThinkBtn.onclick = function() {
+        speakTextAloud(con.textContent, speakThinkBtn);
       };
       meta.appendChild(countEl);
       meta.appendChild(copyThinkBtn);
@@ -1244,14 +1419,52 @@ ws.onmessage = e => {
       streamContentId = 'stream-msg';
     }
     streamContentBuf += d.data;
+    // 注意：播报不随内容流走（那样会把全文都念出来）。语音模式只播服务端
+    // 生成的『播报：』一句话总结（spoken 事件），不再逐句喂 TTS。
     // 启动/继续打字机（积压会驱动 tick）
     if (!_streamTimer) _streamTimer = setTimeout(streamTypeTick, 10);
+    return;
+  }
+
+  // ── 讯飞识别引擎事件 ──
+  if (d.type === 'voice_caps') {
+    // 服务端握手：讯飞可用 → xfyun，否则回退浏览器引擎
+    sttEngine = (d.data && d.data.stt === 'xfyun') ? 'xfyun' : 'browser';
+    return;
+  }
+  if (d.type === 'voice_partial') {
+    if (sttEngine === 'xfyun') showInterim(d.data);
+    return;
+  }
+  if (d.type === 'voice_final') {
+    if (sttEngine !== 'xfyun') return;
+    var _ft = (d.data || '').trim();
+    if (xfDiscardFinal) { xfDiscardFinal = false; clearInterim(); return; } // 回声结果丢弃
+    if (voiceState === 'off') return;
+    if (_ft) { clearInterim(); sendVoiceTranscript(_ft); } // 复用思考线
+    return;
+  }
+  if (d.type === 'voice_error') {
+    if (sttEngine !== 'xfyun' || voiceState === 'off') return;
+    showToast('讯飞识别出错，已回退浏览器识别: ' + (d.data || ''));
+    xfStop();
+    sttEngine = 'browser';
+    setVoiceState('off');
+    startListening(); // 用浏览器引擎继续聆听
+    return;
+  }
+
+  // 语音播报句到达（服务端从回复末尾剥离的『播报：』一句话总结，先于 ASSISTANT 发送）
+  if (d.type === 'spoken') {
+    spokenReceived = true;
+    feedSpoken(d.data);
     return;
   }
 
   // 完整助手回复（替换流式内容 / 无流式时打字机）
   if (d.type === 'event' && d.data.event_type === 'ASSISTANT') {
     removeTyping();
+    onAssistantDone((d.data && d.data.result) || ''); // 语音线收尾：发 pending / 兜底播报
     var reasoning = d.data.reasoning || '';
     var result = d.data.result || '';
 
@@ -1279,6 +1492,11 @@ ws.onmessage = e => {
           });
         };
         streamEl.appendChild(copyBtn);
+        var speakBtn = document.createElement('button');
+        speakBtn.className = 'copy-btn visible';
+        speakBtn.textContent = '🔊 朗读';
+        speakBtn.onclick = function() { speakTextAloud(result, speakBtn); };
+        streamEl.appendChild(speakBtn);
       }
       // 实时回复添加反馈按钮（👍/👎）
       if (!streamEl.querySelector('.feedback-btns')) {
@@ -1375,6 +1593,12 @@ async function loadHistory(page) {
         copyThinkBtn.onclick = function() {
           copyText(msg.reasoning, copyThinkBtn);
         };
+        var speakThinkBtn = document.createElement('button');
+        speakThinkBtn.className = 'think-expand-btn';
+        speakThinkBtn.textContent = '🔊 朗读';
+        speakThinkBtn.onclick = function() {
+          speakTextAloud(msg.reasoning, speakThinkBtn);
+        };
         meta.appendChild(countEl);
         meta.appendChild(copyThinkBtn);
         meta.appendChild(expandBtn);
@@ -1395,6 +1619,11 @@ async function loadHistory(page) {
       cb.textContent = '复制';
       cb.onclick = function(){ copyText(fullContent, cb); };
       div.appendChild(cb);
+      var speakBtn = document.createElement('button');
+      speakBtn.className = 'copy-btn visible';
+      speakBtn.textContent = '🔊 朗读';
+      speakBtn.onclick = function(){ speakTextAloud(msg.content, speakBtn); };
+      div.appendChild(speakBtn);
       if (msg.role === 'assistant') {
         var fbDiv = document.createElement('div');
         fbDiv.className = 'feedback-btns';
@@ -1471,7 +1700,8 @@ function send() {
   showTyping();
   sendBtn.disabled = true;
   sendBtn.textContent = '回复中...';
-  ws.send(JSON.stringify({type: 'user_input', text}));
+  // 语音模式开着时，文字提问同样走语音播报线（voice:true → 服务端附播报总结）
+  ws.send(JSON.stringify({type: 'user_input', text, voice: voiceState !== 'off'}));
 }
 
 // textarea 自适应高度
@@ -1490,6 +1720,700 @@ input.addEventListener('keydown', e => {
     send();
   }
 });
+
+// ══════════════════════════════════════════════════════════════════
+// 语音对话：聆听线 + 思考线 + 播报线（浏览器 Web Speech API）
+//  - 聆听线：webkitSpeechRecognition 持续识别，onend 自动重启（补偿
+//    Chrome/Safari 静音后自停的已知行为），interim 实时转写
+//  - 思考线：复用现有 WS user_input / content_chunk 通道
+//    latest-wins：思考中来了新句只保留最新，避免回答过时问题
+//  - 播报线：只播「像真人聊天」的一句话总结（服务端 voice 轮次在回复
+//    末尾生成『播报：』并单独下发 spoken 事件），不念全文；
+//    用户开口即打断（barge-in），说话期间不抢话
+// ══════════════════════════════════════════════════════════════════
+var voiceState = 'off';            // off | listening | thinking | speaking
+var voiceRec = null;               // 当前 SpeechRecognition 实例
+var voiceLang = 'zh-CN';
+var voiceTtsOn = true;             // 🔊 播报开关
+var voiceInFlight = false;         // 语音触发的回复是否在途
+var pendingVoice = null;           // latest-wins：在途时收到的新句
+var voiceLastFinalIdx = 0;         // 已处理的 final 序号（去重）
+var voiceErrStreak = 0;            // 连续无结果错误计数（防静默死循环）
+var voiceUserTalking = false;      // 用户正在说话（期间不播报）
+var ttsQueue = [];                 // 待播句段
+var ttsSpeaking = false;           // 是否有句段正在播
+var _ttsAudio = null;              // 当前播报的 <audio> 实例（edge-tts mp3 播放用）
+var _ttsBlobUrl = null;            // 当前 audio 的 blob URL（播完/打断时释放）
+var spokenReceived = false;        // 本轮是否已收到服务端『播报：』总结
+var _cachedVoices = [];
+var _userTalkingTimer = null;      // 兜底：Safari 可能不触发 onspeechend，超时强制复位
+var _ttsWatchdog = null;           // 兜底：个别浏览器不触发 utterance onend，超时强制续播
+// 回声抑制：播报结束后的 2s 内，麦克风识别到的都是 TTS 自己的声音 →
+// 跳过这些结果，避免把自己说的话又当作「用户输入」喂回 LLM
+var voiceEchoGraceUntil = 0;
+var lastSpoken = '';               // 刚播报的内容（剥掉混入转写段首的回声前缀）
+var sttEngine = 'browser';         // 'browser' | 'xfyun'（服务端 voice_caps 握手决定）
+
+function setVoiceState(st) {
+  voiceState = st;
+  var btn = document.getElementById('voice-toggle');
+  var stEl = document.getElementById('voice-status');
+  if (btn) btn.className = 'voice-btn ' + st;
+  if (stEl) {
+    var labels = {off:'语音未开启', listening:'聆听中…', thinking:'思考中…', speaking:'播报中…'};
+    stEl.textContent = labels[st] || '';
+  }
+}
+
+// 停止当前播报：停 edge-tts 音频 + 释放 blob URL + 停浏览器 speechSynthesis（双保险）
+function stopTtsAudio() {
+  if (_ttsAudio) {
+    try { _ttsAudio.pause(); _ttsAudio.onended = null; _ttsAudio.onerror = null; } catch(e) {}
+    _ttsAudio = null;
+  }
+  if (_ttsBlobUrl) { try { URL.revokeObjectURL(_ttsBlobUrl); } catch(e) {} _ttsBlobUrl = null; }
+  if (window.speechSynthesis) { try { speechSynthesis.cancel(); } catch(e) {} }
+}
+
+function showInterim(text) {
+  var el = document.getElementById('voice-interim');
+  if (el) el.textContent = '🎙️ ' + text;
+}
+function clearInterim() {
+  var el = document.getElementById('voice-interim');
+  if (el) el.textContent = '';
+}
+
+// ── 聆听线：识别状态机 ──
+function getVoiceRec() {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  return SR ? new SR() : null;
+}
+
+function startRec() {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  var rec = new SR();
+  voiceRec = rec;
+  rec.lang = voiceLang;
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = function() {
+    voiceLastFinalIdx = 0; // 新实例 results 从 0 开始
+  };
+  rec.onresult = function(ev) {
+    voiceErrStreak = 0; // 有结果到达 → 识别链路正常
+    // 回声抑制：正在播报 / 播完后 2s 内，识别到的都是 TTS 自己的声音 → 整体跳过
+    // （不显示、不发送），避免把自己说的话又当作「用户输入」喂回 LLM
+    if (ttsSpeaking || Date.now() < voiceEchoGraceUntil) {
+      voiceLastFinalIdx = ev.results.length;
+      clearInterim();
+      return;
+    }
+    var finals = [];
+    for (var i = voiceLastFinalIdx; i < ev.results.length; i++) {
+      var r = ev.results[i];
+      var text = (r[0] && r[0].transcript || '').trim();
+      if (!text) continue;
+      if (r.isFinal) {
+        finals.push(text);
+        voiceLastFinalIdx = i + 1;
+      } else {
+        showInterim(text);
+      }
+    }
+    if (finals.length) {
+      clearInterim();
+      // final 到达 = 用户这句话说完了 → 复位「用户说话中」，避免 Safari
+      // 不触发 onspeechend 导致播报永远被卡住
+      if (_userTalkingTimer) { clearTimeout(_userTalkingTimer); _userTalkingTimer = null; }
+      voiceUserTalking = false;
+      // 本段所有整句都送（之前只送最后一句，一句话里说两件事会丢前半句）
+      var text = finals.join('');
+      // 播报期间就开始说话时，识别会把回声和用户的话混在同一段 →
+      // 若段首正好是刚播过的总结，先剥掉再送
+      if (lastSpoken && text.indexOf(lastSpoken) === 0) {
+        text = text.slice(lastSpoken.length);
+      }
+      text = text.replace(/^(嗯+|呃+|啊+|额+)+/, '').trim(); // 去句首语气词
+      if (text) sendVoiceTranscript(text);
+    }
+  };
+  rec.onerror = function(ev) {
+    var err = ev.error || '';
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      stopVoice(true);
+      showToast('麦克风权限被拒绝，请在浏览器设置中允许后重试');
+      return;
+    }
+    voiceErrStreak++;
+    if (err === 'network') {
+      // Chrome 的识别把音频发往 Google 服务：国内网络不可达时反复报 network，
+      // 静默重试会让用户以为「在听但转不出字」。提示并停止，避免死循环。
+      if (voiceErrStreak >= 2) {
+        stopVoice(true);
+        showToast('语音识别网络错误：Chrome 识别依赖 Google 服务，请改用 Safari 或检查网络');
+      } else {
+        showToast('语音识别网络错误，正在重试…');
+      }
+      return;
+    }
+    if (err === 'no-speech') {
+      // 麦克风没拾到音：静默重启继续听，多次无果提示一次
+      if (voiceErrStreak === 3) showToast('没有听到声音，请检查麦克风是否被静音');
+      return; // onend 自动重启
+    }
+    if (err === 'audio-capture') {
+      stopVoice(true);
+      showToast('无法获取麦克风音频，请检查系统麦克风权限');
+      return;
+    }
+    // 其余错误（aborted 等）交给 onend 自动重启
+  };
+  rec.onspeechstart = function() {
+    // 回声抑制：播报期间/播完后 2s 内检测到的「说话」是我们自己的声音 →
+    // 不打断播报、不当作用户发言（否则 TTS 一开口就把自己打断）
+    if (ttsSpeaking || Date.now() < voiceEchoGraceUntil) return;
+    // barge-in：用户开口 → 立即打断播报，期间不抢话
+    if (voiceTtsOn) stopTtsAudio();
+    ttsQueue = [];
+    ttsSpeaking = false;
+    voiceUserTalking = true;
+    // 兜底：Safari 可能不触发 onspeechend → 3s 后强制复位，避免播报永远被卡
+    if (_userTalkingTimer) clearTimeout(_userTalkingTimer);
+    _userTalkingTimer = setTimeout(function() {
+      voiceUserTalking = false;
+      drainTts();
+    }, 3000);
+  };
+  rec.onspeechend = function() {
+    // 回声段的结束（播报声的 speechend）不处理
+    if (ttsSpeaking || Date.now() < voiceEchoGraceUntil) return;
+    if (_userTalkingTimer) { clearTimeout(_userTalkingTimer); _userTalkingTimer = null; }
+    voiceUserTalking = false;
+    drainTts(); // 用户说完 → 若有缓存句段继续播
+  };
+  rec.onend = function() {
+    // 静音后浏览器自动停止识别 → 语音模式仍开则自动重启
+    if (voiceRec === rec && voiceState !== 'off') {
+      setTimeout(function() {
+        if (voiceState !== 'off' && voiceRec === rec) { try { startRec(); } catch(e) {} }
+      }, 300);
+    }
+  };
+  try { rec.start(); } catch(e) {
+    // 启动失败（上一实例未完全释放等）→ 稍后重试，避免静默死锁
+    setTimeout(function() {
+      if (voiceState !== 'off' && voiceRec === rec) {
+        try { rec.start(); } catch(e2) { /* 交给 onend 链继续重试 */ }
+      }
+    }, 600);
+  }
+}
+
+function startListening() {
+  // 用户在点击手势内预热 speechSynthesis：规避 Safari 首次 speak 被自动播放策略拦截
+  if (window.speechSynthesis) {
+    try { speechSynthesis.cancel(); if (speechSynthesis.paused) speechSynthesis.resume(); } catch(e) {}
+  }
+  if (voiceState !== 'off') return;
+  // 讯飞引擎：麦克风采集 + VAD 句尾检测（会话级，天然防回声）
+  if (sttEngine === 'xfyun' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    xfStart();
+    return;
+  }
+  if (!getVoiceRec()) {
+    showToast('当前浏览器不支持语音识别，请用 Chrome/Safari');
+    return;
+  }
+  setVoiceState('listening');
+  startRec();
+}
+
+function stopVoice(silent) {
+  setVoiceState('off');
+  xfStop(); // 讯飞引擎：释放麦克风/音频上下文/会话
+  if (voiceRec) {
+    try { voiceRec.onend = null; voiceRec.stop(); } catch(e) {}
+    voiceRec = null;
+  }
+  stopTtsAudio();
+  if (_userTalkingTimer) { clearTimeout(_userTalkingTimer); _userTalkingTimer = null; }
+  if (_ttsWatchdog) { clearTimeout(_ttsWatchdog); _ttsWatchdog = null; }
+  ttsQueue = []; ttsSpeaking = false;
+  voiceUserTalking = false;
+  voiceEchoGraceUntil = 0;
+  lastSpoken = '';
+  clearInterim();
+  if (!silent) showToast('语音已关闭');
+}
+
+function toggleVoice() {
+  if (voiceState === 'off') startListening();
+  else stopVoice(false);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 讯飞引擎：麦克风采集 + VAD 句尾检测（会话级，天然防回声）
+// 浏览器(8011) → 本地 WS → 讯飞 WS 转写；音频只在用户说话时上传，
+// TTS 播报期间暂停采集 → 播报声不会进识别，结构上消除回声
+// ══════════════════════════════════════════════════════════════════
+var xfCtx = null, xfStream = null, xfScript = null, xfStarting = false;
+var xfSessionOpen = false, xfSilenceMs = 0, xfSpeakMs = 0;
+var xfDiscardFinal = false, xfDiscardTimer = null;
+var xfDecAcc = 0, xfPcm = [];
+
+var XF_BLOCK = 4096;          // ScriptProcessor 块大小（48k 下约 85ms）
+var XF_RATE = 16000;          // 讯飞要求 16kHz PCM16
+var XF_PRE_ROLL = 9600;       // 预卷保留 600ms：开口瞬间的音频不丢
+var XF_FLUSH_AT = 6400;       // 每 ~400ms 发一批
+var XF_VAD_TALK_MS = 250;     // 连续说话 250ms 才算开口
+var XF_VAD_SILENCE_MS = 900;  // 静音 900ms 算一句结束
+var XF_RMS_TALK = 0.02;       // 语音能量阈值
+
+function xfLangParam() {
+  if (voiceLang === 'en-US') return 'en_us';
+  if (voiceLang === 'zh-TW') return 'zh_tw';
+  return 'zh_cn';
+}
+
+function xfSendJson(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function xfOpenSession() {
+  if (xfSessionOpen || voiceState === 'off') return;
+  xfSessionOpen = true;
+  xfSilenceMs = 0;
+  xfSendJson({type: 'voice_start', lang: xfLangParam()});
+  if (xfPcm.length) xfFlushPcm(); // 预卷音频跟随会话头发出
+}
+
+function xfCloseSession() {
+  if (!xfSessionOpen) return;
+  xfSessionOpen = false;
+  xfSendJson({type: 'voice_end'});
+}
+
+function xfOnTtsStart() {
+  // 播报开始：立刻结束采集会话并丢弃其回声结果（播报声不进 LLM）
+  xfCloseSession();
+  xfDiscardFinal = true;
+  clearInterim();
+  if (xfDiscardTimer) clearTimeout(xfDiscardTimer);
+  xfDiscardTimer = setTimeout(function() { xfDiscardFinal = false; }, 6000);
+}
+function xfOnTtsEnd() { /* 播报结束：采集自动恢复（xfOnAudio 按 ttsSpeaking 门控） */ }
+
+function xfStart() {
+  if (xfStarting || xfStream || xfCtx) return false;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('当前浏览器不支持麦克风采集，请用 Chrome/Safari');
+    return false;
+  }
+  xfStarting = true;
+  navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}})
+    .then(function(stream) {
+      xfStarting = false;
+      if (voiceState === 'off') { stream.getTracks().forEach(function(t){t.stop();}); return; }
+      xfStream = stream;
+      xfCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var src = xfCtx.createMediaStreamSource(stream);
+      xfScript = xfCtx.createScriptProcessor(XF_BLOCK, 1, 1);
+      xfScript.onaudioprocess = xfOnAudio;
+      src.connect(xfScript);
+      // 零增益输出端：保持回调触发但不把麦克风放出去（防啸叫）
+      var mute = xfCtx.createGain();
+      mute.gain.value = 0;
+      xfScript.connect(mute);
+      mute.connect(xfCtx.destination);
+      if (xfCtx.state === 'suspended') xfCtx.resume();
+      setVoiceState('listening');
+    })
+    .catch(function() {
+      xfStarting = false;
+      stopVoice(true);
+      showToast('麦克风权限被拒绝，请在浏览器设置中允许后重试');
+    });
+  return true;
+}
+
+function xfStop() {
+  if (xfStream) { xfStream.getTracks().forEach(function(t){t.stop();}); xfStream = null; }
+  if (xfScript) { try { xfScript.onaudioprocess = null; xfScript.disconnect(); } catch(e) {} xfScript = null; }
+  if (xfCtx) { try { xfCtx.close(); } catch(e) {} xfCtx = null; }
+  if (xfSessionOpen) xfCloseSession(); // 让讯飞尽快出最终结果（如有则被丢弃标记忽略）
+  if (xfDiscardTimer) { clearTimeout(xfDiscardTimer); xfDiscardTimer = null; }
+  xfSilenceMs = 0; xfSpeakMs = 0;
+  xfDiscardFinal = false; xfDecAcc = 0; xfPcm = [];
+}
+
+// 音频块处理：48k→16k 降采样 + PCM16→base64 + VAD 句检测
+function xfOnAudio(e) {
+  if (voiceState === 'off' || sttEngine !== 'xfyun') return;
+  // TTS 播报中 + 播完回声期内：不采集不判定（播报声不进识别）
+  if (ttsSpeaking || Date.now() < voiceEchoGraceUntil) return;
+  var data = e.inputBuffer.getChannelData(0);
+  // 语音能量（隔点采样，够用且省）
+  var sum = 0;
+  for (var i = 0; i < data.length; i += 4) sum += data[i] * data[i];
+  var rms = Math.sqrt(sum / (data.length / 4));
+  var talking = rms > XF_RMS_TALK;
+  var blockMs = XF_BLOCK / xfCtx.sampleRate * 1000;
+
+  // 降采样入缓冲（会话开 → 发送；会话闭 → 只保留尾部预卷）
+  var ratio = xfCtx.sampleRate / XF_RATE;
+  for (var j = 0; j < data.length; j++) {
+    xfDecAcc += 1 / ratio;
+    if (xfDecAcc >= 1) {
+      xfDecAcc -= 1;
+      var s = Math.max(-1, Math.min(1, data[j]));
+      xfPcm.push(s < 0 ? s * 32768 : s * 32767);
+    }
+  }
+
+  if (xfSessionOpen) {
+    if (xfPcm.length >= XF_FLUSH_AT) xfFlushPcm();
+    if (talking) {
+      xfSilenceMs = 0;
+    } else if (xfSilenceMs >= XF_VAD_SILENCE_MS) {
+      xfFlushPcm();
+      xfCloseSession();              // 一句结束
+    } else {
+      xfSilenceMs += blockMs;
+    }
+  } else {
+    if (xfPcm.length > XF_PRE_ROLL) xfPcm = xfPcm.slice(xfPcm.length - XF_PRE_ROLL);
+    if (talking) {
+      xfSpeakMs += blockMs;
+      if (xfSpeakMs >= XF_VAD_TALK_MS) xfOpenSession(); // 开口 → 预卷一起送出
+    } else {
+      xfSpeakMs = 0;
+    }
+  }
+}
+
+function xfFlushPcm() {
+  if (!xfPcm.length) return;
+  var bytes = new Uint8Array(xfPcm.length * 2);
+  for (var i = 0; i < xfPcm.length; i++) {
+    var v = xfPcm[i] & 0xffff;
+    bytes[i * 2] = v & 0xff;
+    bytes[i * 2 + 1] = (v >> 8) & 0xff;
+  }
+  xfPcm = [];
+  var bin = '';
+  for (var k = 0; k < bytes.length; k++) bin += String.fromCharCode(bytes[k]);
+  xfSendJson({type: 'voice_audio', data: btoa(bin)});
+}
+
+// ── 思考线：把转写文本送进 LLM（复用现有 WS 通道）──
+function sendVoiceTranscript(text) {
+  if (!text) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast('连接已断开，无法发送语音');
+    return;
+  }
+  // 有回复在途（语音或文字）→ latest-wins：只留最新一句，当前回复完成后再发
+  if (voiceInFlight || sendBtn.disabled) {
+    pendingVoice = text;
+    return;
+  }
+  dispatchVoiceText(text);
+}
+
+function dispatchVoiceText(text) {
+  voiceInFlight = true;
+  spokenReceived = false;
+  addMessage('user', '🎙️ ' + text);
+  showTyping();
+  ws.send(JSON.stringify({type: 'user_input', text, voice: true}));
+  setVoiceState('thinking');
+}
+
+// 当前回复完成：发 pending 最新句 / 收尾播报 / 回到聆听
+function onAssistantDone(result) {
+  voiceInFlight = false;
+  if (voiceState === 'off') return;
+  if (pendingVoice) {
+    var p = pendingVoice;
+    pendingVoice = null;
+    dispatchVoiceText(p);
+    return;
+  }
+  // 没等到服务端总结（本地快答/离线/模型未遵守格式）→ 前端兜底抽取口语化内容
+  if (!spokenReceived && result) {
+    var fb = conversationalExtract(result);
+    if (fb) feedSpoken(fb);
+  }
+  // 无新句 → 让剩余句段自然播完；播完即回聆听（drainTts 内处理）
+  drainTts();
+}
+
+// ── 播报线：只播「像真人聊天」的一句话总结，不念全文 ──
+// 服务端在语音轮次会要求模型在回复末尾附『播报：』总结并单独下发（spoken 事件）；
+// 这里只在两种情况下产出播报内容：收到 spoken 事件、或服务端没给时用兜底抽取。
+
+// 兜底抽取：从完整回复里挑出适合开口说的话
+// （去掉代码/列表/标题/表格，去寒暄前缀，最多 2 句、80 字）
+function conversationalExtract(raw) {
+  if (!raw) return '';
+  var s = raw.replace(/```[\\s\\S]*?```/g, ' '); // 代码块整段不念
+  var lines = s.split('\\n').map(function(l) { return l.trim(); }).filter(function(l) {
+    if (!l) return false;
+    if (/^[-*•+\\s]+\\s/.test(l)) return false;   // 列表项不念
+    if (/^\\d+[.、)）]\\s/.test(l)) return false;  // 编号项不念
+    if (/^#{1,6}\\s/.test(l)) return false;       // 标题不念
+    if (/^\\|.*\\|$/.test(l)) return false;       // 表格行不念
+    return true;
+  });
+  var joined = lines.join(' ')
+    .replace(/`([^`]*)`/g, '$1')                   // 行内代码
+    .replace(/\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1') // 链接 → 纯文字
+    .replace(/[#*_>~|]/g, '')
+    .replace(/\\s+/g, ' ')
+    .replace(/^(好的|好的，|好的。|没问题|没问题，|当然可以|当然可以，|好的没问题|首先|首先，|您好|你好|根据(您的|你的)?(要求|需求|信息)|基于以上)/, '')
+    .trim();
+  if (!joined) return '';
+  var parts = joined.split(/(?<=[。！？!?；;])/);
+  var spoken = '';
+  for (var i = 0; i < parts.length && i < 2; i++) {
+    spoken += parts[i];
+    if (spoken.length >= 80) break;
+  }
+  spoken = spoken.trim();
+  if (spoken.length > 80) spoken = spoken.slice(0, 80) + '……';
+  return spoken;
+}
+
+// 入队一句话总结并尝试播报（latest-wins：已有更新问题在等 → 本轮总结作废）
+function feedSpoken(text) {
+  if (!voiceTtsOn || voiceState === 'off') return;
+  if (pendingVoice) return; // 已有更新的问题在排队 → 上一轮的总结已过时
+  var s = (text || '').trim();
+  if (!s) return;
+  ttsQueue = [s];
+  drainTts();
+}
+
+function drainTts() {
+  if (!voiceTtsOn || voiceState === 'off') return;
+  if (voiceUserTalking) return;          // 用户说话中，不抢话
+  if (ttsSpeaking || ttsQueue.length === 0) {
+    if (!ttsSpeaking) setVoiceState(voiceInFlight ? 'thinking' : 'listening');
+    return;
+  }
+  var text = ttsQueue.shift();
+  ttsSpeaking = true;
+  lastSpoken = text;
+  setVoiceState('speaking');
+  playTtsText(text, voiceLang);
+}
+
+// ── 手动朗读：原文 / 思考过程的「🔊 朗读」按钮共用 ──
+var _aloudBtn = null;                  // 正在「⏹ 停止」状态的朗读按钮（其余保持原文标签）
+function plainTextForTts(text) {
+  var s = (text || '').replace(/\\r\\n/g, '\\n');
+  s = s.replace(/```[\\s\\S]*?```/g, ' ');         // 代码块整体去掉
+  s = s.replace(/`([^`]*)`/g, '$1');             // 行内代码 → 原文
+  s = s.replace(/!\\[[^\\]]*\\]\\([^)]*\\)/g, ' ');   // 图片
+  s = s.replace(/\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1'); // 链接 → 文字
+  s = s.replace(/(^|\\n)\\s*#{1,6}\\s*/g, '$1');    // 标题符号
+  s = s.replace(/[*_~>]/g, ' ');                 // 粗斜体/删除线/引用符
+  s = s.replace(/\\s+/g, ' ');                    // 压缩空白
+  return s.trim();
+}
+function stopAloudPlayback() {
+  stopTtsAudio();
+  ttsSpeaking = false;
+  if (_ttsWatchdog) { clearTimeout(_ttsWatchdog); _ttsWatchdog = null; }
+  if (_aloudBtn) { _aloudBtn.textContent = '🔊 朗读'; _aloudBtn = null; }
+  if (sttEngine === 'xfyun') xfOnTtsEnd();
+}
+function resetAloudBtn(btn) {
+  if (_aloudBtn === btn) { btn.textContent = '🔊 朗读'; _aloudBtn = null; }
+}
+// 手动朗读指定文本（按钮点击）：再点同一个按钮 = 停止；自动播报队列让位等手动播完
+function speakTextAloud(text, btn) {
+  var plain = plainTextForTts(text);
+  if (!plain) { showToast('没有可朗读的内容'); return; }
+  if (_aloudBtn === btn && ttsSpeaking) { stopAloudPlayback(); return; }
+  stopAloudPlayback();     // 打断当前（自动总结或别的朗读）
+  ttsQueue = [];           // 清自动队列：手动朗读结束后不追念旧句
+  _aloudBtn = btn;
+  btn.textContent = '⏹ 停止';
+  ttsSpeaking = true;      // 回声抑制/麦克风门控依赖此标志
+  if (voiceState !== 'off') setVoiceState('speaking');
+  playTtsText(plain, voiceLang, true, function() { resetAloudBtn(btn); });
+}
+
+// 主播放：请求后端 edge-tts 合成 mp3 并播放（带缓存，重复内容秒回）
+// manual=true：手动朗读（按钮点击），绕过静音/语音关闭的自动播报门控；
+// onFinish：播放走到任一终态（播完/出错/打断后由调用方负责复位）时回调
+function playTtsText(text, lang, manual, onFinish) {
+  if (sttEngine === 'xfyun') xfOnTtsStart(); // 关采集会话并丢弃回声（ttsSpeaking 已由 drainTts 置位）
+  var ctrl = new AbortController();
+  // 合成超时按文本长度缩放（edge-tts 实测约 100ms/字，留 2 倍余量）：
+  // 固定 8s 会误杀长文（朗读原文动辄几百字），中止后回退浏览器 TTS 又会被 Chrome 掐断
+  var _fetchTimer = setTimeout(function(){ ctrl.abort(); }, Math.max(8000, text.length * 200));
+  fetch('/api/tts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: text, lang: lang}),
+    signal: ctrl.signal
+  }).then(function(r) {
+    if (!r.ok) throw new Error('tts http ' + r.status);
+    return r.blob();
+  }).then(function(blob) {
+    clearTimeout(_fetchTimer);
+    // fetch 不随 mute/stop 取消：合成期间被静音/关闭 → 丢弃不播（手动朗读除外）
+    if (!manual && (!voiceTtsOn || voiceState === 'off')) {
+      ttsSpeaking = false;
+      if (onFinish) onFinish();
+      return;
+    }
+    var url = URL.createObjectURL(blob);
+    _ttsBlobUrl = url; // 交给 stopTtsAudio 统一释放（打断/静音/关闭时）
+    var au = new Audio(url);
+    _ttsAudio = au;
+    var done = function() {
+      URL.revokeObjectURL(url);
+      if (_ttsBlobUrl === url) _ttsBlobUrl = null;
+      if (_ttsAudio === au) _ttsAudio = null;
+      ttsSpeaking = false;
+      if (sttEngine === 'xfyun') xfOnTtsEnd();
+      voiceEchoGraceUntil = Date.now() + 2000; // 播完留 2s 回声区
+      if (_ttsWatchdog) { clearTimeout(_ttsWatchdog); _ttsWatchdog = null; }
+      drainTts();
+      if (onFinish) onFinish();
+    };
+    au.onended = done;
+    au.onerror = done;
+    // 看门狗：Audio 偶发不触发 ended → 20s 后强制复位并续播
+    _ttsWatchdog = setTimeout(function() {
+      if (ttsSpeaking) {
+        ttsSpeaking = false;
+        if (sttEngine === 'xfyun') xfOnTtsEnd();
+        voiceEchoGraceUntil = Date.now() + 2000;
+        stopTtsAudio();
+        drainTts();
+        if (onFinish) onFinish();
+      }
+    }, Math.max(20000, text.length * 600)); // 播放看门狗按长度缩放：固定 20s 会掐掉长文后半段
+    au.play().catch(function() {
+      // 自动播放被浏览器拦截 → 回退浏览器 TTS
+      URL.revokeObjectURL(url);
+      if (_ttsBlobUrl === url) _ttsBlobUrl = null;
+      if (_ttsAudio === au) _ttsAudio = null;
+      ttsSpeaking = false;
+      if (_ttsWatchdog) { clearTimeout(_ttsWatchdog); _ttsWatchdog = null; }
+      speakFallback(text, lang);
+      if (onFinish) onFinish();
+    });
+  }).catch(function() {
+    // 后端不可用（edge-tts 未装/断网/超时）→ 回退浏览器 TTS
+    clearTimeout(_fetchTimer);
+    ttsSpeaking = false;
+    if (_ttsWatchdog) { clearTimeout(_ttsWatchdog); _ttsWatchdog = null; }
+    speakFallback(text, lang);
+    if (onFinish) onFinish();
+  });
+}
+
+// 回退：edge-tts 不可用时用浏览器 speechSynthesis（原逻辑兜底）
+// Chrome 对超过 ~15s 的长文本会自动掐断 → 按句切块逐个排队念，逐块 onend 续播
+function speakFallback(text, lang) {
+  if (sttEngine === 'xfyun') xfOnTtsStart(); // 主播放失败间隙可能开过新会话 → 一并关闭丢弃
+  if (!window.speechSynthesis) { ttsSpeaking = false; voiceEchoGraceUntil = Date.now() + 2000; drainTts(); return; }
+  var parts = (text || '').match(/[^。！？!?…\\n]+[。！？!?…\\n]?/g) || [text];
+  var idx = 0;
+  var v = pickVoice(lang);
+  function finish() {
+    ttsSpeaking = false;
+    if (sttEngine === 'xfyun') xfOnTtsEnd();
+    voiceEchoGraceUntil = Date.now() + 2000;
+    if (_ttsWatchdog) { clearTimeout(_ttsWatchdog); _ttsWatchdog = null; }
+    drainTts();
+  }
+  function speakNext() {
+    if (idx >= parts.length) { finish(); return; }
+    var u = new SpeechSynthesisUtterance(parts[idx++]);
+    u.lang = lang;
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    if (v) u.voice = v;
+    u.onstart = function() { ttsSpeaking = true; setVoiceState('speaking'); };
+    u.onend = speakNext;
+    u.onerror = speakNext;
+    try { speechSynthesis.speak(u); } catch(e) { speakNext(); }
+  }
+  speakNext();
+  // 看门狗：个别浏览器不触发 onend → 超时强制复位（长文按长度缩放）
+  _ttsWatchdog = setTimeout(function() {
+    if (ttsSpeaking) {
+      ttsSpeaking = false;
+      if (sttEngine === 'xfyun') xfOnTtsEnd();
+      voiceEchoGraceUntil = Date.now() + 2000;
+      stopTtsAudio();
+      drainTts();
+    }
+  }, Math.max(20000, text.length * 600));
+}
+
+function loadVoices() {
+  if (window.speechSynthesis) _cachedVoices = speechSynthesis.getVoices();
+}
+function pickVoice(lang) {
+  if (!_cachedVoices.length) loadVoices();
+  var byLang = _cachedVoices.filter(function(v) { return v.lang === lang; });
+  if (byLang.length) return byLang[0];
+  var prefix = lang.split('-')[0];
+  var byPrefix = _cachedVoices.filter(function(v) { return v.lang && v.lang.split('-')[0] === prefix; });
+  return byPrefix.length ? byPrefix[0] : null;
+}
+
+function toggleVoiceMute() {
+  voiceTtsOn = !voiceTtsOn;
+  var btn = document.getElementById('voice-mute');
+  if (btn) {
+    btn.textContent = voiceTtsOn ? '🔊' : '🔇';
+    btn.classList.toggle('off', !voiceTtsOn);
+  }
+  if (!voiceTtsOn) {
+    ttsQueue = []; ttsSpeaking = false;
+    stopTtsAudio();
+    voiceEchoGraceUntil = Date.now() + 2000; // 中断的播报尾音不进识别
+  }
+  showToast(voiceTtsOn ? '语音播报已开启' : '语音播报已静音');
+}
+
+function changeVoiceLang() {
+  var sel = document.getElementById('voice-lang');
+  voiceLang = sel ? sel.value : 'zh-CN';
+  if (voiceRec) { try { voiceRec.lang = voiceLang; } catch(e) {} }
+  _cachedVoices = [];
+}
+
+// 初始化：不支持语音识别的浏览器禁用麦克风按钮（播报仍可用）
+(function initVoice() {
+  var btn = document.getElementById('voice-toggle');
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // 两种识别引擎都不可用（浏览器 STT + 讯飞麦克风采集）才禁用
+  var micOk = !!(SR || (navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+  if (!micOk) {
+    if (btn) { btn.disabled = true; btn.title = '浏览器不支持语音识别，请用 Chrome/Safari'; }
+    return;
+  }
+  btn.addEventListener('click', toggleVoice);
+  document.getElementById('voice-mute').addEventListener('click', toggleVoiceMute);
+  document.getElementById('voice-lang').addEventListener('change', changeVoiceLang);
+  if (window.speechSynthesis && 'onvoiceschanged' in speechSynthesis) {
+    speechSynthesis.onvoiceschanged = loadVoices;
+  }
+  loadVoices();
+})();
 
 // ----- Helper: smart auto-scroll & copy -----
 function addThinking(reasoning, callback) {
@@ -1520,7 +2444,12 @@ function addThinking(reasoning, callback) {
     expandBtn.textContent = isExpanded ? '收起' : '展开全部';
     if (!isExpanded) scrollWrap.scrollTop = scrollWrap.scrollHeight;
   };
+  var speakThinkBtn = document.createElement('button');
+  speakThinkBtn.className = 'think-expand-btn';
+  speakThinkBtn.textContent = '🔊 朗读';
+  speakThinkBtn.onclick = function() { speakTextAloud(reasoning, speakThinkBtn); };
   meta.appendChild(countEl);
+  meta.appendChild(speakThinkBtn);
   meta.appendChild(expandBtn);
   details.appendChild(summary);
   details.appendChild(scrollWrap);
@@ -1845,6 +2774,11 @@ function typewriteMessage(role, fullText) {
         copyBtn.textContent = '复制';
         copyBtn.onclick = function() { copyText(fullText, copyBtn); };
         div.appendChild(copyBtn);
+        var speakBtn = document.createElement('button');
+        speakBtn.className = 'copy-btn visible';
+        speakBtn.textContent = '🔊 朗读';
+        speakBtn.onclick = function() { speakTextAloud(fullText, speakBtn); };
+        div.appendChild(speakBtn);
       }
       // 打字完成的消息添加反馈按钮
       if (!div.querySelector('.feedback-btns')) {
@@ -2331,6 +3265,11 @@ function denyPermission() {
                     "timestamp": time.time()
                 }
             })
+            # 语音能力宣告：配置了讯飞 → 用讯飞识别；否则回退浏览器内置识别
+            await websocket.send_json({
+                "type": "voice_caps",
+                "data": {"stt": "xfyun" if self._xfyun_config() else "browser"}
+            })
             await self._broadcast_stats()
 
             # 双任务通信：receive_task 将用户输入放入此队列，process_task 消费
@@ -2366,6 +3305,43 @@ function denyPermission() {
 
                         elif msg_type == "command":
                             await self._handle_command(websocket, data.get("command"))
+
+                        elif msg_type == "voice_start":
+                            # 开启讯飞识别会话。旧的会通过 voice_end 的 None 哨兵
+                            # 自然收尾并下发 voice_final —— 不 cancel，否则用户连续
+                            # 说话时上一句的结果会被丢掉
+                            old = self._xfyun_queues.get(client_id)
+                            if old:
+                                try:
+                                    old[0].put_nowait(None)
+                                except Exception:
+                                    pass
+                            audio_q: asyncio.Queue = asyncio.Queue()
+                            task = asyncio.create_task(
+                                self._xfyun_run(websocket, audio_q,
+                                                data.get("lang", "zh_cn")))
+                            self._xfyun_queues[client_id] = (audio_q, task)
+
+                        elif msg_type == "voice_audio":
+                            entry = self._xfyun_queues.get(client_id)
+                            if entry:
+                                try:
+                                    audio = base64.b64decode(data.get("data", ""))
+                                except Exception:
+                                    audio = b""
+                                if audio:
+                                    try:
+                                        entry[0].put_nowait(audio)
+                                    except Exception:
+                                        pass
+
+                        elif msg_type == "voice_end":
+                            entry = self._xfyun_queues.get(client_id)
+                            if entry:
+                                try:
+                                    entry[0].put_nowait(None)
+                                except Exception:
+                                    pass
                 except WebSocketDisconnect:
                     pass
                 except Exception as e:
@@ -2380,6 +3356,8 @@ function denyPermission() {
                     text = data.get("text", "")
                     if not text:
                         continue
+                    # 语音触发轮次：要求模型附『播报：』总结，前端只播这句（不念全文）
+                    voice = bool(data.get("voice", False))
 
                     # 单条消息处理失败不影响后续消息（避免整个管道退出）
                     try:
@@ -2420,13 +3398,20 @@ function denyPermission() {
                                 )
                         # CPU 密集/阻塞任务放到线程池
                         from functools import partial
-                        _task = partial(self._process_input_direct, text, stream_callback=_stream_cb)
+                        _task = partial(self._process_input_direct, text,
+                                        stream_callback=_stream_cb, voice=voice)
                         brain_resp = await asyncio.get_event_loop().run_in_executor(None, _task)
 
                         # 取消注册权限回调
                         prm.unregister_callback(_perm_cb)
 
                         if brain_resp and brain_resp.get("result"):
+                            # 语音播报句先到（前端可先开口），随后 ASSISTANT 更新文字
+                            if brain_resp.get("spoken"):
+                                await websocket.send_json({
+                                    "type": "spoken",
+                                    "data": brain_resp["spoken"]
+                                })
                             await self._broadcast_event({
                                 "event_type": "ASSISTANT",
                                 "result": brain_resp["result"],
@@ -2456,6 +3441,13 @@ function denyPermission() {
                 print(f"WebSocket 处理器异常: {e}")
             finally:
                 self.websocket_clients = [c for c in self.websocket_clients if c["id"] != client_id]
+                # 清理讯飞识别会话
+                entry = self._xfyun_queues.pop(client_id, None)
+                if entry:
+                    try:
+                        entry[1].cancel()
+                    except Exception:
+                        pass
                 await self._broadcast_stats()
     
         @self.app.get("/debug")
@@ -2655,6 +3647,104 @@ function denyPermission() {
                 from tools.permission_settings import PermissionSettings
             ps = PermissionSettings()
             return ps.update_settings(data)
+
+        # ── 文字转语音：edge-tts 合成 mp3 ──
+        @self.app.post("/api/tts")
+        def api_tts(data: dict):
+            text = (data.get("text") or "").strip()
+            lang = data.get("lang") or "zh-CN"
+            # 设置页试听时用 voice/rate 显式覆盖该语言的默认音色/语速
+            voice = data.get("voice") or None
+            rate = data.get("rate") or None
+            if not text:
+                return JSONResponse({"error": "empty text"}, status_code=400)
+            t0 = time.time()
+            try:
+                mp3 = synthesize_tts(text, lang, voice=voice, rate=rate)
+                print(f"[tts] OK {lang} {len(text)}字 {time.time()-t0:.2f}s")
+                return Response(content=mp3, media_type="audio/mpeg")
+            except Exception as e:
+                print(f"[tts] 合成失败: {e}")
+                return JSONResponse({"error": str(e)}, status_code=503)
+
+        # ── 音色设置：GET 当前值+候选音色，POST 保存（data/settings/tts.json） ──
+        @self.app.get("/api/tts-settings")
+        def api_tts_settings_get():
+            return {"settings": load_tts_settings(), "candidates": _TTS_VOICE_CANDIDATES}
+
+        @self.app.post("/api/tts-settings")
+        def api_tts_settings_post(data: dict):
+            try:
+                saved = save_tts_settings(data)
+                return {"success": True, "message": "音色设置已保存", "settings": saved}
+            except Exception as e:
+                print(f"保存音色设置失败: {e}")
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        # ── 讯飞语音识别密钥：GET 脱敏状态，POST 保存/清空（data/settings/xfyun.json） ──
+        # 运行链路 _xfyun_config() 每次实时读文件 → 保存即生效，无需重启；环境变量优先级更高
+        @self.app.get("/api/xf-settings")
+        def api_xf_settings_get():
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "data", "settings", "xfyun.json")
+            cfg = {}
+            try:
+                if os.path.exists(p):
+                    with open(p, encoding="utf-8") as f:
+                        cfg = json.load(f) or {}
+            except Exception:
+                cfg = {}
+            def _mask(v):
+                v = str(v or "")
+                if not v:
+                    return ""
+                if len(v) <= 8:
+                    return v[:2] + "***"
+                return v[:3] + "*" * 6 + v[-2:]
+
+            env_list = []
+            for key, env in (("app_id", "XFYUN_APP_ID"),
+                             ("api_key", "XFYUN_API_KEY"),
+                             ("api_secret", "XFYUN_API_SECRET")):
+                if os.getenv(env):
+                    env_list.append(env)
+            return {
+                "configured": bool(cfg.get("app_id") and cfg.get("api_key") and cfg.get("api_secret")),
+                "env_set": env_list,
+                "masked": {"app_id": _mask(cfg.get("app_id")),
+                           "api_key": _mask(cfg.get("api_key")),
+                           "api_secret": _mask(cfg.get("api_secret"))},
+            }
+
+        @self.app.post("/api/xf-settings")
+        def api_xf_settings_post(data: dict):
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "data", "settings", "xfyun.json")
+            cfg = {}
+            try:
+                if os.path.exists(p):
+                    with open(p, encoding="utf-8") as f:
+                        cfg = json.load(f) or {}
+            except Exception:
+                cfg = {}
+            if data.get("clear"):
+                cfg = {}
+            else:
+                for k in ("app_id", "api_key", "api_secret"):
+                    v = str(data.get(k) or "").strip()
+                    if v:
+                        cfg[k] = v
+            try:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"保存讯飞配置失败: {e}")
+                return JSONResponse({"error": str(e)}, status_code=500)
+            env_list = [e for e in ("XFYUN_APP_ID", "XFYUN_API_KEY", "XFYUN_API_SECRET")
+                        if os.getenv(e)]
+            note = f"（检测到环境变量 {', '.join(env_list)} 仍优先生效）" if env_list else "，立即生效"
+            return {"success": True, "message": f"讯飞密钥已保存{note}"}
 
     async def _handle_feedback(self, data: dict) -> dict:
         rating = data.get("rating", "")
@@ -3189,7 +4279,149 @@ function denyPermission() {
             except Exception as e:
                 print(f"广播统计失败: {e}")
                 self.websocket_clients.remove(client)
-    
+
+    # ══════════════════════════════════════════════════════════════
+    # 讯飞语音识别（iat v2）：浏览器采集音频 → 本服务转发讯飞 → 文本回前端
+    # 未配置 data/settings/xfyun.json 时自动回退浏览器内置识别
+    # ══════════════════════════════════════════════════════════════
+    XFYUN_URL = "wss://iat-api.xfyun.cn/v2/iat"
+    XFYUN_HOST = "iat-api.xfyun.cn"
+    XFYUN_PATH = "/v2/iat"
+
+    def _xfyun_config(self) -> Optional[Dict[str, str]]:
+        """读取讯飞配置（data/settings/xfyun.json，可被环境变量覆盖）；缺任一字段返回 None"""
+        cfg = {}
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "settings", "xfyun.json")
+        try:
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    cfg = json.load(f) or {}
+        except Exception as e:
+            print(f"读取讯飞配置失败: {e}")
+        for env, key in (("XFYUN_APP_ID", "app_id"),
+                         ("XFYUN_API_KEY", "api_key"),
+                         ("XFYUN_API_SECRET", "api_secret")):
+            v = os.getenv(env)
+            if v:
+                cfg[key] = v
+        if cfg.get("app_id") and cfg.get("api_key") and cfg.get("api_secret"):
+            return cfg
+        return None
+
+    @staticmethod
+    def _xfyun_auth_header(api_key: str, api_secret: str) -> Dict[str, str]:
+        """讯飞 v2 鉴权：HMAC-SHA256 签名 Authorization 头"""
+        date = datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
+        string_to_sign = (f"host: {WebActiveLINK.XFYUN_HOST}\n"
+                          f"date: {date}\n"
+                          f"GET {WebActiveLINK.XFYUN_PATH} HTTP/1.1")
+        sig = base64.b64encode(
+            hmac.new(api_secret.encode("utf-8"), string_to_sign.encode("utf-8"),
+                     hashlib.sha256).digest()).decode("utf-8")
+        auth = (f'api_key="{api_key}", algorithm="hmac-sha256", '
+                f'headers="host date request-line", signature="{sig}"')
+        return {"Host": WebActiveLINK.XFYUN_HOST, "Date": date, "Authorization": auth}
+
+    async def _xfyun_run(self, websocket: WebSocket, audio_q: asyncio.Queue,
+                         lang: str) -> None:
+        """讯飞识别会话：消费音频队列 → 转发 iat → 回传 partial / final / error"""
+        cfg = self._xfyun_config()
+        if not cfg:
+            await websocket.send_json({
+                "type": "voice_error",
+                "data": "讯飞未配置：请填写 data/settings/xfyun.json 的 app_id/api_key/api_secret"
+            })
+            return
+        # 语言映射：zh_cn / en_us（zh_tw 暂用 mandarin 口音，输出简体）
+        business = {"language": "zh_cn", "domain": "iat", "accent": "mandarin",
+                    "dwa": "wpgs", "ptt": 0, "vad_eos": 1500}
+        if lang == "en_us":
+            business = {"language": "en_us", "domain": "iat",
+                        "dwa": "wpgs", "ptt": 0, "vad_eos": 1500}
+        import websockets as _ws
+        try:
+            async with _ws.connect(
+                self.XFYUN_URL,
+                additional_headers=self._xfyun_auth_header(
+                    cfg["api_key"], cfg["api_secret"]),
+                max_size=None
+            ) as xf:
+                await xf.send(json.dumps({
+                    "common": {"app_id": cfg["app_id"]},
+                    "business": business,
+                    "data": {"status": 0, "format": "audio/L16;rate=16000",
+                             "encoding": "raw", "seq": 0}
+                }))
+                segs: List[str] = []
+                done = asyncio.Event()
+
+                async def send_loop():
+                    while not done.is_set():
+                        try:
+                            chunk = await asyncio.wait_for(audio_q.get(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            continue
+                        if chunk is None:  # 结束哨兵 → 通知讯飞本段结束
+                            try:
+                                await xf.send(json.dumps({"data": {"status": 2}}))
+                            except Exception:
+                                pass
+                            return
+                        await xf.send(chunk)
+
+                async def recv_loop():
+                    async for msg in xf:
+                        if isinstance(msg, bytes):
+                            continue
+                        try:
+                            d = json.loads(msg)
+                        except Exception:
+                            continue
+                        if d.get("code", 0) != 0:
+                            raise RuntimeError(d.get("message") or f"讯飞错误码 {d.get('code')}")
+                        rst = (d.get("data") or {}).get("result")
+                        if rst is None:
+                            if (d.get("data") or {}).get("status") == 2:
+                                done.set()
+                            continue
+                        if isinstance(rst, str):  # 部分返回 base64，防御性解码
+                            try:
+                                rst = json.loads(base64.b64decode(rst))
+                            except Exception:
+                                continue
+                        # wpgs 逐句拼接：rpl 替换第 rg[0] 段之后追加，apd 直接追加
+                        pgs = rst.get("pgs", "rpl")
+                        rg = rst.get("rg") or [0, 0]
+                        words = "".join(
+                            cw.get("w", "") for s in rst.get("ws", [])
+                            for cw in (s.get("cw") or []))
+                        if pgs == "rpl" and rg:
+                            segs = segs[: rg[0]]
+                        segs.append(words)
+                        segs = segs[-200:]
+                        text = "".join(segs).strip()
+                        if text:
+                            await websocket.send_json({"type": "voice_partial", "data": text})
+                        if (d.get("data") or {}).get("status") == 2:
+                            done.set()
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(send_loop(), recv_loop()), timeout=120)
+                except asyncio.TimeoutError:
+                    done.set()
+            text = "".join(segs).strip()
+            if text:
+                await websocket.send_json({"type": "voice_final", "data": text})
+        except Exception as e:
+            print(f"讯飞识别会话异常: {e}")
+            try:
+                await websocket.send_json({"type": "voice_error",
+                                           "data": f"讯飞识别失败: {e}"})
+            except Exception:
+                pass
+
     def _add_to_history(self, event: Event, result: str):
         """添加事件到历史记录"""
         history_item = {
@@ -3363,18 +4595,29 @@ function denyPermission() {
         if isinstance(result, str):
             print(f"[{timestamp}] {event_type} ({source}): {result}")
     
-    def _process_input_direct(self, text: str, stream_callback: callable = None) -> dict:
-        """处理用户输入，返回 {result, reasoning}"""
+    def _process_input_direct(self, text: str, stream_callback: callable = None,
+                              voice: bool = False) -> dict:
+        """处理用户输入，返回 {result, reasoning, spoken}"""
         if not self.brain_link:
             return {"result": "⚠️ 大脑引擎未就绪", "reasoning": ""}
         try:
             start = time.time()
-            result = self.brain_link.process_input(text, stream_callback=stream_callback)
+            result = self.brain_link.process_input(text, stream_callback=stream_callback,
+                                                   voice=voice)
             reasoning = getattr(self.brain_link, '_last_reasoning', '')
             elapsed = time.time() - start
             import logging
             logging.getLogger("link").info(f"LLM 响应完成 ({elapsed:.1f}s)")
-            return {"result": result, "reasoning": reasoning}
+            # 语音轮次：剥离回复末尾的『播报：』一句话总结（前端只播这句，不念全文）
+            spoken = None
+            if voice and result:
+                import re as _re
+                _matches = list(_re.finditer(r'\n?\s*播报[:：]\s*([^\n]+)', result))
+                if _matches:
+                    _m = _matches[-1]
+                    spoken = _m.group(1).strip()
+                    result = (result[:_m.start()] + result[_m.end():]).strip()
+            return {"result": result, "reasoning": reasoning, "spoken": spoken}
         except Exception as e:
             import logging
             logging.getLogger("link").error(f"处理输入出错: {e}")
@@ -3958,7 +5201,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .nav-item{padding:12px 20px;cursor:pointer;font-size:14px;color:#555;display:flex;align-items:center;gap:8px;transition:all .15s;border:none;background:none;width:100%;text-align:left}
 .nav-item:hover{background:#f5f5f5;color:#1a73e8}
 .nav-item.active{background:#e8f0fe;color:#1a73e8;font-weight:500;border-right:3px solid #1a73e8}
-.content{flex:1;padding:24px 32px;overflow-y:auto;max-width:700px}
+.content{flex:1;min-width:0;padding:24px 32px;overflow-y:auto;max-width:700px}
 .tab{display:none}
 .tab.active{display:block}
 .card{background:#fff;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
@@ -3968,8 +5211,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .field .value-display{background:#f5f5f5;padding:10px 12px;border-radius:8px;font-size:13px;color:#333;word-break:break-all}
 .field input,.field select{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;outline:none;transition:border-color .2s}
 .field input:focus,.field select:focus{border-color:#1a73e8}
-.radio-group{display:flex;gap:24px;margin-bottom:4px}
-.radio-group label{font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#333;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px;transition:all .2s}
+.radio-group{display:flex;flex-wrap:wrap;gap:12px 24px;margin-bottom:4px}
+.radio-group label{font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#333;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px;transition:all .2s;white-space:nowrap;max-width:100%}
 .radio-group label:has(input:checked){border-color:#1a73e8;background:#e8f0fe}
 .btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .2s}
 .btn-primary{background:#1a73e8;color:#fff}
@@ -3983,8 +5226,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .status.error{display:block;background:#fce8e8;color:#d93025;border:1px solid #f5c6cb}
 .hidden{display:none}
 .model-info{font-size:12px;color:#888;margin-top:6px}
-.status-preview{margin-top:8px;font-size:13px;color:#555;padding:10px 14px;background:#f9f9f9;border-radius:8px;border:1px solid #eee}
+.status-preview{margin-top:8px;font-size:13px;color:#555;padding:10px 14px;background:#f9f9f9;border-radius:8px;border:1px solid #eee;overflow-wrap:anywhere}
 .status-preview strong{color:#1a73e8}
+/* ≤600px：侧栏转为顶部横向导航，内容区不再被 200px 侧栏压扁 */
+@media (max-width:600px){
+body{flex-direction:column}
+.sidebar{width:auto;flex-direction:row;align-items:center;gap:4px;overflow-x:auto;padding:8px 12px;border-right:none;border-bottom:1px solid #e0e0e0;flex-shrink:1}
+.sidebar h1{font-size:15px;padding:0 10px 0 0;margin:0;border-bottom:none;white-space:nowrap}
+.nav-item{width:auto;padding:8px 12px;white-space:nowrap;border-radius:8px}
+.nav-item.active{border-right:none;background:#e8f0fe}
+.sidebar>div{display:none}
+.sidebar a[href="/"]{padding:8px 12px;border-top:none!important;white-space:nowrap}
+.content{max-width:none;padding:16px;min-width:0}
+}
 </style>
 </head>
 <body>
@@ -3993,6 +5247,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <h1>&#x2699;&#xFE0F; LINK 设置</h1>
   <button class="nav-item active" data-tab="api" onclick="switchTab('api')">&#x1F310; API 配置</button>
   <button class="nav-item" data-tab="perm" onclick="switchTab('perm')">&#x1F512; 授权规则</button>
+  <button class="nav-item" data-tab="voice" onclick="switchTab('voice')">&#x1F3A4; 音色</button>
+  <button class="nav-item" data-tab="xf" onclick="switchTab('xf')">&#x1F399;&#xFE0F; 语音识别</button>
   <button class="nav-item" data-tab="init" onclick="switchTab('init')" style="color:#d93025">&#x1F5D1;&#xFE0F; 初始化</button>
   <div style="flex:1"></div>
   <a href="/" style="padding:12px 20px;color:#888;text-decoration:none;font-size:13px;border-top:1px solid #eee">&#x2190; 返回聊天</a>
@@ -4090,6 +5346,54 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   </div>
   <div class="action-bar">
     <button class="btn btn-primary" onclick="savePermSettings()">保存授权规则</button>
+  </div>
+</div>
+
+<div id="tab-voice" class="tab">
+  <div class="card">
+    <h2>&#x1F3A4; 语音播报音色</h2>
+    <p style="font-size:13px;color:#666;line-height:1.7;margin-bottom:12px">
+      聊天播报（🔊）用的朗读音色与语速，保存后立即生效，无需重启。<br>
+      语速为百分比：<code>-10%</code> 放慢、<code>+10%</code> 加快，留空用微软默认。
+    </p>
+    <div id="tts-voice-fields"></div>
+    <div class="model-info">音色通过 edge-tts（微软神经语音）在服务器端合成；未安装或合成失败时自动回退浏览器内置朗读。</div>
+  </div>
+  <div class="action-bar">
+    <button class="btn btn-primary" onclick="saveTtsSettings()">保存音色设置</button>
+  </div>
+</div>
+
+<div id="tab-xf" class="tab">
+  <div class="card">
+    <h2>&#x1F399;&#xFE0F; 语音识别（讯飞）</h2>
+    <p style="font-size:13px;color:#666;line-height:1.7;margin-bottom:12px">
+      填写讯飞开放平台「<strong>语音听写（iat）</strong>」的密钥后，语音对话识别自动改走<strong>讯飞</strong>
+      （中文准确度更高、不依赖 Google 服务）；三项留空则回退<strong>浏览器内置识别</strong>。
+      保存后立即生效，无需重启。
+    </p>
+    <div class="field">
+      <label>讯飞 APPID</label>
+      <input id="xf-app-id" type="text" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>讯飞 APIKey</label>
+      <input id="xf-api-key" type="password" autocomplete="new-password">
+    </div>
+    <div class="field">
+      <label>讯飞 APISecret</label>
+      <input id="xf-api-secret" type="password" autocomplete="new-password">
+    </div>
+    <div id="xf-engine-preview" class="status-preview" style="margin-top:4px"></div>
+    <div class="model-info" style="margin-top:10px;line-height:1.8">
+      &#x1F511; 密钥只保存在 <code>data/settings/xfyun.json</code>（不入库）；也可用环境变量
+      <code>XFYUN_APP_ID / XFYUN_API_KEY / XFYUN_API_SECRET</code> 覆盖（优先级更高，此时页面不可改）。
+      <br>&#x1F4A1; 字段留空 = 保持原值不变；想清空密钥回退浏览器识别，点下方「清除并回退浏览器识别」。
+    </div>
+  </div>
+  <div class="action-bar">
+    <button class="btn btn-primary" onclick="saveXfSettings()">保存讯飞密钥</button>
+    <button class="btn btn-secondary" onclick="clearXfSettings()">清除并回退浏览器识别</button>
   </div>
 </div>
 
@@ -4325,7 +5629,139 @@ function updateBaseUrl() {
   var models={deepseek:"deepseek-chat",openai:"gpt-4o"};
   if(p!=="custom") document.getElementById("model-name").value=models[p]||"";
 }
-loadModels(); loadSettings(); loadPermSettings();
+// ── 音色设置：候选由 GET /api/tts-settings 下发，试听走 /api/tts ──
+var _ttsLangs = ["zh-CN","zh-TW","en-US"];
+var _ttsLangNames = {"zh-CN":"中文","zh-TW":"繁體","en-US":"English"};
+var _ttsSampleText = {
+  "zh-CN":"好的，明天下午三点有个团队会议，我会提前十五分钟提醒你。",
+  "zh-TW":"好的，明天下午三點有個團隊會議，我會提前十五分鐘提醒你。",
+  "en-US":"All right. There is a team meeting at three tomorrow afternoon, and I will remind you fifteen minutes before."
+};
+async function loadTtsSettings() {
+  try {
+    var r = await fetch(\'/api/tts-settings\');
+    var d = await r.json();
+    var s = d.settings || {};
+    var wrap = document.getElementById(\'tts-voice-fields\');
+    wrap.innerHTML = \'\';
+    _ttsLangs.forEach(function(lang) {
+      var row = document.createElement(\'div\');
+      row.className = \'field\';
+      var opts = ((d.candidates || {})[lang] || []).map(function(c) {
+        var sel = (s.voices || {})[lang] === c[0] ? \' selected\' : \'\';
+        return \'<option value="\' + c[0] + \'"\' + sel + \'>\' + c[1] + \'</option>\';
+      }).join(\'\');
+      row.innerHTML =
+        \'<label>\' + _ttsLangNames[lang] + \' · 音色</label>\' +
+        \'<div style="display:flex;gap:8px;align-items:center">\' +
+          \'<select id="tts-voice-\' + lang + \'">\' + opts + \'</select>\' +
+          \'<input id="tts-rate-\' + lang + \'" style="width:90px;flex-shrink:0" placeholder="语速 %" value="\' + ((s.rates || {})[lang] || \'\') + \'">\' +
+          \'<button class="btn btn-secondary" style="flex-shrink:0" onclick="playTtsSample(\\\'\' + lang + \'\\\')">试听</button>\' +
+        \'</div>\';
+      wrap.appendChild(row);
+    });
+  } catch(e) {
+    showStatus(\'加载音色设置失败: \' + e.message, \'error\');
+  }
+}
+function playTtsSample(lang) {
+  var voice = document.getElementById(\'tts-voice-\' + lang).value;
+  var rate = document.getElementById(\'tts-rate-\' + lang).value.trim();
+  var au = document.getElementById(\'tts-preview-audio\');
+  if (!au) { au = document.createElement(\'audio\'); au.id = \'tts-preview-audio\'; document.body.appendChild(au); }
+  fetch(\'/api/tts\', {
+    method: \'POST\',
+    headers: {\'Content-Type\': \'application/json\'},
+    body: JSON.stringify({text: _ttsSampleText[lang] || _ttsSampleText["zh-CN"], lang: lang, voice: voice, rate: rate || undefined})
+  }).then(function(r) {
+    if (!r.ok) { return r.json().then(function(e) { throw new Error(e.error || \'合成失败\'); }); }
+    return r.blob();
+  }).then(function(b) {
+    au.src = URL.createObjectURL(b);
+    var p = au.play();
+    if (p && p.catch) p.catch(function() { showStatus(\'浏览器拦截了自动播放\', \'error\'); });
+  }).catch(function(e) {
+    showStatus(\'试听失败: \' + e.message, \'error\');
+  });
+}
+async function saveTtsSettings() {
+  var btn = document.querySelector(\'#tab-voice .btn-primary\');
+  btn.disabled = true; btn.textContent = \'保存中...\';
+  var voices = {}, rates = {};
+  _ttsLangs.forEach(function(lang) {
+    voices[lang] = document.getElementById(\'tts-voice-\' + lang).value;
+    rates[lang] = document.getElementById(\'tts-rate-\' + lang).value.trim();
+  });
+  try {
+    var r = await fetch(\'/api/tts-settings\', {
+      method: \'POST\',
+      headers: {\'Content-Type\': \'application/json\'},
+      body: JSON.stringify({voices: voices, rates: rates})
+    });
+    var d = await r.json();
+    showStatus(d.message || (d.success ? \'已保存\' : \'保存失败\'), d.success ? \'success\' : \'error\');
+    if (d.success) loadTtsSettings();  // 服务端可能回退坏值，回读同步
+  } catch(e) {
+    showStatus(\'保存失败: \' + e.message, \'error\');
+  }
+  btn.disabled = false; btn.textContent = \'保存音色设置\';
+}
+
+// ── 讯飞语音识别配置：密钥存 data/settings/xfyun.json（不入库），环境变量可覆盖 ──
+async function loadXfSettings() {
+  var r, d;
+  try { r = await fetch(\'/api/xf-settings\'); d = await r.json(); } catch(e) { return; }
+  var ids = [\'xf-app-id\', \'xf-api-key\', \'xf-api-secret\'];
+  var pv = document.getElementById(\'xf-engine-preview\');
+  if (d.env_set && d.env_set.length) {  // 环境变量优先生效 → 锁定表单
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      el.value = \'\'; el.disabled = true;
+    }
+    pv.textContent = \'引擎：讯飞（环境变量 \' + d.env_set.join(\', \') + \' 配置中，页面不可修改）\';
+    return;
+  }
+  for (var i = 0; i < ids.length; i++) {
+    var el = document.getElementById(ids[i]);
+    el.disabled = false;
+    var key = ids[i].slice(3).replace(/-/g, \'_\');
+    var m = (d.masked && d.masked[key]) || \'\';
+    el.value = \'\';
+    el.placeholder = m ? \'已配置：\' + m + \'（留空保持不变）\' : \'未配置\';
+  }
+  pv.textContent = d.configured
+    ? \'引擎：讯飞已启用（三项留空直接保存 = 保持当前密钥不变）\'
+    : \'引擎：浏览器内置识别（未配置讯飞，填写下方密钥并保存后自动切换）\';
+}
+async function saveXfSettings() {
+  var data = {
+    app_id: document.getElementById(\'xf-app-id\').value.trim(),
+    api_key: document.getElementById(\'xf-api-key\').value.trim(),
+    api_secret: document.getElementById(\'xf-api-secret\').value.trim()
+  };
+  if (!data.app_id && !data.api_key && !data.api_secret) {
+    showStatus(\'请至少填写一项密钥\', \'error\'); return;
+  }
+  var btn = document.querySelector(\'#tab-xf .btn-primary\'); btn.disabled = true;
+  try {
+    var r = await fetch(\'/api/xf-settings\', {method: \'POST\', headers: {\'Content-Type\': \'application/json\'}, body: JSON.stringify(data)});
+    var d = await r.json();
+    showStatus(d.message || (d.success ? \'已保存\' : \'保存失败\'), d.success ? \'success\' : \'error\');
+    if (d.success) loadXfSettings();  // 回读刷新状态与占位符
+  } catch(e) { showStatus(\'保存失败: \' + e.message, \'error\'); }
+  btn.disabled = false;
+}
+async function clearXfSettings() {
+  var btn = document.querySelector(\'#tab-xf .btn-secondary\'); btn.disabled = true;
+  try {
+    var r = await fetch(\'/api/xf-settings\', {method: \'POST\', headers: {\'Content-Type\': \'application/json\'}, body: JSON.stringify({clear: true})});
+    var d = await r.json();
+    showStatus(d.message || (d.success ? \'已清除\' : \'清除失败\'), d.success ? \'success\' : \'error\');
+    if (d.success) loadXfSettings();
+  } catch(e) { showStatus(\'清除失败: \' + e.message, \'error\'); }
+  btn.disabled = false;
+}
+loadModels(); loadSettings(); loadPermSettings(); loadTtsSettings(); loadXfSettings();
 document.getElementById("api-base").addEventListener("input",function(){
   this.value&&(document.getElementById("api-base-preview").innerHTML=\'<strong>待保存:</strong> \'+this.value);
 });

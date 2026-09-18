@@ -140,6 +140,16 @@ LINK/
    venv/bin/python link_manager.py --no-auto-start
    ```
 
+3. **语音对话（🎙️）**：聊天页输入框上方点击 🎙️ 开启。麦克风持续聆听（第一线），
+   说完一句话立即送进大脑思考回复（第二线），回复全文边生成边文字显示，同时语音只播报
+   「像真人聊天」的一句话口语总结（🔊 可静音）——不会大段念全文；说话时自动打断当前播报。
+   识别与播报语言可在下拉框切换（中文/English/繁體）。
+   识别引擎：**优先讯飞**（配置后自动启用，中文准确度更高、不依赖 Google 服务）；
+   未配置时自动回退浏览器内置识别（Safari 最佳，Chrome 在国内受网络限制）。见下方
+   [讯飞语音识别配置](#讯飞语音识别配置)。
+   播报音色/语速：在**设置页 → 音色**调整（edge-tts 微软神经语音，支持试听；
+   配置存于 data/settings/tts.json，不入库），修改后立即生效。
+
 > 📖 详细启动方式与常见问题见 [docs/startup-guide.md](docs/startup-guide.md)
 
 ## 🔧 高级配置
@@ -161,6 +171,33 @@ LINK/
    export MODEL_NAME=gpt-3.5-turbo
    export OPENAI_API_KEY=your_api_key_here
    ```
+
+### 讯飞语音识别配置
+
+语音对话的识别引擎默认用浏览器内置识别；配置讯飞后自动切换为讯飞（中文准确度更高，且不依赖 Google 服务）。
+
+1. 前往[讯飞开放平台](https://www.xfyun.cn/)创建应用，开通**语音听写（iat）**服务，获取 `APPID` / `APISecret` / `APIKey`。
+2. 打开 **[设置页 → 语音识别](http://localhost:8011/settings)**，粘贴三项密钥点保存即可 —— **无需重启，立即生效**；留空某项 = 保持不变，点「清除」可回退浏览器识别。
+   密钥存于 `data/settings/xfyun.json`（已在 `.gitignore` 中，不会入库），也可手动编辑该文件：
+
+   ```json
+   {
+     "app_id": "你的APPID",
+     "api_key": "你的APIKey",
+     "api_secret": "你的APISecret"
+   }
+   ```
+
+3. 也可以用环境变量覆盖（优先级高于文件，配置后页面会锁定提示）：
+
+   ```bash
+   export XFYUN_APP_ID=...
+   export XFYUN_API_KEY=...
+   export XFYUN_API_SECRET=...
+   ```
+
+- 密钥缺失/为空时自动回退浏览器识别（页面无感切换），不会报错。
+- 识别链路：浏览器麦克风采集（VAD 仅在说话时上传音频）→ 本地 WS(8011) → 讯飞 WebSocket 转写 → 文本送进大脑思考。TTS 播报期间暂停采集，从结构上杜绝「把自己的播报当成用户输入」的回声。
 
 ## 📚 文档
 
